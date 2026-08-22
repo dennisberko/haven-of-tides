@@ -401,7 +401,7 @@ Small ships should remain useful. A larger ship is stronger, but it costs more a
 
 ### Repairs and captured parts
 
-Timber, sailcloth, rope, cannons, and other captured parts can be used for repairs, sold as goods, or supplied to the town. They do not increase ship statistics.
+Timber, sailcloth, and rope can repair the ship. Captured cannons and other parts can be sold as goods or supplied to the town. They do not increase ship statistics.
 
 ### Cosmetic customization
 
