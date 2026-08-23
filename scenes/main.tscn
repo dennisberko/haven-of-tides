@@ -1,4 +1,4 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -24,6 +24,9 @@ radius = 68.0
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_resident_range"]
 radius = 72.0
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_damaged_dock_goal"]
+size = Vector2(40, 120)
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -95,6 +98,16 @@ script = ExtResource("4_resident")
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/Resident"]
 shape = SubResource("CircleShape2D_resident_range")
 
+[node name="RequestAreas" type="Node2D" parent="."]
+
+[node name="DamagedDockGoal" type="Area2D" parent="RequestAreas"]
+position = Vector2(880, 424)
+collision_layer = 0
+collision_mask = 1
+
+[node name="GoalRange" type="CollisionShape2D" parent="RequestAreas/DamagedDockGoal"]
+shape = SubResource("RectangleShape2D_damaged_dock_goal")
+
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
 script = ExtResource("2_player")
@@ -126,7 +139,42 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 03 · Talk to Mara"
+text = "Phase 04 · Help Mara"
+
+[node name="RequestView" type="ColorRect" parent="Interface"]
+visible = false
+offset_left = 786.0
+offset_top = 24.0
+offset_right = 1124.0
+offset_bottom = 142.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="RequestTitle" type="Label" parent="Interface/RequestView"]
+offset_left = 18.0
+offset_top = 12.0
+offset_right = 320.0
+offset_bottom = 37.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 18
+text = "DAMAGED DOCK"
+
+[node name="RequestStatus" type="Label" parent="Interface/RequestView"]
+offset_left = 18.0
+offset_top = 43.0
+offset_right = 320.0
+offset_bottom = 66.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 14
+text = "ACTIVE REQUEST"
+
+[node name="RequestGoal" type="Label" parent="Interface/RequestView"]
+offset_left = 18.0
+offset_top = 73.0
+offset_right = 320.0
+offset_bottom = 102.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 17
+text = "Inspect the damaged dock"
 
 [node name="SignMessage" type="Label" parent="Interface"]
 visible = false

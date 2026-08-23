@@ -42,6 +42,11 @@ func _draw() -> void:
 		draw_line(Vector2(x, 389), Vector2(x, 460), Color("#b27a47"), 16.0)
 	draw_line(Vector2(914, 382), Vector2(1104, 382), Color("#493323"), 6.0)
 	draw_line(Vector2(914, 466), Vector2(1104, 466), Color("#493323"), 6.0)
+	# Split boards mark the damaged goal area.
+	draw_line(Vector2(955, 402), Vector2(965, 421), Color("#493323"), 5.0)
+	draw_line(Vector2(965, 421), Vector2(954, 443), Color("#493323"), 5.0)
+	draw_line(Vector2(1024, 392), Vector2(1014, 414), Color("#493323"), 5.0)
+	draw_line(Vector2(1014, 414), Vector2(1028, 438), Color("#493323"), 5.0)
 
 	# Shelter and roof.
 	draw_rect(Rect2(675, 242, 170, 116), Color("#8b5a36"))

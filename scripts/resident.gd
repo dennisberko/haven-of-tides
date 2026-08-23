@@ -2,9 +2,21 @@ class_name CoveResident
 extends Area2D
 
 @export var display_name := "Mara"
-@export var dialogue_lines := PackedStringArray([
-	"The tide brought you home in one piece.",
-	"Keep the cove close when the open sea calls.",
+@export var request_offer_dialogue := PackedStringArray([
+	"The eastern dock took another hard wave.",
+	"Please inspect the damaged boards and tell me what you find.",
+])
+@export var request_active_dialogue := PackedStringArray([
+	"The damaged dock is east of here.",
+	"Tell me what you find after you inspect it.",
+])
+@export var request_report_dialogue := PackedStringArray([
+	"You found the split supports before they gave way.",
+	"Thank you. I will keep everyone off the dock until we can repair it.",
+])
+@export var request_complete_dialogue := PackedStringArray([
+	"The dock will hold until we can repair those supports.",
+	"You saved us from a much worse break.",
 ])
 
 
