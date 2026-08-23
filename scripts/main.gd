@@ -14,6 +14,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var player = $Player
 @onready var sign: CoveSign = $InteractiveObjects/Sign
 @onready var resident = $InteractiveObjects/Resident
+@onready var ship = $Ship
+@onready var ship_entry: Area2D = $Ship/EntryPoint
+@onready var ship_standing_position: Marker2D = $Ship/StandingPosition
+@onready var damaged_dock_return_position: Marker2D = $Ship/DamagedDockReturnPosition
 @onready var damaged_dock_goal: Area2D = $RequestAreas/DamagedDockGoal
 @onready var interaction_prompt: Label = $Interface/InteractionPrompt
 @onready var sign_message: Label = $Interface/SignMessage
@@ -27,6 +31,8 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 
 var _player_near_sign := false
 var _player_near_resident := false
+var _player_near_ship_entry := false
+var _player_aboard_ship := false
 var _interact_held := false
 var _read_count := 0
 var _dialogue_open := false
@@ -44,6 +50,8 @@ func _ready() -> void:
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
 	resident.body_exited.connect(_on_resident_body_exited)
+	ship_entry.body_entered.connect(_on_ship_entry_body_entered)
+	ship_entry.body_exited.connect(_on_ship_entry_body_exited)
 	damaged_dock_goal.body_entered.connect(_on_damaged_dock_goal_body_entered)
 
 
@@ -66,8 +74,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _player_aboard_ship:
+		_leave_ship_at_damaged_dock()
+		get_viewport().set_input_as_handled()
+		return
+
 	if _player_near_resident:
 		_start_dialogue()
+		get_viewport().set_input_as_handled()
+		return
+
+	if _player_near_ship_entry:
+		_enter_ship()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -109,6 +127,22 @@ func _on_resident_body_exited(body: Node2D) -> void:
 	_update_interaction_prompt()
 
 
+func _on_ship_entry_body_entered(body: Node2D) -> void:
+	if body != player or _player_aboard_ship:
+		return
+
+	_player_near_ship_entry = true
+	_update_interaction_prompt()
+
+
+func _on_ship_entry_body_exited(body: Node2D) -> void:
+	if body != player:
+		return
+
+	_player_near_ship_entry = false
+	_update_interaction_prompt()
+
+
 func _on_damaged_dock_goal_body_entered(body: Node2D) -> void:
 	if body != player or _request_state != RequestState.ACTIVE:
 		return
@@ -121,6 +155,26 @@ func _read_sign() -> void:
 	_read_count += 1
 	sign_message.text = sign.interaction_message
 	sign_message.show()
+
+
+func _enter_ship() -> void:
+	if _player_aboard_ship or not _player_near_ship_entry:
+		return
+
+	_player_aboard_ship = true
+	player.enter_ship(ship_standing_position.global_position)
+	sign_message.hide()
+	_update_interaction_prompt()
+
+
+func _leave_ship_at_damaged_dock() -> void:
+	if not _player_aboard_ship:
+		return
+
+	_player_aboard_ship = false
+	_player_near_ship_entry = true
+	player.leave_ship(damaged_dock_return_position.global_position)
+	_update_interaction_prompt()
 
 
 func _start_dialogue() -> void:
@@ -202,8 +256,18 @@ func _update_interaction_prompt() -> void:
 		interaction_prompt.hide()
 		return
 
+	if _player_aboard_ship:
+		interaction_prompt.text = "[E] LEAVE SHIP AT DOCK"
+		interaction_prompt.show()
+		return
+
 	if _player_near_resident:
 		interaction_prompt.text = "[E] TALK TO %s" % resident.display_name.to_upper()
+		interaction_prompt.show()
+		return
+
+	if _player_near_ship_entry:
+		interaction_prompt.text = "[E] ENTER SHIP"
 		interaction_prompt.show()
 		return
 
@@ -220,8 +284,15 @@ func get_playtest_state() -> Dictionary:
 		"player_position": player.position,
 		"sign_position": sign.position,
 		"resident_position": resident.position,
+		"ship_position": ship.position,
+		"ship_entry_position": ship_entry.global_position,
+		"ship_standing_position": ship_standing_position.global_position,
+		"damaged_dock_return_position": damaged_dock_return_position.global_position,
 		"player_near_sign": _player_near_sign,
 		"player_near_resident": _player_near_resident,
+		"player_near_ship_entry": _player_near_ship_entry,
+		"player_aboard_ship": _player_aboard_ship,
+		"player_control_mode": player.get_playtest_state()["control_mode"],
 		"prompt_visible": interaction_prompt.visible,
 		"prompt_text": interaction_prompt.text,
 		"message_visible": sign_message.visible,

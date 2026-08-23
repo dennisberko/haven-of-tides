@@ -3,8 +3,14 @@ extends CharacterBody2D
 
 const SPEED := 210.0
 
+enum ControlMode {
+	WALKING,
+	ABOARD_SHIP,
+}
+
 var facing := Vector2.DOWN
 var movement_enabled := true
+var control_mode := ControlMode.WALKING
 
 
 func _ready() -> void:
@@ -13,7 +19,7 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
-	if not movement_enabled:
+	if control_mode != ControlMode.WALKING or not movement_enabled:
 		velocity = Vector2.ZERO
 		move_and_slide()
 		return
@@ -26,6 +32,20 @@ func _physics_process(_delta: float) -> void:
 		queue_redraw()
 
 	move_and_slide()
+
+
+func enter_ship(standing_position: Vector2) -> void:
+	global_position = standing_position
+	control_mode = ControlMode.ABOARD_SHIP
+	movement_enabled = false
+	velocity = Vector2.ZERO
+
+
+func leave_ship(cove_position: Vector2) -> void:
+	global_position = cove_position
+	control_mode = ControlMode.WALKING
+	movement_enabled = true
+	velocity = Vector2.ZERO
 
 
 func _read_direction() -> Vector2:
@@ -48,6 +68,7 @@ func get_playtest_state() -> Dictionary:
 		"velocity": velocity,
 		"facing": facing,
 		"movement_enabled": movement_enabled,
+		"control_mode": ControlMode.keys()[control_mode],
 	}
 
 

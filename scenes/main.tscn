@@ -1,10 +1,11 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
 [ext_resource type="Script" path="res://scripts/sign.gd" id="3_sign"]
 [ext_resource type="Script" path="res://scripts/resident.gd" id="4_resident"]
+[ext_resource type="Script" path="res://scripts/ship.gd" id="5_ship"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -28,11 +29,32 @@ radius = 72.0
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_damaged_dock_goal"]
 size = Vector2(40, 120)
 
+[sub_resource type="CircleShape2D" id="CircleShape2D_ship_entry"]
+radius = 54.0
+
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
 
 [node name="Cove" type="Node2D" parent="."]
 script = ExtResource("1_cove")
+
+[node name="Ship" type="Node2D" parent="."]
+position = Vector2(1070, 510)
+script = ExtResource("5_ship")
+
+[node name="EntryPoint" type="Area2D" parent="Ship"]
+position = Vector2(-176, -24)
+collision_layer = 0
+collision_mask = 1
+
+[node name="InteractionRange" type="CollisionShape2D" parent="Ship/EntryPoint"]
+shape = SubResource("CircleShape2D_ship_entry")
+
+[node name="StandingPosition" type="Marker2D" parent="Ship"]
+position = Vector2(0, 42)
+
+[node name="DamagedDockReturnPosition" type="Marker2D" parent="Ship"]
+position = Vector2(-176, -24)
 
 [node name="Collisions" type="Node2D" parent="."]
 
@@ -139,7 +161,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 04 · Help Mara"
+text = "Phase 05 · Board the ship"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -242,14 +264,13 @@ text = "[E] CONTINUE"
 horizontal_alignment = 2
 
 [node name="Controls" type="Label" parent="Interface"]
-offset_left = 878.0
+offset_left = 28.0
 offset_top = 590.0
-offset_right = 1125.0
+offset_right = 410.0
 offset_bottom = 624.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0.9)
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 16
-text = "WASD / ARROWS TO MOVE"
-horizontal_alignment = 2
+text = "WASD / ARROWS TO MOVE · E INTERACT"
