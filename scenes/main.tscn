@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3]
+[gd_scene load_steps=18 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://scripts/ship.gd" id="5_ship"]
 [ext_resource type="Script" path="res://scripts/sea_area.gd" id="6_sea"]
 [ext_resource type="Script" path="res://scripts/waypoint_display.gd" id="7_waypoint"]
+[ext_resource type="Script" path="res://scripts/wreck_opportunity.gd" id="8_wreck"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -42,6 +43,12 @@ script = ExtResource("6_sea")
 
 [node name="Cove" type="Node2D" parent="."]
 script = ExtResource("1_cove")
+
+[node name="WreckOpportunity" type="Node2D" parent="."]
+z_index = 1
+process_priority = -5
+position = Vector2(2000, 1050)
+script = ExtResource("8_wreck")
 
 [node name="Ship" type="Node2D" parent="."]
 process_priority = -10
@@ -174,7 +181,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 08 · Set a sailing waypoint"
+text = "Phase 09 · Choose a visible wreck"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false

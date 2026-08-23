@@ -15,6 +15,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var sign: CoveSign = $InteractiveObjects/Sign
 @onready var resident = $InteractiveObjects/Resident
 @onready var sea_area = $SeaArea
+@onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var ship = $Ship
 @onready var ship_entry: Area2D = $ShipAccess/EntryPoint
 @onready var ship_standing_position: Marker2D = $Ship/StandingPosition
@@ -70,6 +71,13 @@ func _ready() -> void:
 	)
 	waypoint_display.configure(sea_state["bounds"], ship.get_dock_definitions())
 	waypoint_display.update_positions(ship.global_position, player.global_position, false)
+	var cove_dock: Dictionary = ship.get_dock_definition("cove")
+	var port_dock: Dictionary = ship.get_dock_definition("port")
+	wreck_opportunity.configure_route(
+		cove_dock["approach_position"],
+		port_dock["approach_position"],
+	)
+	_update_wreck_opportunity()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -91,6 +99,7 @@ func _physics_process(_delta: float) -> void:
 		player.global_position,
 		_player_aboard_ship,
 	)
+	_update_wreck_opportunity()
 	if _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
@@ -271,6 +280,18 @@ func _get_context_controls_text() -> String:
 			return DOCKED_CONTROLS_TEXT
 		return SAILING_CONTROLS_TEXT
 	return WALKING_CONTROLS_TEXT
+
+
+func _update_wreck_opportunity() -> void:
+	wreck_opportunity.update_state(
+		ship.global_position,
+		ship.get_forward_direction(),
+		ship.current_speed,
+		_player_aboard_ship,
+		ship.has_departed_dock,
+		waypoint_display.selected_location_id,
+		_player_aboard_ship and not waypoint_display.chart_visible,
+	)
 
 
 func _on_sign_body_entered(body: Node2D) -> void:
@@ -542,6 +563,7 @@ func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var player_state: Dictionary = player.get_playtest_state()
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
+	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
 	var camera_target := "COVE"
 	if _player_aboard_ship:
 		camera_target = "SHIP"
@@ -658,4 +680,46 @@ func get_playtest_state() -> Dictionary:
 			waypoint_state["chart_visible"]
 			and ship_state["navigation_input_blocked"]
 		),
+		"wreck_count": wreck_state["wreck_count"],
+		"wreck_id": wreck_state["wreck_id"],
+		"wreck_position": wreck_state["wreck_position"],
+		"wreck_direct_route_start": wreck_state["direct_route_start"],
+		"wreck_direct_route_end": wreck_state["direct_route_end"],
+		"wreck_direct_route_offset": wreck_state["direct_route_offset"],
+		"wreck_direct_route_progress": wreck_state["wreck_direct_route_progress"],
+		"wreck_route_acquire_range": wreck_state["route_acquire_range"],
+		"wreck_route_departure_range": wreck_state["route_departure_range"],
+		"wreck_early_visibility_range": wreck_state["early_visibility_range"],
+		"wreck_range_visibility_active": wreck_state["range_visibility_active"],
+		"wreck_current_visibility": wreck_state["current_visibility"],
+		"wreck_early_visible": wreck_state["early_visible"],
+		"wreck_visual_visible": wreck_state["visual_visible"],
+		"wreck_sailing_view_active": wreck_state["sailing_view_active"],
+		"wreck_sailing_viewport_size": wreck_state["sailing_viewport_size"],
+		"wreck_sailing_viewport_world_rect": wreck_state["sailing_viewport_world_rect"],
+		"wreck_visual_local_bounds": wreck_state["wreck_visual_local_bounds"],
+		"wreck_visual_world_rect": wreck_state["wreck_visual_world_rect"],
+		"wreck_visual_on_screen": wreck_state["wreck_visual_on_screen"],
+		"wreck_on_screen": wreck_state["on_screen"],
+		"wreck_near_marker_range": wreck_state["near_marker_range"],
+		"wreck_near_marker_visible": wreck_state["near_marker_visible"],
+		"wreck_near_marker_count": wreck_state["near_marker_count"],
+		"wreck_reached_range": wreck_state["reached_range"],
+		"ship_distance_to_wreck": wreck_state["ship_distance"],
+		"ship_direct_route_offset": wreck_state["ship_direct_route_offset"],
+		"ship_direct_route_progress": wreck_state["ship_direct_route_progress"],
+		"ship_distance_to_port": wreck_state["port_distance"],
+		"wreck_port_waypoint_selected": wreck_state["port_waypoint_selected"],
+		"wreck_started_toward_port": wreck_state["started_toward_port"],
+		"wreck_direct_route_acquired": wreck_state["direct_route_acquired"],
+		"wreck_seen_before_passing": wreck_state["seen_before_passing"],
+		"wreck_sailing_toward_wreck": wreck_state["sailing_toward_wreck"],
+		"wreck_left_direct_route": wreck_state["left_direct_route"],
+		"wreck_reached": wreck_state["reached"],
+		"wreck_reached_after_course_change": wreck_state["reached_after_course_change"],
+		"wreck_distance_to_port_at_reach": wreck_state["distance_to_port_at_reach"],
+		"wreck_returning_to_port": wreck_state["returning_to_port"],
+		"wreck_route_state": wreck_state["route_state"],
+		"wreck_known_chart_location": wreck_state["known_chart_location"],
+		"wreck_chart_marker_count": wreck_state["chart_marker_count"],
 	}
