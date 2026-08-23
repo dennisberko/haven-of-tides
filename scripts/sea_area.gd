@@ -4,6 +4,8 @@ const SEA_BOUNDS := Rect2(-400.0, -400.0, 3600.0, 3000.0)
 const SEA_BACKGROUND := Rect2(-1100.0, -1100.0, 5000.0, 4400.0)
 const TEST_ISLAND_CENTER := Vector2(1550.0, 1250.0)
 const TEST_ISLAND_RADIUS := 220.0
+const PORT_LAND_RECT := Rect2(2320.0, 240.0, 620.0, 440.0)
+const PORT_WALKING_RECT := Rect2(2420.0, 380.0, 420.0, 250.0)
 var cove_shoreline := PackedVector2Array([
 	Vector2(64, 158), Vector2(178, 76), Vector2(451, 48),
 	Vector2(817, 64), Vector2(1048, 174), Vector2(1090, 366),
@@ -21,6 +23,8 @@ func get_playtest_state() -> Dictionary:
 		"bounds": SEA_BOUNDS,
 		"island_center": TEST_ISLAND_CENTER,
 		"island_radius": TEST_ISLAND_RADIUS,
+		"port_land_rect": PORT_LAND_RECT,
+		"port_walking_rect": PORT_WALKING_RECT,
 		"cove_shoreline": cove_shoreline,
 	}
 
@@ -42,6 +46,31 @@ func _draw() -> void:
 	draw_circle(TEST_ISLAND_CENTER + Vector2(0, 10), 176.0, Color("#65a85a"))
 	draw_circle(TEST_ISLAND_CENTER + Vector2(-68, -52), 38.0, Color("#657477"))
 	draw_circle(TEST_ISLAND_CENTER + Vector2(82, 61), 26.0, Color("#809193"))
+
+	# One small south-facing dock gives the test island a safe shore point.
+	draw_rect(Rect2(1522.0, 1428.0, 56.0, 132.0), Color("#6b452c"))
+	for y in range(1438, 1554, 22):
+		draw_line(Vector2(1528.0, y), Vector2(1572.0, y), Color("#b27a47"), 9.0)
+	draw_rect(Rect2(1508.0, 1548.0, 84.0, 14.0), Color("#493323"))
+
+	# The only test port is one compact land area with one south-facing dock.
+	draw_rect(PORT_LAND_RECT.grow(26.0), Color("#55b8b380"))
+	draw_rect(PORT_LAND_RECT, Color("#e2bf72"))
+	draw_rect(PORT_LAND_RECT.grow(-38.0), Color("#65a85a"))
+	draw_rect(Rect2(2460.0, 330.0, 300.0, 150.0), Color("#8b5a36"))
+	draw_colored_polygon(PackedVector2Array([
+		Vector2(2435.0, 345.0), Vector2(2610.0, 250.0), Vector2(2785.0, 345.0),
+	]), Color("#633f2a"))
+	draw_rect(Rect2(2598.0, 415.0, 42.0, 65.0), Color("#342b29"))
+	draw_rect(Rect2(2602.0, 620.0, 56.0, 130.0), Color("#6b452c"))
+	for y in range(630, 742, 22):
+		draw_line(Vector2(2608.0, y), Vector2(2652.0, y), Color("#b27a47"), 9.0)
+	draw_rect(Rect2(2588.0, 738.0, 84.0, 14.0), Color("#493323"))
+
+	# Small bright strips mark the three dock approach areas.
+	draw_arc(Vector2(1070.0, 760.0), 70.0, 0.0, TAU, 32, Color("#fff1c580"), 5.0)
+	draw_arc(Vector2(1550.0, 1575.0), 70.0, 0.0, TAU, 32, Color("#fff1c580"), 5.0)
+	draw_arc(Vector2(2630.0, 785.0), 70.0, 0.0, TAU, 32, Color("#fff1c580"), 5.0)
 
 	# The sea-edge line makes the movement limit visible.
 	draw_rect(SEA_BOUNDS, Color("#d8eee8a0"), false, 8.0)

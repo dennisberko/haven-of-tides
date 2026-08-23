@@ -35,6 +35,8 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT"
 const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE"
+const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY"
+const SHORE_RETURN_DISTANCE := 64.0
 
 var _player_near_sign := false
 var _player_near_resident := false
@@ -47,6 +49,10 @@ var _dialogue_line_index := -1
 var _dialogue_lines := PackedStringArray()
 var _request_state := RequestState.AVAILABLE
 var _last_leave_allowed := false
+var _available_dock_id := ""
+var _player_shore_id := ""
+var _player_near_ship_return := false
+var _last_ship_docked := false
 
 
 func _ready() -> void:
@@ -55,6 +61,7 @@ func _ready() -> void:
 		sea_state["bounds"],
 		sea_state["island_center"],
 		sea_state["island_radius"],
+		sea_state["port_land_rect"],
 		sea_state["cove_shoreline"],
 	)
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -76,8 +83,31 @@ func _physics_process(_delta: float) -> void:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
 		var leave_allowed: bool = ship.can_leave_at_damaged_dock()
-		if leave_allowed != _last_leave_allowed:
+		var available_dock_id: String = ship.get_available_dock_id()
+		var ship_docked: bool = ship.is_docked
+		if ship_docked:
+			controls_help.text = DOCKED_CONTROLS_TEXT
+		elif controls_help.text != SAILING_CONTROLS_TEXT:
+			controls_help.text = SAILING_CONTROLS_TEXT
+		if (
+			leave_allowed != _last_leave_allowed
+			or available_dock_id != _available_dock_id
+			or ship_docked != _last_ship_docked
+		):
 			_last_leave_allowed = leave_allowed
+			_available_dock_id = available_dock_id
+			_last_ship_docked = ship_docked
+			_update_interaction_prompt()
+	elif not _player_shore_id.is_empty():
+		travel_camera.global_position = player.global_position
+		var dock_definition: Dictionary = ship.get_current_dock_definition()
+		var near_return := false
+		if not dock_definition.is_empty():
+			near_return = player.global_position.distance_to(
+				dock_definition["shore_position"]
+			) <= SHORE_RETURN_DISTANCE
+		if near_return != _player_near_ship_return:
+			_player_near_ship_return = near_return
 			_update_interaction_prompt()
 	else:
 		travel_camera.global_position = COVE_CAMERA_POSITION
@@ -103,8 +133,17 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	if _player_aboard_ship:
-		if ship.can_leave_at_damaged_dock():
+		if ship.is_docked:
+			_go_ashore()
+		elif not ship.get_available_dock_id().is_empty():
+			_dock_ship()
+		elif ship.can_leave_at_damaged_dock():
 			_leave_ship_at_damaged_dock()
+		get_viewport().set_input_as_handled()
+		return
+
+	if not _player_shore_id.is_empty() and _player_near_ship_return:
+		_return_to_ship()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -191,9 +230,12 @@ func _enter_ship() -> void:
 		return
 
 	_player_aboard_ship = true
+	ship.set_captain_aboard(true)
 	ship.set_controls_enabled(true)
 	player.enter_ship(ship_standing_position.global_position)
 	_last_leave_allowed = ship.can_leave_at_damaged_dock()
+	_available_dock_id = ship.get_available_dock_id()
+	_last_ship_docked = ship.is_docked
 	controls_help.text = SAILING_CONTROLS_TEXT
 	sign_message.hide()
 	_update_interaction_prompt()
@@ -205,10 +247,65 @@ func _leave_ship_at_damaged_dock() -> void:
 
 	_player_aboard_ship = false
 	ship.set_controls_enabled(false)
+	ship.set_captain_aboard(false)
 	_player_near_ship_entry = true
 	player.leave_ship(damaged_dock_return_position.global_position)
 	_last_leave_allowed = false
+	_available_dock_id = ""
+	_last_ship_docked = false
 	controls_help.text = WALKING_CONTROLS_TEXT
+	_update_interaction_prompt()
+
+
+func _dock_ship() -> void:
+	if not _player_aboard_ship or ship.is_docked:
+		return
+
+	var dock_id: String = ship.dock_at_available()
+	if dock_id.is_empty():
+		return
+
+	_available_dock_id = ""
+	_last_leave_allowed = false
+	_last_ship_docked = true
+	controls_help.text = DOCKED_CONTROLS_TEXT
+	_update_interaction_prompt()
+
+
+func _go_ashore() -> void:
+	if not _player_aboard_ship or not ship.is_docked:
+		return
+
+	var definition: Dictionary = ship.get_current_dock_definition()
+	if definition.is_empty():
+		return
+
+	_player_aboard_ship = false
+	_player_shore_id = String(definition["id"])
+	_player_near_ship_return = true
+	ship.set_captain_aboard(false)
+	player.go_ashore(
+		definition["shore_position"],
+		_player_shore_id,
+		definition["shore_region"],
+	)
+	controls_help.text = WALKING_CONTROLS_TEXT
+	_update_interaction_prompt()
+
+
+func _return_to_ship() -> void:
+	if _player_shore_id.is_empty() or not _player_near_ship_return:
+		return
+	if not ship.is_docked or ship.current_dock_id != _player_shore_id:
+		return
+
+	_player_aboard_ship = true
+	_player_shore_id = ""
+	_player_near_ship_return = false
+	player.enter_ship(ship_standing_position.global_position)
+	ship.set_captain_aboard(true)
+	_last_ship_docked = true
+	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
 
 
@@ -292,11 +389,24 @@ func _update_interaction_prompt() -> void:
 		return
 
 	if _player_aboard_ship:
-		if ship.can_leave_at_damaged_dock():
+		if ship.is_docked:
+			var current_dock: Dictionary = ship.get_current_dock_definition()
+			interaction_prompt.text = "[E] GO ASHORE AT %s" % current_dock["name"]
+			interaction_prompt.show()
+		elif not _available_dock_id.is_empty():
+			var available_definition: Dictionary = ship.get_dock_definition(_available_dock_id)
+			interaction_prompt.text = "[E] DOCK AT %s" % available_definition["name"]
+			interaction_prompt.show()
+		elif ship.can_leave_at_damaged_dock():
 			interaction_prompt.text = "[E] LEAVE SHIP AT DOCK"
 			interaction_prompt.show()
 		else:
 			interaction_prompt.hide()
+		return
+
+	if not _player_shore_id.is_empty() and _player_near_ship_return:
+		interaction_prompt.text = "[E] RETURN TO SHIP"
+		interaction_prompt.show()
 		return
 
 	if _player_near_resident:
@@ -319,6 +429,12 @@ func _update_interaction_prompt() -> void:
 
 func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
+	var player_state: Dictionary = player.get_playtest_state()
+	var camera_target := "COVE"
+	if _player_aboard_ship:
+		camera_target = "SHIP"
+	elif not _player_shore_id.is_empty():
+		camera_target = "PLAYER_ASHORE"
 	return {
 		"player_position": player.position,
 		"sign_position": sign.position,
@@ -336,6 +452,7 @@ func get_playtest_state() -> Dictionary:
 		"ship_turn_speed": ship_state["turn_speed"],
 		"ship_controls": ship_state["controls"],
 		"ship_controls_enabled": ship_state["controls_enabled"],
+		"ship_captain_aboard": ship_state["captain_aboard"],
 		"ship_has_departed_dock": ship_state["has_departed_dock"],
 		"ship_at_damaged_dock": ship_state["at_damaged_dock"],
 		"ship_leave_allowed": ship_state["leave_allowed"],
@@ -346,6 +463,8 @@ func get_playtest_state() -> Dictionary:
 		"sea_bounds": ship_state["sea_bounds"],
 		"test_island_center": ship_state["island_center"],
 		"test_island_radius": ship_state["island_radius"],
+		"port_land_rect": ship_state["port_land_rect"],
+		"port_walking_rect": sea_area.get_playtest_state()["port_walking_rect"],
 		"ship_collision_radius": ship_state["collision_radius"],
 		"ship_collision_response": ship_state["last_collision_response"],
 		"ship_steering_locked": ship_state["steering_locked"],
@@ -354,8 +473,19 @@ func get_playtest_state() -> Dictionary:
 		"ship_dock_exit_clear_y": ship_state["dock_exit_clear_y"],
 		"ship_hull_clearance": ship_state["hull_clearance"],
 		"cove_shoreline": ship_state["cove_shoreline"],
+		"dock_count": ship_state["dock_count"],
+		"dock_ids": ship_state["dock_ids"],
+		"dock_names": ship_state["dock_names"],
+		"dock_definitions": ship_state["dock_definitions"],
+		"dock_thresholds": ship_state["dock_thresholds"],
+		"dock_eligibility": ship_state["dock_eligibility"],
+		"available_dock_id": ship_state["available_dock_id"],
+		"ship_is_docked": ship_state["is_docked"],
+		"current_dock_id": ship_state["current_dock_id"],
+		"last_dock_id": ship_state["last_dock_id"],
+		"ship_fixed_dock_pose": ship_state["fixed_dock_pose"],
 		"camera_position": travel_camera.global_position,
-		"camera_target": "SHIP" if _player_aboard_ship else "COVE",
+		"camera_target": camera_target,
 		"ship_entry_position": ship_entry.global_position,
 		"ship_standing_position": ship_standing_position.global_position,
 		"damaged_dock_return_position": damaged_dock_return_position.global_position,
@@ -363,7 +493,15 @@ func get_playtest_state() -> Dictionary:
 		"player_near_resident": _player_near_resident,
 		"player_near_ship_entry": _player_near_ship_entry,
 		"player_aboard_ship": _player_aboard_ship,
-		"player_control_mode": player.get_playtest_state()["control_mode"],
+		"player_control_mode": player_state["control_mode"],
+		"player_movement_enabled": player_state["movement_enabled"],
+		"player_shore_id": _player_shore_id,
+		"player_near_ship_return": _player_near_ship_return,
+		"shore_return_distance": SHORE_RETURN_DISTANCE,
+		"player_shore_region_kind": player_state["shore_region_kind"],
+		"player_shore_region_center": player_state["shore_region_center"],
+		"player_shore_region_radius": player_state["shore_region_radius"],
+		"player_shore_region_rect": player_state["shore_region_rect"],
 		"prompt_visible": interaction_prompt.visible,
 		"prompt_text": interaction_prompt.text,
 		"message_visible": sign_message.visible,

@@ -13,19 +13,71 @@ const DOCK_EXIT_CLEAR_Y := 655.0
 const DOCK_EXIT_HALF_WIDTH := 45.0
 const COVE_ENTRANCE_POSITION := Vector2(1070.0, 760.0)
 const COVE_ENTRANCE_RADIUS := 110.0
+const DOCK_DISTANCE_THRESHOLD := 70.0
+const DOCK_MAX_SPEED := 12.0
+const DOCK_MIN_ALIGNMENT := 0.92
+const DOCK_IDS := ["cove", "island", "port"]
+const DOCK_DEFINITIONS := {
+	"cove": {
+		"id": "cove",
+		"name": "DAMAGED COVE DOCK",
+		"approach_position": Vector2(1070.0, 760.0),
+		"approach_heading": Vector2.UP,
+		"snap_position": Vector2(1070.0, 510.0),
+		"snap_rotation": PI,
+		"shore_position": Vector2(894.0, 486.0),
+		"shore_region": {
+			"kind": "COVE_COLLISION",
+			"center": Vector2.ZERO,
+		},
+	},
+	"island": {
+		"id": "island",
+		"name": "TEST ISLAND DOCK",
+		"approach_position": Vector2(1550.0, 1575.0),
+		"approach_heading": Vector2.UP,
+		"snap_position": Vector2(1550.0, 1575.0),
+		"snap_rotation": PI,
+		"shore_position": Vector2(1550.0, 1400.0),
+		"shore_region": {
+			"kind": "CIRCLE",
+			"center": Vector2(1550.0, 1250.0),
+			"radius": 150.0,
+		},
+	},
+	"port": {
+		"id": "port",
+		"name": "TEST PORT DOCK",
+		"approach_position": Vector2(2630.0, 785.0),
+		"approach_heading": Vector2.UP,
+		"snap_position": Vector2(2630.0, 785.0),
+		"snap_rotation": PI,
+		"shore_position": Vector2(2630.0, 630.0),
+		"shore_region": {
+			"kind": "RECTANGLE",
+			"rect": Rect2(2420.0, 380.0, 420.0, 250.0),
+		},
+	},
+}
 
 var current_speed := 0.0
 var sailing_velocity := Vector2.ZERO
 var controls_enabled := false
+var captain_aboard := false
 var has_departed_dock := false
 var at_damaged_dock := true
+var is_docked := false
+var current_dock_id := ""
+var last_dock_id := ""
 var last_collision_response := "NONE"
 
 var _sea_bounds := Rect2()
 var _island_center := Vector2.ZERO
 var _island_radius := 0.0
+var _port_land_rect := Rect2()
 var _cove_shoreline := PackedVector2Array()
 var _dock_exit_cleared := false
+var _departure_input_armed := false
 
 
 func _ready() -> void:
@@ -36,25 +88,36 @@ func configure_sailing_area(
 		sea_bounds: Rect2,
 		island_center: Vector2,
 		island_radius: float,
+		port_land_rect: Rect2,
 		cove_shoreline: PackedVector2Array,
 ) -> void:
 	_sea_bounds = sea_bounds
 	_island_center = island_center
 	_island_radius = island_radius
+	_port_land_rect = port_land_rect
 	_cove_shoreline = cove_shoreline
 
 
 func set_controls_enabled(enabled: bool) -> void:
-	controls_enabled = enabled
+	controls_enabled = enabled and not is_docked
 	if not controls_enabled:
 		current_speed = 0.0
 		sailing_velocity = Vector2.ZERO
 
 
+func set_captain_aboard(aboard: bool) -> void:
+	captain_aboard = aboard
+	if not captain_aboard:
+		_departure_input_armed = false
+		set_controls_enabled(false)
+
+
 func can_leave_at_damaged_dock() -> bool:
 	return (
 		controls_enabled
+		and captain_aboard
 		and at_damaged_dock
+		and not is_docked
 		and not has_departed_dock
 		and is_zero_approx(current_speed)
 	)
@@ -68,13 +131,136 @@ func get_forward_direction() -> Vector2:
 	return Vector2.UP.rotated(rotation)
 
 
-func _physics_process(delta: float) -> void:
-	if not controls_enabled:
+func get_available_dock_id() -> String:
+	for dock_id in DOCK_IDS:
+		var metrics := get_dock_eligibility(dock_id)
+		if metrics["eligible"]:
+			return dock_id
+	return ""
+
+
+func get_dock_eligibility(dock_id: String) -> Dictionary:
+	if not DOCK_DEFINITIONS.has(dock_id):
+		return {}
+
+	var definition: Dictionary = DOCK_DEFINITIONS[dock_id]
+	var approach_position: Vector2 = definition["approach_position"]
+	var approach_heading: Vector2 = definition["approach_heading"]
+	var distance := global_position.distance_to(approach_position)
+	var speed := absf(current_speed)
+	var alignment := get_forward_direction().dot(approach_heading.normalized())
+	var close_enough := distance <= DOCK_DISTANCE_THRESHOLD
+	var slow_enough := speed <= DOCK_MAX_SPEED
+	var aligned := alignment >= DOCK_MIN_ALIGNMENT
+	var operating := controls_enabled and captain_aboard and not is_docked
+	var rejection_reasons := PackedStringArray()
+	if not operating:
+		rejection_reasons.append("SHIP_NOT_UNDER_SAILING_CONTROL")
+	if not close_enough:
+		rejection_reasons.append("TOO_FAR")
+	if not slow_enough:
+		rejection_reasons.append("TOO_FAST")
+	if not aligned:
+		rejection_reasons.append("WRONG_HEADING")
+
+	return {
+		"dock_id": dock_id,
+		"dock_name": definition["name"],
+		"distance": distance,
+		"speed": speed,
+		"alignment": alignment,
+		"heading_error_degrees": rad_to_deg(acos(clampf(alignment, -1.0, 1.0))),
+		"distance_threshold": DOCK_DISTANCE_THRESHOLD,
+		"max_speed": DOCK_MAX_SPEED,
+		"min_alignment": DOCK_MIN_ALIGNMENT,
+		"close_enough": close_enough,
+		"slow_enough": slow_enough,
+		"aligned": aligned,
+		"operating": operating,
+		"eligible": operating and close_enough and slow_enough and aligned,
+		"rejection_reasons": rejection_reasons,
+	}
+
+
+func dock_at_available() -> String:
+	var dock_id := get_available_dock_id()
+	if dock_id.is_empty():
+		return ""
+
+	var definition: Dictionary = DOCK_DEFINITIONS[dock_id]
+	global_position = definition["snap_position"]
+	rotation = definition["snap_rotation"]
+	current_speed = 0.0
+	sailing_velocity = Vector2.ZERO
+	controls_enabled = false
+	is_docked = true
+	current_dock_id = dock_id
+	last_dock_id = dock_id
+	at_damaged_dock = dock_id == "cove"
+	_dock_exit_cleared = dock_id != "cove"
+	_departure_input_armed = false
+	last_collision_response = "DOCKED_%s" % dock_id.to_upper()
+	queue_redraw()
+	return dock_id
+
+
+func get_current_dock_definition() -> Dictionary:
+	if current_dock_id.is_empty() or not DOCK_DEFINITIONS.has(current_dock_id):
+		return {}
+	return (DOCK_DEFINITIONS[current_dock_id] as Dictionary).duplicate(true)
+
+
+func get_dock_definition(dock_id: String) -> Dictionary:
+	if not DOCK_DEFINITIONS.has(dock_id):
+		return {}
+	return (DOCK_DEFINITIONS[dock_id] as Dictionary).duplicate(true)
+
+
+func get_dock_definitions() -> Array:
+	var definitions := []
+	for dock_id in DOCK_IDS:
+		definitions.append((DOCK_DEFINITIONS[dock_id] as Dictionary).duplicate(true))
+	return definitions
+
+
+func _release_current_dock() -> void:
+	if not is_docked or not captain_aboard:
 		return
 
+	var departing_dock_id := current_dock_id
+	is_docked = false
+	current_dock_id = ""
+	controls_enabled = true
+	current_speed = 0.0
+	sailing_velocity = Vector2.ZERO
+	if departing_dock_id == "cove":
+		at_damaged_dock = true
+		_dock_exit_cleared = false
+	else:
+		at_damaged_dock = false
+		_dock_exit_cleared = true
+	last_collision_response = "RELEASED_%s" % departing_dock_id.to_upper()
+	queue_redraw()
+
+
+func _physics_process(delta: float) -> void:
 	var throttle_pressed := (
 		Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
 	)
+	if is_docked:
+		current_speed = 0.0
+		sailing_velocity = Vector2.ZERO
+		if captain_aboard:
+			if not throttle_pressed:
+				_departure_input_armed = true
+			elif _departure_input_armed:
+				_departure_input_armed = false
+				_release_current_dock()
+		return
+
+	if not controls_enabled:
+		return
+
 	var brake_pressed := (
 		Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)
 	)
@@ -111,9 +297,7 @@ func _move_with_sailing_limits(delta: float) -> void:
 	var bounded_position := proposed_position.clamp(minimum, maximum)
 	if not bounded_position.is_equal_approx(proposed_position):
 		global_position = bounded_position
-		current_speed = 0.0
-		sailing_velocity = Vector2.ZERO
-		last_collision_response = "SEA_EDGE_STOP"
+		_stop_at_land("SEA_EDGE_STOP")
 		return
 
 	var island_clearance := _island_radius + HULL_CLEARANCE
@@ -123,18 +307,18 @@ func _move_with_sailing_limits(delta: float) -> void:
 		if safe_direction.is_zero_approx():
 			safe_direction = -get_forward_direction()
 		global_position = _island_center + safe_direction * island_clearance
-		current_speed = 0.0
-		sailing_velocity = Vector2.ZERO
-		last_collision_response = "ISLAND_STOP"
+		_stop_at_land("ISLAND_STOP")
+		return
+
+	if _collides_with_port_land(proposed_position):
+		_stop_at_land("PORT_STOP")
 		return
 
 	if (
 		_collides_with_cove_shore(proposed_position)
-		and not _is_in_initial_dock_exit(proposed_position)
+		and not _is_in_damaged_dock_exit(proposed_position)
 	):
-		current_speed = 0.0
-		sailing_velocity = Vector2.ZERO
-		last_collision_response = "COVE_SHORE_STOP"
+		_stop_at_land("COVE_SHORE_STOP")
 		return
 
 	global_position = proposed_position
@@ -142,9 +326,15 @@ func _move_with_sailing_limits(delta: float) -> void:
 	last_collision_response = "NONE"
 
 
+func _stop_at_land(response: String) -> void:
+	current_speed = 0.0
+	sailing_velocity = Vector2.ZERO
+	last_collision_response = response
+
+
 func _update_dock_exit_state() -> void:
 	var outward_separation := global_position.y - DOCK_POSITION.y
-	if not has_departed_dock and outward_separation > DOCK_DEPARTURE_DISTANCE:
+	if at_damaged_dock and outward_separation > DOCK_DEPARTURE_DISTANCE:
 		has_departed_dock = true
 		at_damaged_dock = false
 		queue_redraw()
@@ -153,12 +343,25 @@ func _update_dock_exit_state() -> void:
 		_dock_exit_cleared = true
 
 
-func _is_in_initial_dock_exit(proposed_position: Vector2) -> bool:
+func _is_in_damaged_dock_exit(proposed_position: Vector2) -> bool:
 	return (
 		not _dock_exit_cleared
 		and absf(proposed_position.x - DOCK_POSITION.x) <= DOCK_EXIT_HALF_WIDTH
 		and proposed_position.y >= DOCK_POSITION.y
 		and proposed_position.y <= DOCK_EXIT_CLEAR_Y + HULL_CLEARANCE
+	)
+
+
+func _collides_with_port_land(proposed_position: Vector2) -> bool:
+	if not _port_land_rect.has_area():
+		return false
+	var closest_point := proposed_position.clamp(
+		_port_land_rect.position,
+		_port_land_rect.end,
+	)
+	return (
+		_port_land_rect.has_point(proposed_position)
+		or proposed_position.distance_to(closest_point) < HULL_CLEARANCE
 	)
 
 
@@ -183,6 +386,19 @@ func _collides_with_cove_shore(proposed_position: Vector2) -> bool:
 
 
 func get_playtest_state() -> Dictionary:
+	var eligibility := {}
+	for dock_id in DOCK_IDS:
+		eligibility[dock_id] = get_dock_eligibility(dock_id)
+	var current_definition := get_current_dock_definition()
+	var fixed_pose := false
+	if not current_definition.is_empty():
+		fixed_pose = (
+			global_position.is_equal_approx(current_definition["snap_position"])
+			and is_equal_approx(rotation, float(current_definition["snap_rotation"]))
+			and is_zero_approx(current_speed)
+			and sailing_velocity.is_zero_approx()
+		)
+
 	return {
 		"position": global_position,
 		"rotation_radians": rotation,
@@ -196,6 +412,7 @@ func get_playtest_state() -> Dictionary:
 		"top_speed": TOP_SPEED,
 		"turn_speed": TURN_SPEED,
 		"controls_enabled": controls_enabled,
+		"captain_aboard": captain_aboard,
 		"has_departed_dock": has_departed_dock,
 		"at_damaged_dock": at_damaged_dock,
 		"leave_allowed": can_leave_at_damaged_dock(),
@@ -210,15 +427,37 @@ func get_playtest_state() -> Dictionary:
 		"sea_bounds": _sea_bounds,
 		"island_center": _island_center,
 		"island_radius": _island_radius,
+		"port_land_rect": _port_land_rect,
 		"cove_shoreline": _cove_shoreline,
 		"collision_radius": HULL_CLEARANCE,
 		"hull_clearance": HULL_CLEARANCE,
 		"last_collision_response": last_collision_response,
+		"dock_count": DOCK_IDS.size(),
+		"dock_ids": DOCK_IDS.duplicate(),
+		"dock_names": [
+			DOCK_DEFINITIONS["cove"]["name"],
+			DOCK_DEFINITIONS["island"]["name"],
+			DOCK_DEFINITIONS["port"]["name"],
+		],
+		"dock_definitions": get_dock_definitions(),
+		"dock_thresholds": {
+			"distance": DOCK_DISTANCE_THRESHOLD,
+			"max_speed": DOCK_MAX_SPEED,
+			"min_alignment": DOCK_MIN_ALIGNMENT,
+		},
+		"dock_eligibility": eligibility,
+		"available_dock_id": get_available_dock_id(),
+		"is_docked": is_docked,
+		"current_dock_id": current_dock_id,
+		"last_dock_id": last_dock_id,
+		"fixed_dock_pose": fixed_pose,
+		"departure_input_armed": _departure_input_armed,
 		"controls": {
 			"forward": "W_OR_UP",
 			"turn_left": "A_OR_LEFT",
 			"turn_right": "D_OR_RIGHT",
 			"brake": "S_OR_DOWN",
+			"dock_or_ashore": "E",
 		},
 	}
 
@@ -241,7 +480,7 @@ func _draw() -> void:
 	draw_circle(Vector2(0, -12), 8.0, Color("#342b29"))
 	draw_line(Vector2(0, -12), Vector2(18, -47), Color("#e8d2a2"), 4.0)
 
-	# The gangplank is visible only before the ship leaves the damaged dock.
+	# The gangplank is visible when the ship is at the damaged cove dock.
 	if at_damaged_dock:
 		draw_line(Vector2(176, 24), Vector2(39, 24), Color("#493323"), 18.0)
 		draw_line(Vector2(176, 24), Vector2(39, 24), Color("#b27a47"), 11.0)
