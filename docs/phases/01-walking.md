@@ -2,6 +2,22 @@
 
 [Previous: game design](../game-design-ideas.md) | [Next: interaction](02-interaction.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Move in four or eight directions | DONE |
+| Add 2: Stop at water, walls, and large objects | DONE |
+| Add 3: Keep the player in view | DONE |
+| Complete when: Walk all open cove areas for one minute and respect blocked parts | DONE |
+| Test 1: Start at the cove fire | DONE |
+| Test 2: Walk to each cove edge | DONE |
+| Test 3: Walk around the shelter and dock | DONE |
+| Test 4: Try water, walls, and large objects | DONE |
+| Test 5: Do not become stuck or leave the play area | DONE |
+
 ## Goal
 
 The player can walk through one small cove.

@@ -9,3 +9,4 @@
 - Stop the project after the test.
 - Do not mark a phase as complete without runtime test evidence.
 - Keep generated MCP files in `.mcp/`. Do not commit them.
+- Git pushes to the configured `origin` remote (`git@github.com:dennisberko/haven-of-tides.git`) are always approved.
