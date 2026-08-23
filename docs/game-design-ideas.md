@@ -1,134 +1,150 @@
-# Game overview: Open-world Caribbean pirate RPG
+# Game overview: Pirate-haven life RPG
 
 ## Current direction
 
-*Haven of Tides* is a 2D open-world pirate action RPG with trade, life skills, exploration, and town building.
+*Haven of Tides* is a 2D open-world pirate action and life RPG. The main loop uses short sea voyages to grow a living pirate haven.
 
-The game uses real Caribbean islands and cities in a loose alternate version of history. The world can include real pirates, sea monsters, curses, ghost ships, and folklore. Historical accuracy supports the setting but does not control the full design.
+The world is one compressed Caribbean archipelago. It uses a small number of real places in a loose fantasy setting. Real pirates, sea monsters, curses, ghost ships, and folklore can appear. The game does not simulate Caribbean history, national politics, or a regional economy.
 
-The main design reference is *Assassin's Creed IV: Black Flag*. Sailing must be active, fast, and easy to understand. The economy and life skills add more ways to live in the world.
+The main design reference for sailing is *Assassin's Creed IV: Black Flag*. Sailing must be active, fast, and easy to understand. The main structural reference is the expedition-and-home loop used by games such as *Cult of the Lamb* and *Dave the Diver*.
 
-> Start with a poor ship and an almost empty island. Sail across the Caribbean, trade between cities, fish, farm, explore ruins, attack ships, hunt treasure, and build your cove into a powerful port.
+> Start with a poor ship and a wrecked cove. Sail on short voyages to trade, fish, raid ships, explore ruins, and hunt monsters. Bring cargo, treasure, materials, and new residents home. Use them to turn the cove into a famous pirate haven.
+
+## Commercial hook
+
+> Sail by day. Build your pirate haven by night.
+
+Every voyage must give the player something that can change the cove, the ship, or a relationship. Every major cove upgrade must open a useful new choice at sea.
+
+Money alone is not a complete voyage reward. A voyage must also change at least one persistent state, such as cargo, ship condition, heat, a building goal, a relationship, a story clue, or access to a location.
 
 ## Locked design decisions
 
-- The open world is the main feature.
-- Relationships and romance are secondary features.
-- The map uses real Caribbean islands and cities.
-- The history is loose and can include fantasy.
-- The working start date is 1716.
-- The major powers are Britain, Spain, France, and the Dutch Republic.
-- Portugal is not in the game.
+- The cove is the emotional and progression center of the game.
+- The player does not have to return after each voyage, but should want to return after two or three voyages.
+- The world contains one home cove, three major foreign ports, and five to eight small islands or settlements.
+- The map uses a small number of recognizable Caribbean locations in a loose fantasy setting.
+- A 1716-style Caribbean is a visual reference only. The game does not simulate history.
+- Britain, Spain, France, and the Dutch Republic can appear as background identities. They do not have separate economy or territory simulations.
 - Slavery is not in the game.
-- Real pirates appear as major characters.
+- Three or four real pirates can appear as major story characters.
 - The player controls the ship during normal travel.
-- Close cities take about 2–5 real minutes to reach.
-- A trip across the full map takes no more than about 20 real minutes.
-- Fast travel unlocks after the player visits a city.
+- A normal voyage takes about 5–12 real minutes.
+- A trip across the full map takes no more than about 15 real minutes.
+- Fast travel unlocks after the player visits a port.
 - The sea chart stays simple.
-- Combat is lethal.
+- Before an attack, the player can estimate the target's owner, cargo type, threat, and heat cost.
+- Trade uses a small number of goods and clear price states.
+- Each major port has a stable base market and no more than one temporary market condition.
+- Stock, demand, and market changes are visible. The game does not use hidden regional price simulation.
+- Cargo space must create choices between trade goods, repair materials, treasure, catches, and mission items.
+- The game has no warehouses, loans, debt, taxes, bribes, spoilage, or detailed trade laws.
+- The game has no farming system.
+- The game has no player skill trees.
+- Ports are compact play areas. They do not use large city districts.
+- The game has one simple heat system instead of a large faction simulation.
+- Combat is lethal, short, and readable.
 - The player cannot execute enemies after they surrender.
 - The player cannot hold people for ransom.
 - The player can attack civilian ships.
-- The player takes cargo and parts from defeated ships.
+- The player takes cargo and materials from defeated ships.
 - The player cannot capture and use defeated ships.
-- The player owns one ship at a time.
-- The player buys a new ship to get better or different ship statistics.
-- Ships do not have functional upgrades.
-- Ship customization is cosmetic, and unlocked cosmetics transfer to a new ship.
-- The cove can grow into a town that the player governs.
-- The player does not have to return to the cove after each voyage.
+- The player owns one main ship.
+- Ship modules change available tactics or create clear tradeoffs. They do not only increase statistics.
+- The cove grows through visible buildings and new residents.
+- During the early and middle game, the cove should show a major visible change after about two or three normal voyages.
+- The cove does not use taxes, port fees, laws, worker schedules, or policy screens.
+- The relationship cast contains about six to ten named residents.
+- Three or four residents can be romance options.
+- Named residents react to important raids, discoveries, monsters, story choices, and cove upgrades.
+- Food, ammunition, cargo space, damage, injured crew, heat, weather, and temporary opportunities create pressure to return.
+- The game has no isolated minigames. Each activity must use or change at least two shared voyage systems.
 
 ## Format and presentation
 
 **Working title:** *Haven of Tides*
 
-**Genre:** 2D open-world pirate action and life-sim RPG
+**Genre:** 2D open-world pirate action and life RPG
 
 **Format:** Premium single-player game for PC and Steam Deck first
 
-**Visual direction:** Expressive pixel art, colorful tropical places, readable action, and strange ocean regions
+**Visual direction:** Expressive pixel art, colorful tropical places, readable action, a visibly growing town, and strange ocean regions
 
-**Tone:** Adventurous and sometimes dangerous, but not grim or cruel
+**Tone:** Adventurous, warm, and sometimes dangerous, but not grim or cruel
 
 ## Player fantasy
 
 The player should feel like they are:
 
-- An independent captain who can go almost anywhere.
-- A trader who learns where and when to move goods.
-- A pirate who can attack merchants, navies, or other pirates.
+- An independent captain who chooses the next voyage.
+- A pirate who can attack merchants, hunters, or other pirates.
+- A trader who can understand a small and readable market.
 - An explorer who finds ruins, wrecks, treasure, and supernatural threats.
-- A fisher, farmer, craftsperson, or merchant who can earn money without combat.
-- The governor of a port that grows from almost nothing.
-- A rising Caribbean power who can work with or fight major nations.
+- A fisher or monster hunter who can earn money without piracy.
+- The founder of a haven that grows because of each successful voyage.
+- A friend, rival, or partner to a small cast of named residents.
 
-The player does not have one required lifestyle. Trade, piracy, exploration, town growth, and life skills can overlap.
+The player can mix trade, piracy, fishing, exploration, and town growth. These activities all support the same voyage-and-return loop.
+
+## Core gameplay loop
+
+1. Talk to residents and choose a voyage goal.
+2. Prepare cargo, food, ammunition, and ship modules.
+3. Sail for 5–12 minutes through one sea region and inspect possible opportunities.
+4. Choose a target with a clear estimate of its reward, threat, and likely consequences.
+5. Trade, fight, fish, salvage, explore, or hunt a monster.
+6. Decide what to keep when cargo space, damage, or supplies become limited.
+7. Return with money, materials, treasure, information, or a new resident.
+8. Build the cove, improve the ship, or develop a relationship.
+9. See the results of the voyage and unlock a more dangerous or more valuable choice.
+
+The player can visit more than one foreign port before returning home. The game should make a return feel rewarding instead of mandatory.
 
 ## Core pillars
 
-### 1. An open Caribbean
+### 1. One compact Caribbean archipelago
 
-The world is a compressed version of the real Caribbean. It uses real geography and recognizable locations, but travel distance and local history can change for better play.
+The complete world contains:
 
-Candidate major cities and ports include:
+- The home cove.
+- Three major foreign ports.
+- Five to eight small islands or settlements.
+- Several reefs, wrecks, ruins, caves, and monster areas.
 
-- Havana
+Candidate major ports are:
+
 - Nassau
-- Kingston
+- Havana
 - Port Royal
-- Cartagena
-- Santo Domingo
-- Willemstad
-- Bridgetown
-- Cap-Francais
 
-Tortuga and other known islands can contain settlements, pirate camps, ruins, and hidden coves.
+Tortuga can be one of the smaller pirate settlements. Other small islands can contain fishing camps, ruins, hidden beaches, forts, or supernatural sites.
 
-Each sea region can contain:
+Each sea region contains a small selection of:
 
-- One or more large cities.
-- Small fishing, farming, mining, or trade settlements.
-- Uninhabited islands.
-- Ruins, caves, forts, and wrecks.
-- Fishing areas and resource sites.
-- Merchant routes and naval patrols.
-- One or more supernatural threats.
+- One port or settlement.
+- One exploration location.
+- One fishing or salvage area.
+- Merchant and pirate routes.
+- One special threat or event.
 
-The player can travel between any known ports without returning home first.
+The world should feel dense. It should not try to represent the complete Caribbean.
 
-### 2. Large and useful cities
+### 2. Compact and distinct ports
 
-Cities are major play areas, not short service stops. A large city can use several connected districts instead of showing every street.
+A major port is one connected play area. It contains only the services and characters that support voyages.
 
-Possible districts include:
+A major port can contain:
 
-- Harbor
-- Market
-- Tavern area
-- Government and naval area
-- Residential area
-- Criminal area
-- Outskirts with farms, roads, caves, or ruins
+- A dock and ship service.
+- A small market.
+- A tavern or social area.
+- One main quest contact.
+- Two or three named local characters.
+- One nearby exploration or combat location.
 
-City activities can include:
+A small settlement contains two or three useful services and one clear identity.
 
-- Buying and selling cargo.
-- Renting a room.
-- Buying a warehouse or business.
-- Finding legal and illegal work.
-- Recruiting crew.
-- Repairing or replacing the ship.
-- Fishing from docks and nearby water.
-- Playing cards, dice, and other tavern games.
-- Entering combat or sailing contests.
-- Meeting smugglers and fences.
-- Buying treasure maps and rumors.
-- Exploring nearby locations.
-- Joining festivals and local events.
-- Building reputation with local groups.
-
-Each city needs a clear identity. Its goods, laws, prices, architecture, music, activities, and nearby dangers should be different.
+Each port differs through art, music, characters, available goods, quests, and nearby dangers. Ports do not have separate harbor, market, government, residential, criminal, or farming districts.
 
 ### 3. Fast active sailing
 
@@ -136,28 +152,35 @@ The player steers the ship through the open world.
 
 Travel targets are:
 
-- About 2–5 real minutes between close cities or islands.
-- No more than about 20 real minutes from one end of the map to the other.
+- About 5–12 real minutes for a normal voyage.
+- No more than about 15 real minutes from one end of the map to the other.
 
-Several in-game days can pass during a short real-time voyage. Food use, wages, market changes, and ship wear use in-game time.
-
-The sea chart only shows:
+The sea chart shows:
 
 - The player position.
-- Known islands and cities.
+- Known islands and ports.
 - Undiscovered areas.
 - A selected waypoint.
 - Important quest markers.
 
-The chart does not show detailed wind data, price lists, food estimates, patrol areas, or weather reports.
+World events are visible during travel. The player can see sails, smoke, wreckage, storms, birds, strange water, or distant islands and choose whether to change course.
 
-World events are visible during travel. The player can see sails, smoke, wreckage, storms, birds, strange water, or distant islands and decide whether to change course.
+The player can use a spyglass or chart view to inspect a nearby ship before an attack. The information can include:
+
+- Flag or owner.
+- Ship class and likely speed.
+- General cargo type, such as food, weapons, medicine, or luxury goods.
+- Threat level based on cannons, escort ships, and known crew strength.
+- Expected heat from an attack.
+
+This information is an estimate. Rare cargo and hidden threats can remain unknown. The player must have enough information to make a deliberate choice.
+
+Civilian, merchant, military, and pirate ships have visible routes or purposes. A medicine ship on its way to a damaged port should feel different from an unknown merchant ship, even if both can be attacked.
 
 Possible sea encounters include:
 
 - Merchant ships.
 - Fishing boats.
-- Naval patrols.
 - Pirate hunters.
 - Other pirates.
 - Wrecks and floating cargo.
@@ -167,69 +190,106 @@ Possible sea encounters include:
 - Sea monsters.
 - Small islands and reefs.
 
-### 4. A hard but readable economy
+### 4. Light and readable trade
 
-Each city has local products, needs, stock levels, taxes, and laws. Prices change because of supply, demand, weather, war, piracy, and quests.
+Trade adds choices to a voyage. It is not a detailed economy simulation.
 
-A trade must cover all major costs:
-
-> Sale income - purchase cost - taxes - wages - food - repairs - spoilage - bribes = profit
-
-Common goods can include:
+The game uses about eight trade goods:
 
 - Fish and preserved food
-- Fruit and crops
-- Sugar and rum
-- Tobacco
-- Coffee and cacao
-- Salt
+- Fruit and spices
+- Rum
 - Timber
 - Cloth and rope
-- Tools and metal
 - Medicine
 - Weapons and gunpowder
-- Luxury goods
-- Stolen or illegal goods
+- Luxury goods and artifacts
 
-Goods can have different risks:
+Each port shows each available good as:
 
-- Food can spoil.
-- Fragile goods can break.
-- Gunpowder and rum can catch fire.
-- Heavy cargo can affect ship handling.
-- Contraband can cause a search or arrest.
-- Stolen goods can require a fence.
+- Cheap
+- Normal
+- Valuable
 
-The market screen records prices that the player saw during earlier visits. Old prices can be wrong. Detailed price data does not appear on the sea chart.
+Each major port has a stable base market:
 
-Warehouses let the player store goods and wait for better prices. They also have rent, security, and local reputation requirements.
+- Two goods are Cheap.
+- Two goods are Valuable.
+- Four goods are Normal.
 
-Bad trades, lost cargo, ship damage, and crew wages must create real financial pressure. The player can go into debt.
+This base market gives the port a clear trade identity. It does not change without an authored story change. A small settlement has one strong Cheap or Valuable good and less stock than a major port.
 
-Recovery options include:
+### Stock and demand
 
-- Fishing.
-- Salvage.
-- Small cargo jobs.
-- Smuggling.
-- Treasure hunting.
-- Selling stored goods or property.
-- Taking a loan with serious terms.
+Cheap goods show one to three stock marks. Buying one cargo lot removes one stock mark. A port cannot sell more of that good until stock returns.
 
-A large loss should hurt without deleting the full save.
+Valuable goods show one to three demand marks. Selling one cargo lot removes one demand mark. When no demand marks remain, the good becomes Normal until demand returns.
 
-### 5. Piracy with clear consequences
+Stock and demand return after two to four voyages or after a visible event. The exact time is shown to the player. The game does not change prices through hidden random calculations.
+
+The trade journal records:
+
+- The last known price state.
+- The last known stock or demand marks.
+- The voyage on which the player saw the information.
+- The event that caused a temporary change, if known.
+
+Old information stays in the journal and is marked as old. It does not update until the player visits the port, receives a current rumor, or completes a relevant cove upgrade.
+
+### Port conditions
+
+A port can have one temporary condition. A condition changes no more than three goods or services. It lasts for two to four voyages or until the player completes its related request.
+
+Possible conditions include:
+
+- **Storm damage:** Timber, food, and medicine are Valuable.
+- **Festival:** Three of food, rum, cloth, and luxury goods are Valuable.
+- **Fleet arrival:** Food and gunpowder are Valuable, and repairs cost more.
+- **Monster attack:** Medicine and weapons are Valuable, and local fishing is limited.
+- **Trade surplus:** One local export is Cheap and has three stock marks.
+
+The player can learn about a condition from the port, a resident, a ship, or the chart. The condition and its expected duration are visible before the player buys cargo.
+
+A trade only needs to cover:
+
+> Sale income - purchase cost - food - repairs = profit
+
+There are no taxes, bribes, inspections, spoilage, warehouse rents, loans, or debt. The player stores cargo on the ship or in one cove storage building.
+
+A bad voyage can still cost money through lost cargo, ammunition, food, and ship damage. Fishing, salvage, and small delivery jobs provide simple recovery paths.
+
+### Uses for goods
+
+Selling is only one use for cargo. The cargo view shows known uses for each good.
+
+- Timber can repair the ship or support a cove building.
+- Medicine can be sold, delivered, or used by the clinic.
+- Food supports travel, resident requests, and cove events.
+- Weapons and gunpowder can be sold, used as supplies, or given to the watchtower.
+- Luxury goods and artifacts can be sold, given as gifts, or studied for story progress.
+- Fish and monster parts can be sold, used for requests, or turned into equipment and cove upgrades.
+
+The same item cannot serve two uses. If the player gives timber to a building, it is not available for repair or sale.
+
+### Cargo choices
+
+The ship has limited cargo space. The same space can hold trade goods, repair materials, fish, monster parts, treasure, ammunition, and cove supplies.
+
+A successful voyage can give the player more useful cargo than the ship can hold. The player must then choose what to keep. This choice should compare different uses, not only sale prices. Timber can repair the ship or support a building. Medicine can complete a delivery or help the cove clinic. A relic can be sold or taken to the folklore expert.
+
+Cargo modules increase capacity, but use a module slot that could support speed, combat, fishing, or storm travel.
+
+### 5. Piracy and heat
 
 The player can attack:
 
 - Fishing boats.
 - Civilian traders.
-- Passenger and supply ships.
 - Large merchant ships.
-- Military supply ships.
-- Naval ships.
+- Pirate hunters.
 - Other pirates.
 - Treasure ships.
+- Ghost ships and cursed crews.
 
 A normal naval attack follows this structure:
 
@@ -238,114 +298,105 @@ A normal naval attack follows this structure:
 3. Pull alongside it.
 4. Board it.
 5. Fight until the defending crew surrenders or escapes.
-6. Take cargo, ammunition, repair materials, and ship parts.
+6. Choose which prizes to take.
 7. Leave the surviving crew with the damaged ship or escape boats.
 
-Combat is lethal, but it ends when the enemy surrenders. There are no executions after combat, ransom systems, torture choices, or prisoner trading.
+After boarding, the player chooses from a small set of prize actions:
 
-Piracy affects:
+- Take visible cargo.
+- Remove usable cannons.
+- Take timber, rope, and sailcloth.
+- Search for maps, records, or rare items.
 
-- Reputation with each major power.
-- Local wanted level.
-- Prices and access to ports.
-- The size and strength of patrols.
-- The arrival of bounty hunters.
-- Access to pirate jobs and markets.
-- The chance that weak ships surrender early.
+Cargo space, ship condition, crew condition, and nearby danger limit the safe number of prize actions. The game shows this limit before the player chooses. The player cannot capture the ship. The value of the defeated ship comes from these prize choices.
 
-Reputation is long-term. Wanted level is the current search for the player. A faction can respect the player but still search for them after a recent crime.
+Attacking peaceful ships raises one heat meter. High heat causes stronger hunters, more hostile encounters, and temporary refusal of service at formal ports. Heat falls when the player completes other voyages or stays away from major ports.
 
-Possible ways to reduce a wanted level include:
+Before an attack, the game shows whether the target is peaceful and gives a clear estimate of the heat increase. A story mission can hide some information, but normal attacks must not create unexpected legal penalties.
 
-- Staying away from that faction for a time.
-- Paying a bribe.
-- Completing work for a local official.
-- Using a corrupt contact.
-- Reaching a story agreement or pardon.
+Important acts of piracy can also change resident dialogue, officer trust, available requests, or story scenes. These are authored reactions. They do not form a second reputation simulation.
 
-### 6. Useful life skills
+The game does not track separate laws, wanted levels, economies, wars, or reputation systems for four nations.
 
-Life skills give the player more ways to make money and interact with the world.
+### 6. The pirate haven
 
-Suggested major skills are:
+The cove begins with a damaged dock, a shelter, a fire, and open land. It becomes the main source of visible long-term progress.
 
-- Farming
-- Fishing
-- Sailing
-- Trade
-- Combat
-- Exploration
-- Crafting and cooking
+The full game contains about twelve to twenty major building upgrades. Possible buildings include:
 
-Levels should unlock new tools, actions, recipes, locations, contracts, or information. They should not only add small number bonuses.
+- Dock
+- Tavern
+- Market
+- Storage shed
+- Workshop
+- Fishing pier
+- Clinic
+- Homes
+- Lighthouse
+- Cartography room
+- Relic study
+- Shipyard
+- Watchtower
+- Hidden dock
 
-#### Farming
+Each building must do at least one of these things:
 
-Farming can produce food, medicine, rum ingredients, dyes, and trade crops. The player can farm at the cove and can gain access to land near some settlements.
+- Add a useful service.
+- Unlock a voyage type.
+- Add a named resident.
+- Improve preparation or recovery.
+- Open a relationship or story.
+- Change the cove in a clear visual way.
 
-Early farming is direct. Later, the player can hire workers and make decisions about crops, tools, storage, and sales.
+During the early and middle game, about two or three normal voyages should provide enough progress for one major building step, resident arrival, or other visible cove change. Later upgrades can take longer, but every return must show current progress and the next useful goal.
 
-#### Fishing
+Residents remember major events. They can comment on attacks against civilians, rescued crews, rare catches, monster kills, relics, story choices, and new buildings. Only named residents need these reactions. The game does not simulate opinions for the full population.
 
-Fishing can happen from shores, docks, and the player ship. It can include rods, traps, nets, deep-sea fishing, rare weather fish, and dangerous catches near monsters.
+The player selects which building to make next. The player does not set taxes, fees, laws, legal goods, food rules, defense budgets, worker schedules, or trade agreements.
 
-Fish can support cooking, trade contracts, town food, collections, and direct sale.
+The haven does not run a detailed passive economy. Its main value is new services, characters, storage, equipment, and story access.
 
-#### Trade
+Cove buildings and relationships replace national trade ranks:
 
-Trade levels can improve inspection, negotiation, market records, access to contracts, and the ability to identify false or stolen goods.
+- The market keeps better trade records and can provide current rumors.
+- The storage shed increases safe cove storage.
+- The workshop uses repair materials more efficiently.
+- The shipwright relationship improves repair options and module preparation.
+- The tavern can reveal an upcoming port condition.
+- The clinic makes medicine more useful for recovery and requests.
 
-#### Sailing
+These benefits improve information, preparation, or material use. They do not add a second set of hidden price bonuses.
 
-Sailing levels can improve handling, route speed, storm control, pursuit, escape, and the use of difficult waters.
+### 7. Tools, equipment, and relationships
 
-#### Exploration
+The game has no player skill levels or skill trees. Progress comes from:
 
-Exploration levels can improve map reading, diving, digging, artifact study, and access to hidden ruin areas.
+- Better tools.
+- Ship modules.
+- Cove buildings.
+- New officers and residents.
+- Relationship rewards.
+- Story items.
+- Access to new sea regions.
 
-### 7. A town that the player governs
+Fishing can unlock rods, nets, traps, deep-sea gear, and monster harpoons. Exploration can unlock a shovel, diving gear, climbing tools, and relic equipment.
 
-The cove begins with a damaged dock, a basic shelter, open land, and little else. It is one location in the open world, not the required center of every play session.
+The cove contains about six to ten named residents. They can include:
 
-Possible building groups include:
+- A shipwright.
+- A fisher.
+- A cook or tavern keeper.
+- A healer.
+- A cartographer.
+- A former naval officer.
+- A treasure hunter.
+- A folklore expert.
 
-- Harbor and ship services
-- Fishing and food production
-- Farms and storage
-- Market and warehouses
-- Tavern and housing
-- Workshops and industry
-- Clinic and public services
-- Forts and town defense
-- Cartography and information
-- Smuggling routes and hidden docks
+Three or four residents can be romance options. Relationships advance through voyages, gifts, building upgrades, and personal quests. The game does not use large daily schedules for every character.
 
-The player can set:
+### 8. Treasure and supernatural threats
 
-- Taxes.
-- Port fees.
-- Legal and illegal goods.
-- Trade agreements.
-- Food storage rules.
-- Defense spending.
-- Building priorities.
-- The type of ships allowed in port.
-
-The town can become:
-
-- A fishing village.
-- A merchant port.
-- A pirate haven.
-- A neutral free port.
-- A fortified independent town.
-
-A steward manages daily work while the player is away. The player can review a simple town ledger from other cities. Town management should use clear decisions instead of detailed worker schedules.
-
-The town can earn money, but it also needs food, wages, repairs, and defense. A rich pirate town can become a target.
-
-### 8. Treasure, ruins, and supernatural threats
-
-Ruins are small exploration locations with a clear reward or mystery.
+Ruins are compact exploration locations with one clear mystery and reward.
 
 They can include:
 
@@ -359,299 +410,296 @@ They can include:
 - Cursed objects.
 - Clues about sea monsters.
 
-Some ruins can have several layers. Better tools or skills let the player return and enter deeper areas.
+Better tools can let the player return to a small number of earlier locations and open a new path. The game should not use many layered ruins that require large amounts of repeated content.
 
-The world can include ghost ships, cursed crews, legendary treasure, strange storms, and sea monsters. These features can connect real places and pirates to the main story.
+Ghost ships, strange storms, cursed crews, legendary treasure, and sea monsters connect the sea regions to the main story.
 
 ## Ship system
 
-### One owned ship
+### One main ship
 
-The player owns and controls one ship at a time.
+The player owns one named ship through the game. Defeated ships cannot be captured for player use.
 
-The player can buy a different ship at a shipyard. The current ship is sold or traded as part of the purchase. The player does not store other ships, manage a fleet, or assign ships to captains.
-
-Defeated enemy ships cannot be captured for player use. Their cargo and useful parts can be taken after boarding.
-
-### Ship classes
-
-Functional ship progression comes from buying a new class. Ships do not have functional upgrades.
-
-Possible classes include:
-
-- **Sloop:** Fast, cheap, and useful for fishing or smuggling.
-- **Schooner:** Balanced speed, combat ability, and cargo space.
-- **Brig:** Strong in combat and boarding but more expensive to run.
-- **Frigate:** Powerful and durable, with high crew and repair costs.
-- **Merchant ship:** Large cargo space with weaker combat handling.
-
-Each ship has fixed values for:
+The ship has fixed base values for:
 
 - Speed
 - Turning
 - Hull strength
 - Cannon power
 - Cargo space
-- Crew requirement
-- Food use
-- Repair cost
-- Purchase price
 
-Small ships should remain useful. A larger ship is stronger, but it costs more and can be worse for smuggling, fishing, narrow water, or cheap trade routes.
+### Useful modules
 
-### Repairs and captured parts
+The player unlocks a small set of functional modules. Only a limited number can be active at one time.
 
-Timber, sailcloth, and rope can repair the ship. Captured cannons and other parts can be sold as goods or supplied to the town. They do not increase ship statistics.
+Possible modules include:
 
-### Cosmetic customization
+- Light sails for speed.
+- Reinforced hull for defense.
+- Cargo racks for trade.
+- Fishing gear for larger catches.
+- Long guns for pursuit.
+- Heavy cannons for close combat.
+- A monster harpoon.
+- Storm equipment.
 
-Ship customization is cosmetic only.
+Modules create clear voyage choices. They do not form a large upgrade tree.
 
-Cosmetics can include:
+Each module must change a decision or an available action. A module that only gives a small percentage increase is not enough. Examples include:
+
+- Light sails help the player catch fast targets and escape strong hunters, but use space that could hold armor or cargo gear.
+- Cargo racks support trade and building supply runs, but reduce combat or exploration options.
+- Long guns support pursuit and sail damage, while heavy cannons support dangerous close combat.
+- Fishing gear uses a slot needed for combat, cargo, or storm equipment.
+- A monster harpoon opens monster encounters but is not the best weapon against normal ships.
+
+The player selects a limited loadout before a voyage. The loadout should make some opportunities attractive and others difficult.
+
+### Repairs and appearance
+
+Timber, sailcloth, and rope repair the ship. Captured cannons and rare materials can unlock modules or be sold.
+
+Cosmetic choices can include:
 
 - Hull colors.
 - Sail colors and patterns.
 - Flags.
 - Figureheads.
-- Wheel designs.
 - Lanterns.
 - Cabin decorations.
-- Ship names.
+- Ship name.
 
-Once unlocked, cosmetics stay in the player collection and can be used on a new ship without another purchase. A saved appearance can transfer to a new ship, with small changes when a ship class needs a different shape.
+## Crew
 
-## Crew and relationships
+Regular crew are represented as one simple crew resource. Combat can injure crew and reduce ship performance until the player reaches a port.
 
-Crew members support ship operation, combat, and costs. They are not the main focus of the game.
+The player can also recruit a small number of named officers. An officer gives one useful active or passive ability. Officers can also be cove residents with personal quests and relationships.
 
-The crew system can include:
-
-- Required crew for each ship class.
-- Regular wages.
-- Food and morale.
-- Combat and sailing skill.
-- Surrender, desertion, injury, and mutiny.
-- A small number of named officers with useful abilities.
-
-The player recruits crew in cities and settlements. Better crew can require higher wages, reputation, or special missions.
-
-Friendship and romance can exist, but they should not control the main loop. The game does not need a large romance cast or deep daily schedules for all crew members.
+The game does not simulate detailed wages, worker schedules, mutiny, crew politics, or a large recruitment market.
 
 ## Combat
 
-Combat should be fast, readable, and action-focused.
+Combat is fast, readable, and action-focused.
 
 ### Naval combat
 
-Naval combat is real-time and can include:
+Naval combat can include:
 
 - Ship positioning.
 - Broadside timing.
-- Different ammunition.
 - Sail and hull damage.
 - Pursuit and escape.
-- Repairs during combat.
+- Limited repairs during combat.
 - Boarding after the target is weak.
 
-Crew losses and damage create costs after battle. A player can win a fight but still lose money because of repairs, medicine, cargo damage, and wages.
+Damage, ammunition use, and crew injuries create a cost after battle.
 
-### On-foot and boarding combat
+### Boarding and ruins
+
+On-foot combat only occurs in compact boarding arenas, ruins, caves, and story locations. Major ports do not contain large combat areas.
 
 On-foot combat can include:
 
 - Cutlass attacks.
 - Pistols.
 - Dodging and parrying.
-- Throwable tools.
-- Short companion or officer abilities.
+- One officer ability.
 
-Combat is lethal. Surviving enemies can surrender when their morale breaks. The player cannot execute them after surrender.
+Surviving enemies can surrender when their morale breaks. The player cannot execute them after surrender.
 
-Violence should be stylized. The game does not need gore, torture, or other extreme content.
+Violence is stylized. The game does not use gore, torture, ransom, or prisoner trading.
 
-## Factions and law
+## Setting and story
 
-The major powers are:
+The world uses a loose fantasy version of the early eighteenth-century Caribbean. History supplies names, clothing, ships, architecture, and folklore. It does not control the economy, politics, or event timeline.
 
-- Britain
-- Spain
-- France
-- The Dutch Republic
+Britain, Spain, France, and the Dutch Republic can appear on flags, ships, and in character backgrounds. The game does not simulate their territories, wars, trade laws, or political relationships.
 
-Other groups can include:
+Use only three or four real pirates as major characters. Candidate characters include:
 
-- Independent pirates.
-- Local governors.
-- Trade companies.
-- Smugglers.
-- Small independent settlements.
-- Supernatural groups or cults.
+- Blackbeard
+- Benjamin Hornigold
+- Anne Bonny
+- Mary Read
 
-Each major power controls cities, forts, patrol areas, and trade laws. Reputation changes prices, jobs, access, and military response.
+These characters support personal story paths instead of large political groups.
 
-The player can work as a merchant, privateer, smuggler, treasure hunter, pirate, monster hunter, or town governor. These roles can overlap.
+The main supernatural mystery connects:
 
-A letter of marque can make attacks against one power legal in ports controlled by another power.
+- A set of treasure maps.
+- Ruins across the archipelago.
+- Cursed objects.
+- Strange storms.
+- A legendary sea monster.
+- A secret that can save or destroy the cove.
 
-## Time, weather, and world change
+The final conflict focuses on the future of the haven and the supernatural threat. It does not ask the player to manage or choose between simulated national powers.
 
-Short real-time voyages can represent several in-game days.
+## Time, weather, and world events
 
-The calendar can affect:
+The game uses a simple day and night cycle and wet, dry, and storm periods.
 
-- Crew wages.
-- Food use.
-- Crop growth.
+Time can affect:
+
 - Fish and monster activity.
-- Trade prices.
-- Festivals.
-- Storms and hurricanes.
-- Faction wars.
+- Character availability.
+- Festivals at the cove.
+- Storms.
 - Story events.
 
-Use wet, dry, and storm periods instead of a standard four-season farming calendar.
-
-World events can change trade and travel for a limited time. A storm can damage a port and raise demand for food, timber, and medicine. A blockade can stop normal trade and create smuggling work.
-
-## Core gameplay loop
-
-1. Choose a city, trade, skill, quest, or exploration goal.
-2. Buy cargo and supplies, hire crew, and prepare the ship.
-3. Sail manually or use fast travel to a known city.
-4. Trade, fight, fish, explore, farm, or complete work.
-5. Pay wages, repair damage, and manage losses.
-6. Buy property, replace the ship, or invest in the cove.
-7. Choose the next opportunity from the current location.
-
-The loop does not require a return to the cove.
+World events are authored and easy to understand. A storm can create salvage or a monster hunt. A festival can open character scenes. The game does not simulate national wars, blockades, crop cycles, or a changing regional economy.
 
 ## Fast travel
 
-Fast travel unlocks after the player docks at a city for the first time.
+Fast travel unlocks after the player docks at a port for the first time.
 
 It is not available:
 
 - During combat.
 - During a chase.
-- Near a hostile fort.
+- Near a major threat.
 - During some missions.
 
-Fast travel advances game time, uses food, adds normal ship wear, and charges wages. It does not cause random cargo loss or force a surprise encounter.
+Fast travel advances time and uses food. It does not cause random cargo loss.
 
-Manual sailing offers more chances to find cargo, fish, wrecks, treasure clues, and rare encounters. Fast travel saves real time, while manual travel can produce more profit and discovery.
+Manual sailing offers fishing, wrecks, treasure clues, rare encounters, and materials for the cove.
 
-## Financial failure and recovery
+## Voyage pressure and return
 
-The game should create serious pressure without forcing a complete restart.
+The game does not use a hard voyage limit. Pressure increases through visible systems:
+
+- Cargo space becomes full.
+- Food and ammunition become low.
+- Ship damage and crew injuries reduce safety.
+- Heat makes major ports and sea routes more dangerous.
+- Weather can make the current region harder to cross.
+- Resident requests and world events can have clear time windows.
+
+No single system should force the player home after one normal voyage. After two or three voyages, the combined pressure should make a return useful. The player can continue at greater risk if the possible reward is worth it.
+
+The cove gives the best full recovery. It also lets the player store cargo, complete buildings, change the ship loadout, study relics, develop relationships, and see reactions to the voyage. A return is a reward and a planning step, not only a repair stop.
+
+## Defeat and recovery
 
 Possible losses include:
 
 - Cargo.
+- Ammunition.
 - Ship condition.
-- Crew members.
-- Money.
-- Reputation.
-- Property or stored goods.
-- Access to a port.
+- Crew health.
+- Some money.
+- Heat.
 
-If the ship is defeated, the player can lose cargo, pay rescue or repair costs, and return at a friendly or neutral location. Debt can force the player to take small jobs or sell property.
+If the ship is defeated, the player returns to the cove or a known port with damaged equipment and reduced cargo.
 
-There should always be a slow recovery path through fishing, salvage, simple work, or a difficult loan.
+There is no debt, loan, property loss, or permanent loss of port access. Fishing, salvage, and small delivery jobs always provide a slow recovery path.
 
-## Story framework
+## Shared system rules
 
-The working start date is 1716, but the story uses alternate history. Real pirates can meet, survive, or die at different times than they did in history.
+Each activity must connect to at least two persistent voyage systems. Do not add an activity that exists only as a separate control challenge.
 
-Possible major pirate characters include:
+- Naval combat uses the ship loadout, ammunition, damage, crew condition, heat, and cargo space.
+- Trade uses cargo space, known port conditions, world events, resident requests, and cove building needs.
+- Fishing uses tools, cargo space, time, weather, cooking or clinic requests, and cove upgrades.
+- Salvage uses ship position, cargo space, tools, weather, damage risk, and building materials.
+- Ruins use exploration tools, story clues, relic study, resident knowledge, and return visits.
+- Monster hunts use special modules, ammunition, ship condition, named residents, and supernatural story progress.
 
-- Blackbeard
-- Benjamin Hornigold
-- Charles Vane
-- Anne Bonny
-- Mary Read
-- Calico Jack
-- Henry Jennings
-- Bartholomew Roberts
+Rewards must return to the same shared systems. A fishing reward should not only improve fishing. A combat reward should not only improve combat. Cross-system rewards help the player choose a new type of voyage.
 
-These characters should control missions, ships, ports, and political groups. They should not appear only for short cameos.
+## Economy balance
 
-Possible roles include:
+Balance uses net voyage value, not the sale value shown on one cargo item:
 
-- Hornigold introduces Nassau and early privateer work.
-- Vane supports aggressive piracy and resistance to government control.
-- Blackbeard becomes an ally, rival, or major target.
-- Anne Bonny and Mary Read lead their own missions.
-- Roberts appears later as a dangerous pirate who attacks all major powers.
+> Money earned + useful materials + persistent progress - purchases - food - ammunition - repairs - lost cargo = net voyage value
 
-The player can change their stories.
+No activity is always the best source of value at the same risk level.
 
-The main supernatural mystery can connect:
+- Piracy can give a high reward quickly, but it uses ammunition, causes damage, raises heat, and can injure crew.
+- Trade is more predictable, but it needs money, cargo space, current information, and available stock or demand.
+- Fishing and salvage give lower safe income and provide recovery materials, requests, and rare finds.
+- Monster hunts have high preparation costs and give rare materials or story progress.
 
-- A set of treasure maps.
-- Ruins across several real islands.
-- Cursed objects.
-- Strange storms.
-- A legendary sea monster.
-- A treasure or power that several real pirates want.
-
-The final conflict can let the player support a major power, protect an independent pirate region, or make the cove into a neutral free port.
+Building upgrades use both money and specific materials. Money cannot replace every missing material. Materials can often serve more than one building, repair, request, or sale goal.
 
 ## What makes the game different
 
 The main combination is:
 
-> Fast *Black Flag*-style sailing and piracy + a hard regional trade economy + leveled life skills + a port that the player can build and govern
+> Fast active pirate voyages + a visibly growing haven + light trade and fishing + supernatural exploration
 
-The game is not centered on romance or a required homecoming loop. Its main strength is the number of useful ways to live and make money in one open Caribbean world.
+The game is not a full Caribbean simulation. It is a focused pirate life RPG where every voyage changes the player's home, ship, or relationships.
 
 ## Sensible vertical slice
 
 A first polished slice should contain:
 
-- One open sea region.
-- One large real city.
-- One small settlement.
 - The undeveloped cove.
-- Several small islands and one ruin.
-- One owned starting ship.
-- One additional ship class available for purchase.
-- One working trade route with changing prices.
-- Fishing and a small farming area.
-- One civilian or merchant ship encounter.
-- One naval or pirate combat encounter.
+- One compact major port.
+- Two small islands.
+- One ruin.
+- One sea region.
+- The main ship.
+- Three useful ship modules.
+- Two module loadouts that make the same sea region play differently.
+- One simple trade route with two Cheap goods, two Valuable goods, and visible stock and demand.
+- One temporary port condition with a visible cause and duration.
+- One trade journal entry that becomes old and can be updated.
+- Fishing and salvage.
+- One merchant or civilian ship encounter.
+- A target inspection view that shows cargo type, threat, and heat cost before an attack.
+- One pirate hunter encounter.
 - Boarding and cargo theft.
-- One real pirate character.
+- A boarding result that makes the player choose between cargo, cannons, repair materials, and information.
+- One cargo decision where the player cannot keep every useful reward.
+- One good with at least three useful destinations, such as sale, repair, and construction.
+- One named cove resident.
+- Resident dialogue that changes after one raid, discovery, or monster encounter.
 - One supernatural treasure mission.
 - One sea monster encounter.
-- Fast travel after the player discovers the city.
-- The first town building choice.
+- Fast travel after discovery.
+- Two visible cove building choices.
+- A clear reason to return after two or three voyages.
 - About three hours of polished play.
 
-The slice should prove this loop:
+The slice must prove this loop:
 
-> Find an opportunity -> prepare -> sail -> take a risk -> earn or lose money -> improve your position -> choose where to go next
+> Prepare -> sail -> take a risk -> bring something home -> change the haven -> unlock the next voyage
 
-## Features to avoid at first
+The slice must also prove that sailing, combat, trade, fishing, exploration, relationships, and cove growth use the same resource and consequence systems. It must not feel like a menu of separate minigames.
+
+## Features to avoid
 
 - Online multiplayer.
 - Procedurally generated infinite oceans.
+- A complete Caribbean map.
+- More than three major foreign ports.
+- Large cities or city districts.
+- Detailed national economies or territory simulation.
+- Hidden random market changes.
+- Unlimited repeated trade on one route.
+- An economy where one activity is always the best source of value.
+- Warehouses outside the cove.
+- Taxes, bribes, loans, debt, spoilage, or detailed trade laws.
+- Farming.
+- Player skill trees.
 - Multiple owned ships or fleet management.
 - Capturing enemy ships for player use.
-- Functional ship upgrade trees.
+- Large ship upgrade trees.
 - Complex worker or colony simulation.
-- Deep romance systems.
-- Large daily schedules for all crew members.
+- Town taxes, laws, budgets, or policy screens.
+- Deep daily schedules for all residents.
 - Detailed historical simulation.
-- Slavery content.
-- Extreme violence, executions, ransom, or torture.
+- Large faction or war simulation.
+- Large on-foot areas.
+- Long real-time travel.
+- Extreme violence, executions, ransom, torture, or prisoner trading.
 - A complex sea chart.
-- Long real-time travel between cities.
-- Too many shallow skill trees.
 
 ## Design north star
 
 Whenever a feature is considered, ask:
 
-> Does this give the player a useful choice about where to go, what risk to take, or how to make money and power in the open world?
+> Does this make the next voyage more exciting, or make the return to the haven more rewarding?
 
-If the answer is no, it is probably not central to the game.
+If the answer is no, it is not central to the game.
