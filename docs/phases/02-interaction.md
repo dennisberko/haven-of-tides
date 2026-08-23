@@ -2,6 +2,23 @@
 
 [Previous: walking](01-walking.md) | [Next: dialogue](03-dialogue.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Mark one sign as interactive | DONE |
+| Add 2: Show a prompt near the sign | DONE |
+| Add 3: Use one button to read the sign | DONE |
+| Add 4: Hide the prompt away from the sign | DONE |
+| Complete when: Prompt distance and one message per press work | DONE |
+| Test 1: Walk toward the sign | DONE |
+| Test 2: Check the prompt distance | DONE |
+| Test 3: Press the interaction button and read | DONE |
+| Test 4: Move away and hide the prompt | DONE |
+| Test 5: Approach from another direction and use again | DONE |
+
 ## Goal
 
 The player can use one button to interact with an object in the cove.
