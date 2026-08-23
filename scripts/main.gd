@@ -31,11 +31,14 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var request_status: Label = $Interface/RequestView/RequestStatus
 @onready var request_goal: Label = $Interface/RequestView/RequestGoal
 @onready var controls_help: Label = $Interface/Controls
+@onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
-const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE"
-const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY"
+const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M CHART"
+const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY · M CHART"
+const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
+const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const SHORE_RETURN_DISTANCE := 64.0
 
 var _player_near_sign := false
@@ -53,6 +56,7 @@ var _available_dock_id := ""
 var _player_shore_id := ""
 var _player_near_ship_return := false
 var _last_ship_docked := false
+var _chart_release_pending := false
 
 
 func _ready() -> void:
@@ -64,6 +68,8 @@ func _ready() -> void:
 		sea_state["port_land_rect"],
 		sea_state["cove_shoreline"],
 	)
+	waypoint_display.configure(sea_state["bounds"], ship.get_dock_definitions())
+	waypoint_display.update_positions(ship.global_position, player.global_position, false)
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -79,13 +85,23 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	_update_chart_release_pending()
+	waypoint_display.update_positions(
+		ship.global_position,
+		player.global_position,
+		_player_aboard_ship,
+	)
 	if _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
 		var leave_allowed: bool = ship.can_leave_at_damaged_dock()
 		var available_dock_id: String = ship.get_available_dock_id()
 		var ship_docked: bool = ship.is_docked
-		if ship_docked:
+		if waypoint_display.chart_visible:
+			controls_help.text = CHART_CONTROLS_TEXT
+		elif _chart_release_pending:
+			controls_help.text = RELEASE_CONTROLS_TEXT
+		elif ship_docked:
 			controls_help.text = DOCKED_CONTROLS_TEXT
 		elif controls_help.text != SAILING_CONTROLS_TEXT:
 			controls_help.text = SAILING_CONTROLS_TEXT
@@ -118,6 +134,17 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _handle_chart_input(key_event):
+		get_viewport().set_input_as_handled()
+		return
+	if _chart_release_pending:
+		if (
+			not key_event.pressed
+			and (key_event.physical_keycode == KEY_E or key_event.keycode == KEY_E)
+		):
+			_interact_held = false
+		get_viewport().set_input_as_handled()
+		return
 	if key_event.physical_keycode != KEY_E and key_event.keycode != KEY_E:
 		return
 	if not key_event.pressed:
@@ -160,6 +187,90 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _handle_chart_input(key_event: InputEventKey) -> bool:
+	if not key_event.pressed or key_event.echo:
+		return false
+
+	if _key_matches(key_event, KEY_M):
+		if _dialogue_open:
+			return false
+		_set_chart_visible(not waypoint_display.chart_visible)
+		return true
+
+	if not waypoint_display.chart_visible:
+		return false
+
+	if _key_matches(key_event, KEY_1):
+		waypoint_display.select_location("cove")
+	elif _key_matches(key_event, KEY_2):
+		waypoint_display.select_location("island")
+	elif _key_matches(key_event, KEY_3):
+		waypoint_display.select_location("port")
+	elif _key_matches(key_event, KEY_X):
+		waypoint_display.clear_location()
+	else:
+		return true
+	return true
+
+
+func _key_matches(key_event: InputEventKey, key: Key) -> bool:
+	return key_event.physical_keycode == key or key_event.keycode == key
+
+
+func _set_chart_visible(visible: bool) -> void:
+	waypoint_display.set_chart_visible(visible)
+	_interact_held = false
+	if visible:
+		_chart_release_pending = false
+		player.movement_enabled = false
+		ship.set_navigation_input_blocked(true)
+		controls_help.text = CHART_CONTROLS_TEXT
+		interaction_prompt.hide()
+	else:
+		_chart_release_pending = true
+		player.movement_enabled = false
+		ship.set_navigation_input_blocked(
+			false,
+			_player_aboard_ship and not ship.is_docked,
+		)
+		controls_help.text = RELEASE_CONTROLS_TEXT
+		_update_interaction_prompt()
+
+
+func _update_chart_release_pending() -> void:
+	if not _chart_release_pending or waypoint_display.chart_visible:
+		return
+	if _is_any_movement_key_pressed():
+		player.movement_enabled = false
+		return
+
+	_chart_release_pending = false
+	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
+	controls_help.text = _get_context_controls_text()
+	_update_interaction_prompt()
+
+
+func _is_any_movement_key_pressed() -> bool:
+	return (
+		Input.is_key_pressed(KEY_W)
+		or Input.is_key_pressed(KEY_A)
+		or Input.is_key_pressed(KEY_S)
+		or Input.is_key_pressed(KEY_D)
+		or Input.is_key_pressed(KEY_UP)
+		or Input.is_key_pressed(KEY_LEFT)
+		or Input.is_key_pressed(KEY_DOWN)
+		or Input.is_key_pressed(KEY_RIGHT)
+	)
+
+
+func _get_context_controls_text() -> String:
+	if _player_aboard_ship:
+		if ship.is_docked:
+			return DOCKED_CONTROLS_TEXT
+		return SAILING_CONTROLS_TEXT
+	return WALKING_CONTROLS_TEXT
 
 
 func _on_sign_body_entered(body: Node2D) -> void:
@@ -384,7 +495,7 @@ func _update_request_view() -> void:
 
 
 func _update_interaction_prompt() -> void:
-	if _dialogue_open:
+	if _dialogue_open or waypoint_display.chart_visible or _chart_release_pending:
 		interaction_prompt.hide()
 		return
 
@@ -430,6 +541,7 @@ func _update_interaction_prompt() -> void:
 func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var player_state: Dictionary = player.get_playtest_state()
+	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
 	var camera_target := "COVE"
 	if _player_aboard_ship:
 		camera_target = "SHIP"
@@ -484,6 +596,18 @@ func get_playtest_state() -> Dictionary:
 		"current_dock_id": ship_state["current_dock_id"],
 		"last_dock_id": ship_state["last_dock_id"],
 		"ship_fixed_dock_pose": ship_state["fixed_dock_pose"],
+		"ship_departure_input_armed": ship_state["departure_input_armed"],
+		"navigation_input_blocked": ship_state["navigation_input_blocked"],
+		"navigation_release_pending": ship_state["navigation_release_pending"],
+		"walking_release_pending": _chart_release_pending,
+		"chart_input_blocked": (
+			waypoint_state["chart_visible"]
+			and ship_state["navigation_input_blocked"]
+			and not player_state["movement_enabled"]
+		),
+		"input_release_pending": (
+			ship_state["navigation_release_pending"] or _chart_release_pending
+		),
 		"camera_position": travel_camera.global_position,
 		"camera_target": camera_target,
 		"ship_entry_position": ship_entry.global_position,
@@ -516,4 +640,22 @@ func get_playtest_state() -> Dictionary:
 		"request_title": request_title.text,
 		"request_status": request_status.text,
 		"request_goal": request_goal.text,
+		"chart_visible": waypoint_state["chart_visible"],
+		"known_location_count": waypoint_state["known_location_count"],
+		"known_location_ids": waypoint_state["known_location_ids"],
+		"known_locations": waypoint_state["known_locations"],
+		"selected_waypoint_id": waypoint_state["selected_location_id"],
+		"selected_waypoint_marker_count": waypoint_state["selected_marker_count"],
+		"chart_selected_marker_count": waypoint_state["chart_selected_marker_count"],
+		"sailing_direction_marker_count": waypoint_state["sailing_direction_marker_count"],
+		"waypoint_target_position": waypoint_state["target_position"],
+		"waypoint_direction_vector": waypoint_state["direction_vector"],
+		"waypoint_direction_angle_radians": waypoint_state["direction_angle_radians"],
+		"waypoint_direction_angle_degrees": waypoint_state["direction_angle_degrees"],
+		"chart_ship_position": waypoint_state["ship_position"],
+		"chart_player_position": waypoint_state["player_position"],
+		"chart_sailing_input_blocked": (
+			waypoint_state["chart_visible"]
+			and ship_state["navigation_input_blocked"]
+		),
 	}

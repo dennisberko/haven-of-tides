@@ -70,6 +70,8 @@ var is_docked := false
 var current_dock_id := ""
 var last_dock_id := ""
 var last_collision_response := "NONE"
+var navigation_input_blocked := false
+var navigation_release_pending := false
 
 var _sea_bounds := Rect2()
 var _island_center := Vector2.ZERO
@@ -78,6 +80,7 @@ var _port_land_rect := Rect2()
 var _cove_shoreline := PackedVector2Array()
 var _dock_exit_cleared := false
 var _departure_input_armed := false
+var _restore_controls_after_navigation_release := false
 
 
 func _ready() -> void:
@@ -99,10 +102,31 @@ func configure_sailing_area(
 
 
 func set_controls_enabled(enabled: bool) -> void:
-	controls_enabled = enabled and not is_docked
+	controls_enabled = (
+		enabled
+		and not is_docked
+		and not navigation_input_blocked
+		and not navigation_release_pending
+	)
 	if not controls_enabled:
 		current_speed = 0.0
 		sailing_velocity = Vector2.ZERO
+
+
+func set_navigation_input_blocked(
+	blocked: bool,
+	restore_controls_after_release := false,
+) -> void:
+	navigation_input_blocked = blocked
+	navigation_release_pending = not blocked
+	_restore_controls_after_navigation_release = (
+		restore_controls_after_release and not is_docked
+	)
+	controls_enabled = false
+	current_speed = 0.0
+	sailing_velocity = Vector2.ZERO
+	# A chart transition must always require a fresh dock-departure press.
+	_departure_input_armed = false
 
 
 func set_captain_aboard(aboard: bool) -> void:
@@ -244,6 +268,27 @@ func _release_current_dock() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if navigation_input_blocked:
+		current_speed = 0.0
+		sailing_velocity = Vector2.ZERO
+		controls_enabled = false
+		_departure_input_armed = false
+		return
+
+	if navigation_release_pending:
+		current_speed = 0.0
+		sailing_velocity = Vector2.ZERO
+		controls_enabled = false
+		_departure_input_armed = false
+		if not _is_any_movement_key_pressed():
+			navigation_release_pending = false
+			controls_enabled = (
+				_restore_controls_after_navigation_release
+				and captain_aboard
+				and not is_docked
+			)
+		return
+
 	var throttle_pressed := (
 		Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
 	)
@@ -285,6 +330,19 @@ func _physics_process(delta: float) -> void:
 
 	sailing_velocity = get_forward_direction() * current_speed
 	_move_with_sailing_limits(delta)
+
+
+func _is_any_movement_key_pressed() -> bool:
+	return (
+		Input.is_key_pressed(KEY_W)
+		or Input.is_key_pressed(KEY_A)
+		or Input.is_key_pressed(KEY_S)
+		or Input.is_key_pressed(KEY_D)
+		or Input.is_key_pressed(KEY_UP)
+		or Input.is_key_pressed(KEY_LEFT)
+		or Input.is_key_pressed(KEY_DOWN)
+		or Input.is_key_pressed(KEY_RIGHT)
+	)
 
 
 func _move_with_sailing_limits(delta: float) -> void:
@@ -452,6 +510,11 @@ func get_playtest_state() -> Dictionary:
 		"last_dock_id": last_dock_id,
 		"fixed_dock_pose": fixed_pose,
 		"departure_input_armed": _departure_input_armed,
+		"navigation_input_blocked": navigation_input_blocked,
+		"navigation_release_pending": navigation_release_pending,
+		"restore_controls_after_navigation_release": (
+			_restore_controls_after_navigation_release
+		),
 		"controls": {
 			"forward": "W_OR_UP",
 			"turn_left": "A_OR_LEFT",

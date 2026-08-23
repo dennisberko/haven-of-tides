@@ -1,4 +1,4 @@
-[gd_scene load_steps=16 format=3]
+[gd_scene load_steps=17 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -7,6 +7,7 @@
 [ext_resource type="Script" path="res://scripts/resident.gd" id="4_resident"]
 [ext_resource type="Script" path="res://scripts/ship.gd" id="5_ship"]
 [ext_resource type="Script" path="res://scripts/sea_area.gd" id="6_sea"]
+[ext_resource type="Script" path="res://scripts/waypoint_display.gd" id="7_waypoint"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -173,7 +174,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 07 · Dock and go ashore"
+text = "Phase 08 · Set a sailing waypoint"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -278,7 +279,7 @@ horizontal_alignment = 2
 [node name="Controls" type="Label" parent="Interface"]
 offset_left = 28.0
 offset_top = 590.0
-offset_right = 570.0
+offset_right = 1124.0
 offset_bottom = 624.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0.9)
@@ -286,3 +287,11 @@ theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 16
 text = "WASD / ARROWS TO MOVE · E INTERACT"
+
+[node name="WaypointDisplay" type="Control" parent="Interface"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 1152.0
+offset_bottom = 648.0
+mouse_filter = 2
+script = ExtResource("7_waypoint")

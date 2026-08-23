@@ -2,6 +2,24 @@
 
 [Previous: docking](07-docking.md) | [Next: visible sea opportunities](09-visible-sea-opportunities.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Add a simple chart with the cove, island, port, and player position | DONE |
+| Add 2: Select one known location as a waypoint | DONE |
+| Add 3: Show the selected waypoint on the chart | DONE |
+| Add 4: Show its direction in the sailing view | DONE |
+| Add 5: Clear or replace the waypoint when another location is selected | DONE |
+| Complete when: Select each known location and follow its direction marker | DONE |
+| Test 1: Open the chart at the cove | DONE |
+| Test 2: Select the port as the waypoint | DONE |
+| Test 3: Sail toward the marker and dock at the port | DONE |
+| Test 4: Select the island as a new waypoint | DONE |
+| Test 5: Confirm the port marker is gone and the island marker points to the island | DONE |
+
 ## Goal
 
 The player can select one known location and see its direction while sailing.
