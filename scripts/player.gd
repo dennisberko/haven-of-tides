@@ -6,6 +6,7 @@ var facing := Vector2.DOWN
 
 
 func _ready() -> void:
+	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	queue_redraw()
 
 

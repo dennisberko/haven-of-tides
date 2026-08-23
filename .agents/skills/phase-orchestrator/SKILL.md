@@ -89,6 +89,39 @@ The required Godot quality gate after each gameplay change is:
 
 Do not report a gameplay change as ready without this runtime evidence.
 
+### Runtime fallback when the MCP bridge does not work
+
+Use this fallback only after the Godot MCP Runtime returns a specific launch or
+bridge error. Record that error in the phase evidence.
+
+1. Keep the MCP project-information and validation checks.
+2. Try `run_project` once. If strict mode cannot request confirmation, stop the
+   MCP recovery attempt.
+3. Before any fallback step starts the installed Godot executable directly,
+   request explicit user approval for that direct launch. Without explicit
+   approval, return `FALLBACK_EVIDENCE_BLOCKED` and do not start Godot. With
+   approval, try the documented `attach_project` flow once with an ordered
+   manual Godot launch.
+4. If the bridge still does not respond, create a phase-specific temporary
+   GDScript harness in `.mcp/`. Do not add it to the tracked test suite.
+5. Load the real main scene in the harness. Use `Input.parse_input_event` for
+   the required player actions. Advance real physics frames, inspect the real
+   scene state and collisions, and save viewport PNG files in
+   `.mcp/screenshots/`.
+6. Before the harness directly starts the installed Godot executable, require
+   explicit user approval for that launch. Without explicit approval, return
+   `FALLBACK_EVIDENCE_BLOCKED` and do not start Godot. With approval, run the
+   harness with `--fixed-fps 60`. Capture the engine output, exit code,
+   scenario results, and screenshot paths. Stop the process after the check.
+7. Use `FALLBACK_RUNTIME_PASS`, `FALLBACK_RUNTIME_FAILURE`, or
+   `FALLBACK_EVIDENCE_BLOCKED` in the report. Do not call a fallback result an
+   MCP runtime pass. A fallback pass can satisfy the runtime gate only when it
+   proves every required runtime scenario with the real scene and real input
+   events.
+
+Do not disable strict mode or change project MCP configuration as a recovery
+step. Keep all fallback files in `.mcp/` and do not commit them.
+
 ## 3. Run the implementation agent
 
 Use one implementation agent for the whole phase. The phase task list is
@@ -173,6 +206,11 @@ more screenshots when they provide useful evidence. Read debug output again.
 Stop the project after the check. Keep generated MCP files in .mcp/ and do not
 commit them.
 
+If the MCP bridge returns a specific launch or bridge error, follow the
+documented runtime fallback. Do not start the installed Godot executable
+directly without explicit user approval. Without that approval, return
+FALLBACK_EVIDENCE_BLOCKED.
+
 Do not infer hidden runtime state from source code. Do not edit source, add
 tests, change phase status, commit, or push.
 
@@ -180,19 +218,23 @@ For each scenario, report the exact actions, expected result, observed result,
 evidence, and one result: PASS, FAIL, or NOT_PROVEN. Use PASS only when runtime
 evidence proves the expected result.
 
-Return one outcome: RUNTIME_PASS, RUNTIME_FAILURE, or EVIDENCE_BLOCKED. List
-each failed or blocked scenario with the smallest useful reproduction.
+Return one outcome: RUNTIME_PASS, RUNTIME_FAILURE, EVIDENCE_BLOCKED,
+FALLBACK_RUNTIME_PASS, FALLBACK_RUNTIME_FAILURE, or
+FALLBACK_EVIDENCE_BLOCKED. RUNTIME_PASS or FALLBACK_RUNTIME_PASS requires
+runtime proof for every scenario. List each failed or blocked scenario with
+the smallest useful reproduction.
 ```
 
-`RUNTIME_FAILURE` blocks review. Send the complete failure report to the same
-implementation agent for repair. Then inspect the changes, run focused checks,
-perform the required Godot quality gate, and ask the same runtime agent to check
-the affected scenarios and all connected earlier-phase flows again.
+`RUNTIME_FAILURE` and `FALLBACK_RUNTIME_FAILURE` block review. Send the complete
+failure report to the same implementation agent for repair. Then inspect the
+changes, run focused checks, perform the required Godot quality gate, and ask
+the same runtime agent to check the affected scenarios and all connected
+earlier-phase flows again.
 
-`EVIDENCE_BLOCKED` also blocks review when a required `RUNTIME` scenario could
-not run or could not produce usable evidence. Exhaust safe in-scope recovery
-steps. Stop and ask the user when access, a product decision, or an external
-state change is required.
+`EVIDENCE_BLOCKED` and `FALLBACK_EVIDENCE_BLOCKED` also block review when a
+required `RUNTIME` scenario could not run or could not produce usable evidence.
+Exhaust safe in-scope recovery steps. Stop and ask the user when access, a
+product decision, or an external state change is required.
 
 ## 5. Run two independent reviews
 
@@ -296,7 +338,8 @@ After each repair:
 2. Run affected focused checks.
 3. Perform the complete Godot quality gate.
 4. Ask the runtime verification agent to run the affected scenarios and
-   connected earlier-phase flows again. Require `RUNTIME_PASS`.
+   connected earlier-phase flows again. Require `RUNTIME_PASS` or
+   `FALLBACK_RUNTIME_PASS`.
 5. Freeze the new diff.
 6. Send the new diff to the same code review agent to check the earlier
    findings.
@@ -319,7 +362,7 @@ The implementation is technically ready only when:
 - Godot project information is available;
 - all changed GDScripts and relevant scenes pass validation;
 - the project runs with no related runtime error;
-- runtime verification returns `RUNTIME_PASS`;
+- runtime verification returns `RUNTIME_PASS` or `FALLBACK_RUNTIME_PASS`;
 - the code review has no P0, P1, or P2 finding;
 - the phase-contract review returns `TECHNICAL_PASS`; and
 - each criterion is `PASS`.

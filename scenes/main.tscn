@@ -1,19 +1,16 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
 
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_top"]
-size = Vector2(1152, 48)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_side"]
-size = Vector2(48, 648)
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_shelter"]
-size = Vector2(170, 116)
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
+size = Vector2(190, 84)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_rock"]
 radius = 38.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_palm"]
+radius = 13.0
 
 [sub_resource type="CapsuleShape2D" id="CapsuleShape2D_player"]
 radius = 14.0
@@ -24,43 +21,49 @@ height = 34.0
 [node name="Cove" type="Node2D" parent="."]
 script = ExtResource("1_cove")
 
-[node name="Boundaries" type="Node2D" parent="."]
+[node name="Collisions" type="Node2D" parent="."]
 
-[node name="Top" type="StaticBody2D" parent="Boundaries"]
-position = Vector2(576, 54)
+[node name="Shoreline" type="StaticBody2D" parent="Collisions"]
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Boundaries/Top"]
-shape = SubResource("RectangleShape2D_top")
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="Collisions/Shoreline"]
+build_mode = 1
+polygon = PackedVector2Array(64, 158, 178, 76, 451, 48, 817, 64, 1048, 174, 1090, 366, 1018, 548, 774, 598, 302, 590, 100, 494, 48, 314)
 
-[node name="Bottom" type="StaticBody2D" parent="Boundaries"]
-position = Vector2(576, 594)
+[node name="Shelter" type="StaticBody2D" parent="Collisions"]
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Boundaries/Bottom"]
-shape = SubResource("RectangleShape2D_top")
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="Collisions/Shelter"]
+build_mode = 0
+polygon = PackedVector2Array(760, 185, 841.205, 242, 845, 242, 845, 244.664, 864, 258, 845, 258, 845, 358, 675, 358, 675, 258, 656, 258, 675, 244.664, 675, 242, 678.795, 242)
 
-[node name="Left" type="StaticBody2D" parent="Boundaries"]
-position = Vector2(54, 324)
+[node name="Dock" type="StaticBody2D" parent="Collisions"]
+position = Vector2(1009, 424)
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Boundaries/Left"]
-shape = SubResource("RectangleShape2D_side")
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Collisions/Dock"]
+shape = SubResource("RectangleShape2D_dock")
 
-[node name="Right" type="StaticBody2D" parent="Boundaries"]
-position = Vector2(1098, 324)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Boundaries/Right"]
-shape = SubResource("RectangleShape2D_side")
-
-[node name="Shelter" type="StaticBody2D" parent="Boundaries"]
-position = Vector2(760, 294)
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Boundaries/Shelter"]
-shape = SubResource("RectangleShape2D_shelter")
-
-[node name="Rock" type="StaticBody2D" parent="Boundaries"]
+[node name="Rock" type="StaticBody2D" parent="Collisions"]
 position = Vector2(284, 174)
 
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Boundaries/Rock"]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Collisions/Rock"]
 shape = SubResource("CircleShape2D_rock")
+
+[node name="PalmWest" type="StaticBody2D" parent="Collisions"]
+position = Vector2(185, 220)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Collisions/PalmWest"]
+shape = SubResource("CircleShape2D_palm")
+
+[node name="PalmEast" type="StaticBody2D" parent="Collisions"]
+position = Vector2(898, 173)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Collisions/PalmEast"]
+shape = SubResource("CircleShape2D_palm")
+
+[node name="PalmSouth" type="StaticBody2D" parent="Collisions"]
+position = Vector2(230, 500)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Collisions/PalmSouth"]
+shape = SubResource("CircleShape2D_palm")
 
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
