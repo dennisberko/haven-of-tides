@@ -58,6 +58,18 @@ var _player_shore_id := ""
 var _player_near_ship_return := false
 var _last_ship_docked := false
 var _chart_release_pending := false
+var _last_salvage_eligible := false
+var _salvage_collection_position := Vector2.ZERO
+var _salvage_sailed_after_collection := false
+var _cove_docked_after_salvage := false
+var _cove_ashore_after_salvage := false
+var _cove_returned_to_ship_after_salvage := false
+var _cove_dock_released_after_salvage := false
+var _timber_lots_after_sailing := 0
+var _timber_lots_at_cove_dock := 0
+var _timber_lots_while_ashore := 0
+var _timber_lots_after_return_to_ship := 0
+var _timber_lots_after_cove_dock_release := 0
 
 
 func _ready() -> void:
@@ -100,12 +112,22 @@ func _physics_process(_delta: float) -> void:
 		_player_aboard_ship,
 	)
 	_update_wreck_opportunity()
+	_update_salvage_persistence()
 	if _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
 		var leave_allowed: bool = ship.can_leave_at_damaged_dock()
 		var available_dock_id: String = ship.get_available_dock_id()
 		var ship_docked: bool = ship.is_docked
+		var salvage_eligible := wreck_opportunity.is_salvage_eligible()
+		if (
+			_last_ship_docked
+			and not ship_docked
+			and ship.last_dock_id == "cove"
+			and ship.timber_lots == 1
+		):
+			_cove_dock_released_after_salvage = true
+			_timber_lots_after_cove_dock_release = ship.timber_lots
 		if waypoint_display.chart_visible:
 			controls_help.text = CHART_CONTROLS_TEXT
 		elif _chart_release_pending:
@@ -118,10 +140,12 @@ func _physics_process(_delta: float) -> void:
 			leave_allowed != _last_leave_allowed
 			or available_dock_id != _available_dock_id
 			or ship_docked != _last_ship_docked
+			or salvage_eligible != _last_salvage_eligible
 		):
 			_last_leave_allowed = leave_allowed
 			_available_dock_id = available_dock_id
 			_last_ship_docked = ship_docked
+			_last_salvage_eligible = salvage_eligible
 			_update_interaction_prompt()
 	elif not _player_shore_id.is_empty():
 		travel_camera.global_position = player.global_position
@@ -173,6 +197,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_go_ashore()
 		elif not ship.get_available_dock_id().is_empty():
 			_dock_ship()
+		elif wreck_opportunity.can_receive_salvage_press():
+			_salvage_wreck()
 		elif ship.can_leave_at_damaged_dock():
 			_leave_ship_at_damaged_dock()
 		get_viewport().set_input_as_handled()
@@ -288,10 +314,37 @@ func _update_wreck_opportunity() -> void:
 		ship.get_forward_direction(),
 		ship.current_speed,
 		_player_aboard_ship,
+		ship.captain_aboard,
 		ship.has_departed_dock,
 		waypoint_display.selected_location_id,
 		_player_aboard_ship and not waypoint_display.chart_visible,
+		not waypoint_display.chart_visible,
 	)
+
+
+func _update_salvage_persistence() -> void:
+	if ship.timber_lots != 1 or _salvage_collection_position == Vector2.ZERO:
+		return
+	if ship.global_position.distance_to(_salvage_collection_position) > 1.0:
+		_salvage_sailed_after_collection = true
+		_timber_lots_after_sailing = ship.timber_lots
+
+
+func _salvage_wreck() -> void:
+	if not wreck_opportunity.is_salvage_eligible():
+		wreck_opportunity.try_collect_timber_lot()
+		_update_interaction_prompt()
+		return
+	if not ship.can_accept_salvaged_timber_lot():
+		return
+	if not wreck_opportunity.try_collect_timber_lot():
+		_update_interaction_prompt()
+		return
+	if not ship.add_salvaged_timber_lot():
+		return
+	_salvage_collection_position = ship.global_position
+	_last_salvage_eligible = false
+	_update_interaction_prompt()
 
 
 func _on_sign_body_entered(body: Node2D) -> void:
@@ -400,6 +453,9 @@ func _dock_ship() -> void:
 	_available_dock_id = ""
 	_last_leave_allowed = false
 	_last_ship_docked = true
+	if dock_id == "cove" and ship.timber_lots == 1:
+		_cove_docked_after_salvage = true
+		_timber_lots_at_cove_dock = ship.timber_lots
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
 
@@ -414,6 +470,9 @@ func _go_ashore() -> void:
 
 	_player_aboard_ship = false
 	_player_shore_id = String(definition["id"])
+	if _player_shore_id == "cove" and ship.timber_lots == 1:
+		_cove_ashore_after_salvage = true
+		_timber_lots_while_ashore = ship.timber_lots
 	_player_near_ship_return = true
 	ship.set_captain_aboard(false)
 	player.go_ashore(
@@ -431,11 +490,15 @@ func _return_to_ship() -> void:
 	if not ship.is_docked or ship.current_dock_id != _player_shore_id:
 		return
 
+	var returning_shore_id := _player_shore_id
 	_player_aboard_ship = true
 	_player_shore_id = ""
 	_player_near_ship_return = false
 	player.enter_ship(ship_standing_position.global_position)
 	ship.set_captain_aboard(true)
+	if returning_shore_id == "cove" and ship.timber_lots == 1:
+		_cove_returned_to_ship_after_salvage = true
+		_timber_lots_after_return_to_ship = ship.timber_lots
 	_last_ship_docked = true
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
@@ -529,6 +592,9 @@ func _update_interaction_prompt() -> void:
 			var available_definition: Dictionary = ship.get_dock_definition(_available_dock_id)
 			interaction_prompt.text = "[E] DOCK AT %s" % available_definition["name"]
 			interaction_prompt.show()
+		elif wreck_opportunity.is_salvage_eligible():
+			interaction_prompt.text = "[E] SALVAGE ONE TIMBER LOT"
+			interaction_prompt.show()
 		elif ship.can_leave_at_damaged_dock():
 			interaction_prompt.text = "[E] LEAVE SHIP AT DOCK"
 			interaction_prompt.show()
@@ -587,6 +653,7 @@ func get_playtest_state() -> Dictionary:
 		"ship_controls": ship_state["controls"],
 		"ship_controls_enabled": ship_state["controls_enabled"],
 		"ship_captain_aboard": ship_state["captain_aboard"],
+		"ship_timber_lots": ship_state["timber_lots"],
 		"ship_has_departed_dock": ship_state["has_departed_dock"],
 		"ship_at_damaged_dock": ship_state["at_damaged_dock"],
 		"ship_leave_allowed": ship_state["leave_allowed"],
@@ -722,4 +789,41 @@ func get_playtest_state() -> Dictionary:
 		"wreck_route_state": wreck_state["route_state"],
 		"wreck_known_chart_location": wreck_state["known_chart_location"],
 		"wreck_chart_marker_count": wreck_state["chart_marker_count"],
+		"salvage_range": wreck_state["salvage_range"],
+		"salvage_max_speed": wreck_state["salvage_max_speed"],
+		"salvage_eligibility": wreck_state["salvage_eligibility"],
+		"salvage_eligible": wreck_state["salvage_eligible"],
+		"salvage_prompt_visible": (
+			interaction_prompt.visible
+			and interaction_prompt.text == "[E] SALVAGE ONE TIMBER LOT"
+		),
+		"salvage_prompt_text": (
+			interaction_prompt.text
+			if interaction_prompt.visible
+			and interaction_prompt.text == "[E] SALVAGE ONE TIMBER LOT"
+			else ""
+		),
+		"wreck_empty": wreck_state["wreck_empty"],
+		"successful_salvage_collection_count": (
+			wreck_state["successful_collection_count"]
+		),
+		"salvage_last_result": wreck_state["last_salvage_result"],
+		"salvage_repeat_result": wreck_state["repeat_salvage_result"],
+		"salvage_persistence": {
+			"sailed_after_collection": _salvage_sailed_after_collection,
+			"timber_lots_after_sailing": _timber_lots_after_sailing,
+			"cove_docked_after_salvage": _cove_docked_after_salvage,
+			"timber_lots_at_cove_dock": _timber_lots_at_cove_dock,
+			"went_ashore_at_cove": _cove_ashore_after_salvage,
+			"timber_lots_while_ashore": _timber_lots_while_ashore,
+			"returned_to_ship_at_cove": _cove_returned_to_ship_after_salvage,
+			"timber_lots_after_return": _timber_lots_after_return_to_ship,
+			"released_cove_dock": _cove_dock_released_after_salvage,
+			"timber_lots_after_dock_release": (
+				_timber_lots_after_cove_dock_release
+			),
+			"ship_is_docked": ship_state["is_docked"],
+			"current_dock_id": ship_state["current_dock_id"],
+			"last_dock_id": ship_state["last_dock_id"],
+		},
 	}

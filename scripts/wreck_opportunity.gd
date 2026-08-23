@@ -5,6 +5,8 @@ const WRECK_ID := "off_route_wreck"
 const EARLY_VISIBILITY_RANGE := 1050.0
 const NEAR_MARKER_RANGE := 260.0
 const REACHED_RANGE := 150.0
+const SALVAGE_RANGE := 150.0
+const SALVAGE_MAX_SPEED := 12.0
 const ROUTE_ACQUIRE_RANGE := 150.0
 const ROUTE_DEPARTURE_RANGE := 225.0
 const RETURN_PROGRESS_DISTANCE := 50.0
@@ -23,9 +25,11 @@ var _wreck_route_offset := 0.0
 var _wreck_route_progress := 0.0
 var _port_distance := INF
 var _player_aboard_ship := false
+var _captain_aboard := false
 var _ship_has_departed := false
 var _selected_waypoint_id := ""
 var _sailing_view_active := false
+var _chart_closed := true
 var _sailing_viewport_world_rect := Rect2()
 var _wreck_visual_world_rect := Rect2()
 var _early_visible := false
@@ -40,6 +44,11 @@ var _reached := false
 var _reached_after_course_change := false
 var _distance_to_port_at_reach := INF
 var _returning_to_port := false
+var _wreck_empty := false
+var _salvage_eligible := false
+var _successful_collection_count := 0
+var _last_salvage_result := "NOT_ATTEMPTED"
+var _repeat_salvage_result := "NOT_ATTEMPTED"
 
 
 func _ready() -> void:
@@ -60,17 +69,21 @@ func update_state(
 	ship_heading: Vector2,
 	ship_speed: float,
 	player_aboard_ship: bool,
+	captain_aboard: bool,
 	ship_has_departed: bool,
 	selected_waypoint_id: String,
 	sailing_view_active: bool,
+	chart_closed: bool,
 ) -> void:
 	_ship_position = ship_position
 	_ship_heading = ship_heading.normalized()
 	_ship_speed = ship_speed
 	_player_aboard_ship = player_aboard_ship
+	_captain_aboard = captain_aboard
 	_ship_has_departed = ship_has_departed
 	_selected_waypoint_id = selected_waypoint_id
 	_sailing_view_active = sailing_view_active
+	_chart_closed = chart_closed
 	_ship_distance = _ship_position.distance_to(global_position)
 	_port_distance = _ship_position.distance_to(_route_end)
 	_sailing_viewport_world_rect = Rect2(
@@ -93,6 +106,13 @@ func update_state(
 	)
 	_near_marker_visible = (
 		_early_visible and _ship_distance <= NEAR_MARKER_RANGE
+	)
+	_salvage_eligible = (
+		_captain_aboard
+		and _ship_distance <= SALVAGE_RANGE
+		and absf(_ship_speed) <= SALVAGE_MAX_SPEED
+		and not _wreck_empty
+		and _chart_closed
 	)
 	_wreck_visual_on_screen = (
 		_sailing_view_active
@@ -168,6 +188,36 @@ func update_state(
 		_returning_to_port = true
 
 
+func can_receive_salvage_press() -> bool:
+	return (
+		_captain_aboard
+		and _ship_distance <= SALVAGE_RANGE
+		and absf(_ship_speed) <= SALVAGE_MAX_SPEED
+		and _chart_closed
+	)
+
+
+func is_salvage_eligible() -> bool:
+	return _salvage_eligible
+
+
+func try_collect_timber_lot() -> bool:
+	if _wreck_empty:
+		_last_salvage_result = "NO_CHANGE_WRECK_EMPTY"
+		_repeat_salvage_result = _last_salvage_result
+		return false
+	if not _salvage_eligible:
+		_last_salvage_result = "NO_CHANGE_INELIGIBLE"
+		return false
+
+	_wreck_empty = true
+	_salvage_eligible = false
+	_successful_collection_count = 1
+	_last_salvage_result = "COLLECTED_ONE_TIMBER_LOT"
+	queue_redraw()
+	return true
+
+
 func get_playtest_state() -> Dictionary:
 	return {
 		"wreck_count": 1,
@@ -201,6 +251,7 @@ func get_playtest_state() -> Dictionary:
 		"ship_direct_route_progress": _ship_route_progress,
 		"port_distance": _port_distance,
 		"player_aboard_ship": _player_aboard_ship,
+		"captain_aboard": _captain_aboard,
 		"ship_has_departed": _ship_has_departed,
 		"selected_waypoint_id": _selected_waypoint_id,
 		"port_waypoint_selected": _selected_waypoint_id == "port",
@@ -216,6 +267,28 @@ func get_playtest_state() -> Dictionary:
 		"route_state": _get_route_state(),
 		"known_chart_location": false,
 		"chart_marker_count": 0,
+		"salvage_range": SALVAGE_RANGE,
+		"salvage_max_speed": SALVAGE_MAX_SPEED,
+		"salvage_ship_distance": _ship_distance,
+		"salvage_ship_speed": absf(_ship_speed),
+		"salvage_captain_aboard": _captain_aboard,
+		"salvage_beside_wreck": _ship_distance <= SALVAGE_RANGE,
+		"salvage_slow_enough": absf(_ship_speed) <= SALVAGE_MAX_SPEED,
+		"salvage_chart_closed": _chart_closed,
+		"salvage_wreck_not_empty": not _wreck_empty,
+		"salvage_eligible": _salvage_eligible,
+		"salvage_eligibility": {
+			"captain_aboard": _captain_aboard,
+			"beside_wreck": _ship_distance <= SALVAGE_RANGE,
+			"wreck_not_empty": not _wreck_empty,
+			"chart_closed": _chart_closed,
+			"slow_enough": absf(_ship_speed) <= SALVAGE_MAX_SPEED,
+			"eligible": _salvage_eligible,
+		},
+		"wreck_empty": _wreck_empty,
+		"successful_collection_count": _successful_collection_count,
+		"last_salvage_result": _last_salvage_result,
+		"repeat_salvage_result": _repeat_salvage_result,
 	}
 
 
@@ -267,36 +340,47 @@ func _draw() -> void:
 		Vector2(16.0, 35.0),
 		Vector2(-55.0, 27.0),
 	]), Color("#493323"))
-	draw_colored_polygon(PackedVector2Array([
-		Vector2(-64.0, -8.0),
-		Vector2(-22.0, -24.0),
-		Vector2(15.0, -18.0),
-		Vector2(-2.0, 23.0),
-		Vector2(-47.0, 18.0),
-	]), Color("#b27a47"))
+	if not _wreck_empty:
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(-64.0, -8.0),
+			Vector2(-22.0, -24.0),
+			Vector2(15.0, -18.0),
+			Vector2(-2.0, 23.0),
+			Vector2(-47.0, 18.0),
+		]), Color("#b27a47"))
 	draw_line(Vector2(-96.0, 45.0), Vector2(-28.0, 16.0), Color("#6b452c"), 10.0)
-	draw_line(Vector2(42.0, 27.0), Vector2(108.0, 52.0), Color("#b27a47"), 9.0)
-	draw_line(Vector2(9.0, -20.0), Vector2(30.0, -78.0), Color("#342b29"), 8.0)
-	draw_circle(Vector2(19.0, -48.0), 13.0, Color("#ef6b35"))
-	draw_circle(Vector2(17.0, -56.0), 7.0, Color("#ffd067"))
+	if _wreck_empty:
+		draw_line(Vector2(42.0, 27.0), Vector2(108.0, 52.0), Color("#6b452c"), 9.0)
+	else:
+		draw_line(Vector2(42.0, 27.0), Vector2(108.0, 52.0), Color("#b27a47"), 9.0)
+		draw_line(Vector2(9.0, -20.0), Vector2(30.0, -78.0), Color("#342b29"), 8.0)
+		draw_circle(Vector2(19.0, -48.0), 13.0, Color("#ef6b35"))
+		draw_circle(Vector2(17.0, -56.0), 7.0, Color("#ffd067"))
 
-	# The smoke has no random motion, so its visible state is deterministic.
-	draw_circle(Vector2(23.0, -88.0), 23.0, Color("#33444cb8"))
-	draw_circle(Vector2(7.0, -122.0), 30.0, Color("#405159aa"))
-	draw_circle(Vector2(25.0, -164.0), 35.0, Color("#4c5c63a0"))
-	draw_circle(Vector2(3.0, -207.0), 39.0, Color("#5a686e90"))
+		# The smoke has no random motion, so its visible state is deterministic.
+		draw_circle(Vector2(23.0, -88.0), 23.0, Color("#33444cb8"))
+		draw_circle(Vector2(7.0, -122.0), 30.0, Color("#405159aa"))
+		draw_circle(Vector2(25.0, -164.0), 35.0, Color("#4c5c63a0"))
+		draw_circle(Vector2(3.0, -207.0), 39.0, Color("#5a686e90"))
 
 	if not _near_marker_visible:
 		return
 	var font := ThemeDB.fallback_font
 	draw_arc(Vector2.ZERO, 124.0, 0.0, TAU, 48, Color("#fff1c5"), 5.0)
 	draw_line(Vector2(0.0, -124.0), Vector2(0.0, -238.0), Color("#fff1c5"), 4.0)
+	var marker_text := "WRECK"
+	var marker_width := 128.0
+	var marker_x := -64.0
+	if _wreck_empty:
+		marker_text = "EMPTY WRECK"
+		marker_width = 176.0
+		marker_x = -88.0
 	draw_string(
 		font,
-		Vector2(-64.0, -252.0),
-		"WRECK",
+		Vector2(marker_x, -252.0),
+		marker_text,
 		HORIZONTAL_ALIGNMENT_CENTER,
-		128.0,
+		marker_width,
 		20,
 		Color("#fff1c5"),
 	)

@@ -72,6 +72,7 @@ var last_dock_id := ""
 var last_collision_response := "NONE"
 var navigation_input_blocked := false
 var navigation_release_pending := false
+var timber_lots := 0
 
 var _sea_bounds := Rect2()
 var _island_center := Vector2.ZERO
@@ -153,6 +154,18 @@ func is_at_cove_entrance() -> bool:
 
 func get_forward_direction() -> Vector2:
 	return Vector2.UP.rotated(rotation)
+
+
+func can_accept_salvaged_timber_lot() -> bool:
+	return timber_lots == 0
+
+
+func add_salvaged_timber_lot() -> bool:
+	if not can_accept_salvaged_timber_lot():
+		return false
+	timber_lots = 1
+	queue_redraw()
+	return true
 
 
 func get_available_dock_id() -> String:
@@ -512,6 +525,8 @@ func get_playtest_state() -> Dictionary:
 		"departure_input_armed": _departure_input_armed,
 		"navigation_input_blocked": navigation_input_blocked,
 		"navigation_release_pending": navigation_release_pending,
+		"timber_lots": timber_lots,
+		"has_salvaged_timber": timber_lots == 1,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),
@@ -521,6 +536,7 @@ func get_playtest_state() -> Dictionary:
 			"turn_right": "D_OR_RIGHT",
 			"brake": "S_OR_DOWN",
 			"dock_or_ashore": "E",
+			"salvage": "E",
 		},
 	}
 
@@ -542,6 +558,15 @@ func _draw() -> void:
 	draw_line(Vector2(-30, 18), Vector2(30, 18), Color("#6b452c"), 5.0)
 	draw_circle(Vector2(0, -12), 8.0, Color("#342b29"))
 	draw_line(Vector2(0, -12), Vector2(18, -47), Color("#e8d2a2"), 4.0)
+	if timber_lots == 1:
+		# One fixed timber stack shows the one collected lot on the deck.
+		for timber_y in [-1.0, 8.0, 27.0, 36.0]:
+			draw_line(
+				Vector2(-25.0, timber_y),
+				Vector2(25.0, timber_y),
+				Color("#d69b5d"),
+				7.0,
+			)
 
 	# The gangplank is visible when the ship is at the damaged cove dock.
 	if at_damaged_dock:
