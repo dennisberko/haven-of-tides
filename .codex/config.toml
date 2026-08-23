@@ -1,0 +1,9 @@
+[mcp_servers.godot]
+command = "npx"
+args = ["-y", "godot-mcp-runtime"]
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[mcp_servers.godot.env]
+GODOT_PATH = "/opt/homebrew/bin/godot"
+GODOT_MCP_STRICT = "true"
