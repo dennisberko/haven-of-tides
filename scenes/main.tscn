@@ -1,9 +1,10 @@
-[gd_scene load_steps=10 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2_player"]
 [ext_resource type="Script" path="res://scripts/sign.gd" id="3_sign"]
+[ext_resource type="Script" path="res://scripts/resident.gd" id="4_resident"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -20,6 +21,9 @@ height = 34.0
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_sign_range"]
 radius = 68.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_resident_range"]
+radius = 72.0
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -82,6 +86,15 @@ script = ExtResource("3_sign")
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/Sign"]
 shape = SubResource("CircleShape2D_sign_range")
 
+[node name="Resident" type="Area2D" parent="InteractiveObjects" groups=["interactive"]]
+position = Vector2(752, 418)
+collision_layer = 0
+collision_mask = 1
+script = ExtResource("4_resident")
+
+[node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/Resident"]
+shape = SubResource("CircleShape2D_resident_range")
+
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
 script = ExtResource("2_player")
@@ -113,7 +126,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 02 · Read the cove sign"
+text = "Phase 03 · Talk to Mara"
 
 [node name="SignMessage" type="Label" parent="Interface"]
 visible = false
@@ -142,6 +155,43 @@ theme_override_constants/shadow_offset_y = 3
 theme_override_font_sizes/font_size = 20
 text = "[E] READ SIGN"
 horizontal_alignment = 1
+
+[node name="DialogueBox" type="ColorRect" parent="Interface"]
+visible = false
+offset_left = 170.0
+offset_top = 416.0
+offset_right = 982.0
+offset_bottom = 585.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.94)
+
+[node name="SpeakerName" type="Label" parent="Interface/DialogueBox"]
+offset_left = 28.0
+offset_top = 20.0
+offset_right = 300.0
+offset_bottom = 52.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 22
+text = "Mara"
+
+[node name="DialogueText" type="Label" parent="Interface/DialogueBox"]
+offset_left = 28.0
+offset_top = 60.0
+offset_right = 784.0
+offset_bottom = 105.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 21
+text = "The tide brought you home in one piece."
+autowrap_mode = 2
+
+[node name="Continue" type="Label" parent="Interface/DialogueBox"]
+offset_left = 560.0
+offset_top = 126.0
+offset_right = 784.0
+offset_bottom = 153.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 16
+text = "[E] CONTINUE"
+horizontal_alignment = 2
 
 [node name="Controls" type="Label" parent="Interface"]
 offset_left = 878.0

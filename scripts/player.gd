@@ -1,8 +1,10 @@
+class_name CovePlayer
 extends CharacterBody2D
 
 const SPEED := 210.0
 
 var facing := Vector2.DOWN
+var movement_enabled := true
 
 
 func _ready() -> void:
@@ -11,6 +13,11 @@ func _ready() -> void:
 
 
 func _physics_process(_delta: float) -> void:
+	if not movement_enabled:
+		velocity = Vector2.ZERO
+		move_and_slide()
+		return
+
 	var direction := _read_direction()
 	velocity = direction * SPEED
 
@@ -40,6 +47,7 @@ func get_playtest_state() -> Dictionary:
 		"position": position,
 		"velocity": velocity,
 		"facing": facing,
+		"movement_enabled": movement_enabled,
 	}
 
 
