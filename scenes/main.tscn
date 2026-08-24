@@ -1,4 +1,4 @@
-[gd_scene load_steps=18 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -9,6 +9,7 @@
 [ext_resource type="Script" path="res://scripts/sea_area.gd" id="6_sea"]
 [ext_resource type="Script" path="res://scripts/waypoint_display.gd" id="7_waypoint"]
 [ext_resource type="Script" path="res://scripts/wreck_opportunity.gd" id="8_wreck"]
+[ext_resource type="Script" path="res://scripts/cove_storage.gd" id="9_storage"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -34,6 +35,9 @@ size = Vector2(40, 120)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship_entry"]
 radius = 54.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_cove_storage"]
+radius = 58.0
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -136,6 +140,16 @@ script = ExtResource("4_resident")
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/Resident"]
 shape = SubResource("CircleShape2D_resident_range")
 
+[node name="CoveStorage" type="Area2D" parent="InteractiveObjects" groups=["interactive"]]
+z_index = 1
+position = Vector2(545, 480)
+collision_layer = 0
+collision_mask = 1
+script = ExtResource("9_storage")
+
+[node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/CoveStorage"]
+shape = SubResource("CircleShape2D_cove_storage")
+
 [node name="RequestAreas" type="Node2D" parent="."]
 
 [node name="DamagedDockGoal" type="Area2D" parent="RequestAreas"]
@@ -181,7 +195,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 11 · Cargo limit"
+text = "Phase 12 · Cove storage"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -265,6 +279,57 @@ theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_constants/line_spacing = 10
 theme_override_font_sizes/font_size = 20
 text = "[1] REPLACE COVE MEDICINE LOT\n[2] REPLACE VOYAGE FOOD LOT\n[3] REPLACE TIMBER LOT\n[X] LEAVE SAILCLOTH LOT AT WRECK"
+horizontal_alignment = 1
+
+[node name="StorageView" type="ColorRect" parent="Interface"]
+visible = false
+offset_left = 142.0
+offset_top = 104.0
+offset_right = 1010.0
+offset_bottom = 554.0
+color = Color(0.0313726, 0.109804, 0.133333, 0.985)
+
+[node name="StorageTitle" type="Label" parent="Interface/StorageView"]
+offset_left = 28.0
+offset_top = 20.0
+offset_right = 840.0
+offset_bottom = 54.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 25
+text = "COVE STORAGE · 3 FIXED SLOTS"
+horizontal_alignment = 1
+
+[node name="StorageDetails" type="Label" parent="Interface/StorageView"]
+offset_left = 42.0
+offset_top = 72.0
+offset_right = 826.0
+offset_bottom = 332.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_colors/font_shadow_color = Color(0.0156863, 0.0627451, 0.0784314, 0.9)
+theme_override_constants/line_spacing = 7
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 19
+text = "SHIP CARGO · USED 3/3 · FREE 0\n[1] SLOT 1  COVE MEDICINE LOT\n[2] SLOT 2  VOYAGE FOOD LOT\n[3] SLOT 3  TIMBER LOT\n\nCOVE STORAGE · USED 0/3 · FREE 3\n[4] SLOT 1  EMPTY\n[5] SLOT 2  EMPTY\n[6] SLOT 3  EMPTY"
+
+[node name="StorageResult" type="Label" parent="Interface/StorageView"]
+offset_left = 42.0
+offset_top = 338.0
+offset_right = 826.0
+offset_bottom = 371.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 17
+text = "READY · SELECT ONE CARGO SLOT"
+horizontal_alignment = 1
+
+[node name="StorageControls" type="Label" parent="Interface/StorageView"]
+offset_left = 30.0
+offset_top = 390.0
+offset_right = 838.0
+offset_bottom = 426.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 17
+text = "[1 / 2 / 3] SHIP → STORAGE · [4 / 5 / 6] STORAGE → SHIP · [X] CLOSE"
 horizontal_alignment = 1
 
 [node name="SignMessage" type="Label" parent="Interface"]

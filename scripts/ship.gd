@@ -214,6 +214,27 @@ func replace_cargo_slot(slot_index: int, new_lot_name: String) -> String:
 	return removed_lot
 
 
+func remove_cargo_slot_for_storage(slot_index: int) -> String:
+	if slot_index < 0 or slot_index >= cargo_lots.size():
+		return ""
+	var removed_lot: String = String(cargo_lots.pop_at(slot_index))
+	_sync_cargo_state()
+	return removed_lot
+
+
+func restore_cargo_slot_from_storage(slot_index: int, lot_name: String) -> bool:
+	if (
+		lot_name.is_empty()
+		or cargo_lots.size() >= CARGO_LIMIT
+		or slot_index < 0
+		or slot_index > cargo_lots.size()
+	):
+		return false
+	cargo_lots.insert(slot_index, lot_name)
+	_sync_cargo_state()
+	return true
+
+
 func get_cargo_lots() -> Array[String]:
 	return cargo_lots.duplicate()
 

@@ -14,6 +14,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var player = $Player
 @onready var sign: CoveSign = $InteractiveObjects/Sign
 @onready var resident = $InteractiveObjects/Resident
+@onready var cove_storage = $InteractiveObjects/CoveStorage
 @onready var sea_area = $SeaArea
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var ship = $Ship
@@ -36,6 +37,9 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
+@onready var storage_view: ColorRect = $Interface/StorageView
+@onready var storage_details: Label = $Interface/StorageView/StorageDetails
+@onready var storage_result: Label = $Interface/StorageView/StorageResult
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
@@ -45,12 +49,15 @@ const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY · M CHART"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
+const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
+const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 1-6, M, WASD / ARROW KEYS"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const SHORE_RETURN_DISTANCE := 64.0
 
 var _player_near_sign := false
 var _player_near_resident := false
 var _player_near_ship_entry := false
+var _player_near_cove_storage := false
 var _player_aboard_ship := false
 var _interact_held := false
 var _read_count := 0
@@ -87,6 +94,38 @@ var _cargo_left_count := 0
 var _cargo_replaced_count := 0
 var _cargo_choice_opened_count := 0
 var _cargo_choice_resolution_count := 0
+var _storage_view_open := false
+var _storage_release_pending := false
+var _storage_pressed_keys: Dictionary = {}
+var _last_storage_action := "NOT_ATTEMPTED"
+var _last_storage_result := "NOT_ATTEMPTED"
+var _storage_open_count := 0
+var _storage_close_count := 0
+var _storage_stored_count := 0
+var _storage_withdrawn_count := 0
+var _storage_lists_saved_on_close := false
+var _saved_ship_cargo_on_close: Array[String] = []
+var _saved_cove_storage_on_close: Array[String] = []
+var _saved_cove_storage_slots_on_close: Array[String] = []
+var _persistence_ship_cargo: Array[String] = []
+var _persistence_cove_storage: Array[String] = []
+var _persistence_cove_storage_slots: Array[String] = []
+var _storage_persistence_tracking := false
+var _storage_returned_to_ship_after_save := false
+var _storage_released_cove_dock_after_save := false
+var _storage_sailed_after_save := false
+var _storage_return_docked_after_save := false
+var _storage_returned_ashore_after_save := false
+var _storage_walked_back_after_return := false
+var _storage_reopened_after_return := false
+var _storage_persistence_holds := false
+var _ship_lots_after_storage_sailing: Array[String] = []
+var _cove_lots_after_storage_sailing: Array[String] = []
+var _ship_lots_at_storage_return_dock: Array[String] = []
+var _cove_lots_at_storage_return_dock: Array[String] = []
+var _ship_lots_at_storage_reopen: Array[String] = []
+var _cove_lots_at_storage_reopen: Array[String] = []
+var _last_storage_transfer_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -108,16 +147,20 @@ func _ready() -> void:
 	)
 	_update_wreck_opportunity()
 	_update_cargo_view()
+	_update_storage_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
 	dialogue_box.hide()
 	request_view.hide()
 	cargo_choice_view.hide()
+	storage_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
 	resident.body_exited.connect(_on_resident_body_exited)
+	cove_storage.body_entered.connect(_on_cove_storage_body_entered)
+	cove_storage.body_exited.connect(_on_cove_storage_body_exited)
 	ship_entry.body_entered.connect(_on_ship_entry_body_entered)
 	ship_entry.body_exited.connect(_on_ship_entry_body_exited)
 	damaged_dock_goal.body_entered.connect(_on_damaged_dock_goal_body_entered)
@@ -126,6 +169,7 @@ func _ready() -> void:
 func _physics_process(_delta: float) -> void:
 	_update_chart_release_pending()
 	_update_cargo_choice_release_pending()
+	_update_storage_release_pending()
 	waypoint_display.update_positions(
 		ship.global_position,
 		player.global_position,
@@ -135,6 +179,7 @@ func _physics_process(_delta: float) -> void:
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_salvage_persistence()
+	_update_storage_persistence()
 	if _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
@@ -150,6 +195,13 @@ func _physics_process(_delta: float) -> void:
 		):
 			_cove_dock_released_after_salvage = true
 			_timber_lots_after_cove_dock_release = ship.timber_lots
+		if (
+			_storage_persistence_tracking
+			and _last_ship_docked
+			and not ship_docked
+			and ship.last_dock_id == "cove"
+		):
+			_storage_released_cove_dock_after_save = true
 		if _cargo_choice_open:
 			controls_help.text = CARGO_CHOICE_CONTROLS_TEXT
 		elif _cargo_choice_release_pending or ship.navigation_release_pending:
@@ -193,6 +245,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _storage_view_open:
+		_handle_storage_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if _storage_release_pending:
+		if not key_event.pressed and _key_matches(key_event, KEY_E):
+			_interact_held = false
+		get_viewport().set_input_as_handled()
+		return
 	if _cargo_choice_open:
 		_handle_cargo_choice_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -244,6 +305,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _can_open_cove_storage():
+		_open_cove_storage()
+		get_viewport().set_input_as_handled()
+		return
+
 	if _player_near_resident:
 		_start_dialogue()
 		get_viewport().set_input_as_handled()
@@ -257,6 +323,356 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _handle_storage_input(key_event: InputEventKey) -> void:
+	var storage_key := _get_storage_key(key_event)
+	if not key_event.pressed:
+		if storage_key != 0:
+			_storage_pressed_keys.erase(storage_key)
+		if _key_matches(key_event, KEY_E):
+			_interact_held = false
+		return
+
+	if storage_key == 0:
+		_last_storage_action = "BLOCKED_WHILE_STORAGE_OPEN"
+		_last_storage_result = "NO_CHANGE_STORAGE_MODAL_BLOCKED_INPUT"
+		_update_storage_view()
+		return
+	if key_event.echo or bool(_storage_pressed_keys.get(storage_key, false)):
+		_last_storage_action = "HELD_STORAGE_KEY_%s" % _storage_key_name(storage_key)
+		_last_storage_result = "NO_CHANGE_HELD_INPUT"
+		_update_storage_view()
+		return
+
+	_storage_pressed_keys[storage_key] = true
+	if storage_key == KEY_X:
+		_close_cove_storage()
+		return
+	match storage_key:
+		KEY_1:
+			_store_ship_cargo_slot(0)
+		KEY_2:
+			_store_ship_cargo_slot(1)
+		KEY_3:
+			_store_ship_cargo_slot(2)
+		KEY_4:
+			_withdraw_cove_storage_slot(0)
+		KEY_5:
+			_withdraw_cove_storage_slot(1)
+		KEY_6:
+			_withdraw_cove_storage_slot(2)
+
+
+func _get_storage_key(key_event: InputEventKey) -> int:
+	if _key_matches(key_event, KEY_1):
+		return KEY_1
+	if _key_matches(key_event, KEY_2):
+		return KEY_2
+	if _key_matches(key_event, KEY_3):
+		return KEY_3
+	if _key_matches(key_event, KEY_4):
+		return KEY_4
+	if _key_matches(key_event, KEY_5):
+		return KEY_5
+	if _key_matches(key_event, KEY_6):
+		return KEY_6
+	if _key_matches(key_event, KEY_X):
+		return KEY_X
+	return 0
+
+
+func _storage_key_name(key: int) -> String:
+	match key:
+		KEY_1:
+			return "1"
+		KEY_2:
+			return "2"
+		KEY_3:
+			return "3"
+		KEY_4:
+			return "4"
+		KEY_5:
+			return "5"
+		KEY_6:
+			return "6"
+	return "X"
+
+
+func _can_open_cove_storage() -> bool:
+	return (
+		not _player_aboard_ship
+		and _player_shore_id == "cove"
+		and _player_near_cove_storage
+		and not _dialogue_open
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+	)
+
+
+func _open_cove_storage() -> void:
+	if not _can_open_cove_storage():
+		return
+
+	_storage_view_open = true
+	_storage_open_count += 1
+	_storage_pressed_keys.clear()
+	_last_storage_action = "OPEN_COVE_STORAGE"
+	_last_storage_result = "STORAGE_VIEW_OPENED"
+	if (
+		_storage_persistence_tracking
+		and _storage_returned_ashore_after_save
+		and _storage_walked_back_after_return
+	):
+		_storage_reopened_after_return = true
+		_ship_lots_at_storage_reopen = ship.get_cargo_lots()
+		_cove_lots_at_storage_reopen = cove_storage.get_cargo_lots()
+		_storage_persistence_holds = _storage_matches_persistence_snapshot()
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(true)
+	controls_help.text = STORAGE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	sign_message.hide()
+	_update_cargo_view()
+	_update_storage_view()
+
+
+func _close_cove_storage() -> void:
+	if not _storage_view_open:
+		return
+
+	_saved_ship_cargo_on_close = ship.get_cargo_lots()
+	_saved_cove_storage_on_close = cove_storage.get_cargo_lots()
+	_saved_cove_storage_slots_on_close = cove_storage.get_storage_slots()
+	_storage_lists_saved_on_close = true
+	if (
+		not _storage_persistence_tracking
+		and _saved_cove_storage_on_close.has("TIMBER LOT")
+	):
+		_storage_persistence_tracking = true
+		_persistence_ship_cargo = _saved_ship_cargo_on_close.duplicate()
+		_persistence_cove_storage = _saved_cove_storage_on_close.duplicate()
+		_persistence_cove_storage_slots = (
+			_saved_cove_storage_slots_on_close.duplicate()
+		)
+		_storage_persistence_holds = true
+	_storage_view_open = false
+	_storage_release_pending = true
+	_storage_close_count += 1
+	_last_storage_action = "CLOSE_COVE_STORAGE"
+	_last_storage_result = "SAVED_SHIP_AND_COVE_CARGO"
+	storage_view.hide()
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(false)
+	controls_help.text = STORAGE_RELEASE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_cargo_view()
+
+
+func _store_ship_cargo_slot(slot_index: int) -> void:
+	var ship_before: Array[String] = ship.get_cargo_lots()
+	var storage_before: Array[String] = cove_storage.get_storage_slots()
+	var world_before := _get_world_cargo_total()
+	_last_storage_action = "STORE_SHIP_SLOT_%d" % (slot_index + 1)
+	if slot_index < 0 or slot_index >= ship_before.size():
+		_record_storage_action(
+			"NO_CHANGE_EMPTY_SHIP_SLOT_%d" % (slot_index + 1),
+			"",
+			slot_index,
+			-1,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+	if not cove_storage.can_store_cargo_lot():
+		_record_storage_action(
+			"NO_CHANGE_COVE_STORAGE_FULL",
+			ship_before[slot_index],
+			slot_index,
+			-1,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+
+	var destination_slot: int = cove_storage.get_first_free_slot_index()
+	var moved_lot: String = ship.remove_cargo_slot_for_storage(slot_index)
+	if moved_lot.is_empty():
+		_record_storage_action(
+			"NO_CHANGE_SHIP_STATE",
+			"",
+			slot_index,
+			destination_slot,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+	if not cove_storage.store_cargo_lot(moved_lot):
+		var restored: bool = ship.restore_cargo_slot_from_storage(
+			slot_index,
+			moved_lot,
+		)
+		_record_storage_action(
+			(
+				"ROLLED_BACK_COVE_STORAGE_STATE"
+				if restored
+				else "ATOMIC_TRANSFER_ROLLBACK_FAILED"
+			),
+			moved_lot,
+			slot_index,
+			destination_slot,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+
+	_storage_stored_count += 1
+	_record_storage_action(
+		"STORED_%s_IN_COVE_SLOT_%d" % [
+			_cargo_result_name(moved_lot),
+			destination_slot + 1,
+		],
+		moved_lot,
+		slot_index,
+		destination_slot,
+		ship_before,
+		storage_before,
+		world_before,
+	)
+
+
+func _withdraw_cove_storage_slot(slot_index: int) -> void:
+	var ship_before: Array[String] = ship.get_cargo_lots()
+	var storage_before: Array[String] = cove_storage.get_storage_slots()
+	var world_before := _get_world_cargo_total()
+	_last_storage_action = "WITHDRAW_COVE_SLOT_%d" % (slot_index + 1)
+	if (
+		slot_index < 0
+		or slot_index >= storage_before.size()
+		or storage_before[slot_index].is_empty()
+	):
+		_record_storage_action(
+			"NO_CHANGE_EMPTY_COVE_STORAGE_SLOT_%d" % (slot_index + 1),
+			"",
+			-1,
+			slot_index,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+	if not ship.can_keep_cargo_lot():
+		_record_storage_action(
+			"NO_CHANGE_SHIP_CARGO_FULL",
+			storage_before[slot_index],
+			-1,
+			slot_index,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+
+	var destination_slot: int = ship_before.size()
+	var moved_lot: String = cove_storage.remove_cargo_slot(slot_index)
+	if moved_lot.is_empty():
+		_record_storage_action(
+			"NO_CHANGE_COVE_STORAGE_STATE",
+			"",
+			destination_slot,
+			slot_index,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+	if not ship.keep_cargo_lot(moved_lot):
+		var restored: bool = cove_storage.restore_cargo_slot(
+			slot_index,
+			moved_lot,
+		)
+		_record_storage_action(
+			(
+				"ROLLED_BACK_SHIP_CARGO_STATE"
+				if restored
+				else "ATOMIC_TRANSFER_ROLLBACK_FAILED"
+			),
+			moved_lot,
+			destination_slot,
+			slot_index,
+			ship_before,
+			storage_before,
+			world_before,
+		)
+		return
+
+	_storage_withdrawn_count += 1
+	_record_storage_action(
+		"WITHDREW_%s_TO_SHIP_SLOT_%d" % [
+			_cargo_result_name(moved_lot),
+			destination_slot + 1,
+		],
+		moved_lot,
+		destination_slot,
+		slot_index,
+		ship_before,
+		storage_before,
+		world_before,
+	)
+
+
+func _record_storage_action(
+	result: String,
+	lot_name: String,
+	ship_slot_index: int,
+	storage_slot_index: int,
+	ship_before: Array[String],
+	storage_before: Array[String],
+	world_before: int,
+) -> void:
+	_last_storage_result = result
+	var ship_after: Array[String] = ship.get_cargo_lots()
+	var storage_after: Array[String] = cove_storage.get_storage_slots()
+	var world_after := _get_world_cargo_total()
+	_last_storage_transfer_evidence = {
+		"action": _last_storage_action,
+		"result": result,
+		"lot_name": lot_name,
+		"ship_slot": ship_slot_index + 1 if ship_slot_index >= 0 else 0,
+		"storage_slot": storage_slot_index + 1 if storage_slot_index >= 0 else 0,
+		"ship_before": ship_before,
+		"ship_after": ship_after,
+		"storage_before": storage_before,
+		"storage_after": storage_after,
+		"ship_used_before": ship_before.size(),
+		"ship_used_after": ship_after.size(),
+		"storage_used_before": _count_occupied_storage_slots(storage_before),
+		"storage_used_after": _count_occupied_storage_slots(storage_after),
+		"world_total_before": world_before,
+		"world_total_after": world_after,
+		"world_conserved": world_before == world_after,
+		"no_state_change": (
+			ship_before == ship_after and storage_before == storage_after
+		),
+	}
+	_update_cargo_view()
+	_update_storage_view()
+
+
+func _count_occupied_storage_slots(storage_slots: Array[String]) -> int:
+	var count := 0
+	for lot_name in storage_slots:
+		if not lot_name.is_empty():
+			count += 1
+	return count
 
 
 func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
@@ -308,6 +724,8 @@ func _key_matches(key_event: InputEventKey, key: Key) -> bool:
 
 
 func _set_chart_visible(visible: bool) -> void:
+	if _storage_view_open or _storage_release_pending:
+		return
 	waypoint_display.set_chart_visible(visible)
 	_interact_held = false
 	if visible:
@@ -357,6 +775,20 @@ func _update_cargo_choice_release_pending() -> void:
 	_update_interaction_prompt()
 
 
+func _update_storage_release_pending() -> void:
+	if not _storage_release_pending or _storage_view_open:
+		return
+	if _is_any_storage_guard_key_pressed():
+		player.movement_enabled = false
+		return
+
+	_storage_release_pending = false
+	_storage_pressed_keys.clear()
+	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
+	controls_help.text = _get_context_controls_text()
+	_update_interaction_prompt()
+
+
 func _refresh_prompt_after_navigation_release() -> void:
 	if not _prompt_refresh_after_navigation_release:
 		return
@@ -365,6 +797,8 @@ func _refresh_prompt_after_navigation_release() -> void:
 		or _chart_release_pending
 		or _cargo_choice_open
 		or _cargo_choice_release_pending
+		or _storage_view_open
+		or _storage_release_pending
 		or ship.navigation_input_blocked
 		or ship.navigation_release_pending
 	):
@@ -399,7 +833,26 @@ func _is_any_cargo_choice_guard_key_pressed() -> bool:
 	)
 
 
+func _is_any_storage_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+		or Input.is_key_pressed(KEY_4)
+		or Input.is_key_pressed(KEY_5)
+		or Input.is_key_pressed(KEY_6)
+	)
+
+
 func _get_context_controls_text() -> String:
+	if _storage_view_open:
+		return STORAGE_CONTROLS_TEXT
+	if _storage_release_pending:
+		return STORAGE_RELEASE_CONTROLS_TEXT
 	if _cargo_choice_open:
 		return CARGO_CHOICE_CONTROLS_TEXT
 	if _cargo_choice_release_pending or ship.navigation_release_pending:
@@ -425,11 +878,15 @@ func _update_wreck_opportunity() -> void:
 			and not waypoint_display.chart_visible
 			and not _cargo_choice_open
 			and not _cargo_choice_release_pending
+			and not _storage_view_open
+			and not _storage_release_pending
 		),
 		(
 			not waypoint_display.chart_visible
 			and not _cargo_choice_open
 			and not _cargo_choice_release_pending
+			and not _storage_view_open
+			and not _storage_release_pending
 		),
 	)
 
@@ -440,6 +897,39 @@ func _update_salvage_persistence() -> void:
 	if ship.global_position.distance_to(_salvage_collection_position) > 1.0:
 		_salvage_sailed_after_collection = true
 		_timber_lots_after_sailing = ship.timber_lots
+
+
+func _update_storage_persistence() -> void:
+	if not _storage_persistence_tracking:
+		return
+	if (
+		_storage_released_cove_dock_after_save
+		and _player_aboard_ship
+		and not ship.is_docked
+		and ship.global_position.distance_to(
+			ship.get_dock_definition("cove")["snap_position"]
+		) > 8.0
+	):
+		_storage_sailed_after_save = true
+		_ship_lots_after_storage_sailing = ship.get_cargo_lots()
+		_cove_lots_after_storage_sailing = cove_storage.get_cargo_lots()
+		_storage_persistence_holds = _storage_matches_persistence_snapshot()
+
+
+func _storage_matches_persistence_snapshot() -> bool:
+	return (
+		ship.get_cargo_lots() == _persistence_ship_cargo
+		and cove_storage.get_cargo_lots() == _persistence_cove_storage
+		and cove_storage.get_storage_slots() == _persistence_cove_storage_slots
+	)
+
+
+func _get_world_cargo_total() -> int:
+	return (
+		ship.get_cargo_lots().size()
+		+ wreck_opportunity.get_salvage_lots().size()
+		+ cove_storage.get_cargo_lots().size()
+	)
 
 
 func _salvage_wreck() -> void:
@@ -588,7 +1078,10 @@ func _update_cargo_view() -> void:
 	else:
 		cargo_lines.append("PENDING  NONE")
 	cargo_details.text = "\n".join(cargo_lines)
-	cargo_view.show()
+	if _storage_view_open:
+		cargo_view.hide()
+	else:
+		cargo_view.show()
 
 	if not _cargo_choice_open:
 		cargo_choice_view.hide()
@@ -602,6 +1095,49 @@ func _update_cargo_view() -> void:
 	choice_lines.append("[X] LEAVE %s AT WRECK" % _pending_salvage_lot)
 	cargo_choice_details.text = "\n".join(choice_lines)
 	cargo_choice_view.show()
+
+
+func _update_storage_view() -> void:
+	var ship_lots: Array[String] = ship.get_cargo_lots()
+	var storage_lots: Array[String] = cove_storage.get_cargo_lots()
+	var storage_slots: Array[String] = cove_storage.get_storage_slots()
+	var lines := PackedStringArray([
+		"SHIP CARGO · USED %d/%d · FREE %d" % [
+			ship_lots.size(),
+			ship.get_cargo_limit(),
+			ship.get_cargo_limit() - ship_lots.size(),
+		],
+	])
+	for slot_index in range(ship.get_cargo_limit()):
+		var ship_lot_name := "EMPTY"
+		if slot_index < ship_lots.size():
+			ship_lot_name = ship_lots[slot_index]
+		lines.append("[%d] SLOT %d  %s" % [
+			slot_index + 1,
+			slot_index + 1,
+			ship_lot_name,
+		])
+	lines.append("")
+	lines.append("COVE STORAGE · USED %d/%d · FREE %d" % [
+		storage_lots.size(),
+		cove_storage.get_storage_limit(),
+		cove_storage.get_storage_limit() - storage_lots.size(),
+	])
+	for slot_index in range(cove_storage.get_storage_limit()):
+		var storage_lot_name := "EMPTY"
+		if not storage_slots[slot_index].is_empty():
+			storage_lot_name = storage_slots[slot_index]
+		lines.append("[%d] SLOT %d  %s" % [
+			slot_index + 4,
+			slot_index + 1,
+			storage_lot_name,
+		])
+	storage_details.text = "\n".join(lines)
+	storage_result.text = _last_storage_result.replace("_", " ")
+	if _storage_view_open:
+		storage_view.show()
+	else:
+		storage_view.hide()
 
 
 func _on_sign_body_entered(body: Node2D) -> void:
@@ -637,6 +1173,24 @@ func _on_resident_body_exited(body: Node2D) -> void:
 	_update_interaction_prompt()
 
 
+func _on_cove_storage_body_entered(body: Node2D) -> void:
+	if body != player:
+		return
+
+	_player_near_cove_storage = true
+	if _storage_returned_ashore_after_save:
+		_storage_walked_back_after_return = true
+	_update_interaction_prompt()
+
+
+func _on_cove_storage_body_exited(body: Node2D) -> void:
+	if body != player:
+		return
+
+	_player_near_cove_storage = false
+	_update_interaction_prompt()
+
+
 func _on_ship_entry_body_entered(body: Node2D) -> void:
 	if body != player or _player_aboard_ship:
 		return
@@ -662,13 +1216,20 @@ func _on_damaged_dock_goal_body_entered(body: Node2D) -> void:
 
 
 func _read_sign() -> void:
+	if _storage_view_open or _storage_release_pending:
+		return
 	_read_count += 1
 	sign_message.text = sign.interaction_message
 	sign_message.show()
 
 
 func _enter_ship() -> void:
-	if _player_aboard_ship or not _player_near_ship_entry:
+	if (
+		_player_aboard_ship
+		or not _player_near_ship_entry
+		or _storage_view_open
+		or _storage_release_pending
+	):
 		return
 
 	_player_aboard_ship = true
@@ -684,7 +1245,12 @@ func _enter_ship() -> void:
 
 
 func _leave_ship_at_damaged_dock() -> void:
-	if not _player_aboard_ship or not ship.can_leave_at_damaged_dock():
+	if (
+		not _player_aboard_ship
+		or not ship.can_leave_at_damaged_dock()
+		or _storage_view_open
+		or _storage_release_pending
+	):
 		return
 
 	_player_aboard_ship = false
@@ -700,7 +1266,12 @@ func _leave_ship_at_damaged_dock() -> void:
 
 
 func _dock_ship() -> void:
-	if not _player_aboard_ship or ship.is_docked:
+	if (
+		not _player_aboard_ship
+		or ship.is_docked
+		or _storage_view_open
+		or _storage_release_pending
+	):
 		return
 
 	var dock_id: String = ship.dock_at_available()
@@ -713,12 +1284,22 @@ func _dock_ship() -> void:
 	if dock_id == "cove" and ship.timber_lots == 1:
 		_cove_docked_after_salvage = true
 		_timber_lots_at_cove_dock = ship.timber_lots
+	if dock_id == "cove" and _storage_sailed_after_save:
+		_storage_return_docked_after_save = true
+		_ship_lots_at_storage_return_dock = ship.get_cargo_lots()
+		_cove_lots_at_storage_return_dock = cove_storage.get_cargo_lots()
+		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
 
 
 func _go_ashore() -> void:
-	if not _player_aboard_ship or not ship.is_docked:
+	if (
+		not _player_aboard_ship
+		or not ship.is_docked
+		or _storage_view_open
+		or _storage_release_pending
+	):
 		return
 
 	var definition: Dictionary = ship.get_current_dock_definition()
@@ -730,6 +1311,9 @@ func _go_ashore() -> void:
 	if _player_shore_id == "cove" and ship.timber_lots == 1:
 		_cove_ashore_after_salvage = true
 		_timber_lots_while_ashore = ship.timber_lots
+	if _player_shore_id == "cove" and _storage_return_docked_after_save:
+		_storage_returned_ashore_after_save = true
+		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	_player_near_ship_return = true
 	ship.set_captain_aboard(false)
 	player.go_ashore(
@@ -742,7 +1326,12 @@ func _go_ashore() -> void:
 
 
 func _return_to_ship() -> void:
-	if _player_shore_id.is_empty() or not _player_near_ship_return:
+	if (
+		_player_shore_id.is_empty()
+		or not _player_near_ship_return
+		or _storage_view_open
+		or _storage_release_pending
+	):
 		return
 	if not ship.is_docked or ship.current_dock_id != _player_shore_id:
 		return
@@ -756,12 +1345,17 @@ func _return_to_ship() -> void:
 	if returning_shore_id == "cove" and ship.timber_lots == 1:
 		_cove_returned_to_ship_after_salvage = true
 		_timber_lots_after_return_to_ship = ship.timber_lots
+	if returning_shore_id == "cove" and _storage_persistence_tracking:
+		_storage_returned_to_ship_after_save = true
+		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	_last_ship_docked = true
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
 
 
 func _start_dialogue() -> void:
+	if _storage_view_open or _storage_release_pending:
+		return
 	_dialogue_lines = _get_resident_dialogue()
 	if _dialogue_lines.is_empty():
 		return
@@ -842,6 +1436,8 @@ func _update_interaction_prompt() -> void:
 		or _chart_release_pending
 		or _cargo_choice_open
 		or _cargo_choice_release_pending
+		or _storage_view_open
+		or _storage_release_pending
 		or ship.navigation_release_pending
 	):
 		interaction_prompt.hide()
@@ -875,6 +1471,11 @@ func _update_interaction_prompt() -> void:
 		interaction_prompt.show()
 		return
 
+	if _can_open_cove_storage():
+		interaction_prompt.text = "[E] OPEN COVE STORAGE"
+		interaction_prompt.show()
+		return
+
 	if _player_near_resident:
 		interaction_prompt.text = "[E] TALK TO %s" % resident.display_name.to_upper()
 		interaction_prompt.show()
@@ -898,6 +1499,7 @@ func get_playtest_state() -> Dictionary:
 	var player_state: Dictionary = player.get_playtest_state()
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
 	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
+	var storage_state: Dictionary = cove_storage.get_playtest_state()
 	var camera_target := "COVE"
 	if _player_aboard_ship:
 		camera_target = "SHIP"
@@ -928,6 +1530,7 @@ func get_playtest_state() -> Dictionary:
 		"cargo_total_lots_in_world": (
 			ship_state["cargo_used_slots"]
 			+ wreck_state["wreck_salvage_lot_count"]
+			+ storage_state["storage_used_slots"]
 		),
 		"cargo_initial_total_lots_in_world": (
 			ship_state["starting_cargo_used_slots"]
@@ -936,9 +1539,112 @@ func get_playtest_state() -> Dictionary:
 		"cargo_lot_conservation_holds": (
 			ship_state["cargo_used_slots"]
 			+ wreck_state["wreck_salvage_lot_count"]
+			+ storage_state["storage_used_slots"]
 			== ship_state["starting_cargo_used_slots"]
 			+ wreck_state["wreck_initial_salvage_lot_count"]
 		),
+		"cargo_world_total_includes_cove_storage": true,
+		"cove_storage_place_count": storage_state["place_count"],
+		"cove_storage_position": storage_state["position"],
+		"cove_storage_interaction_range": storage_state["interaction_range"],
+		"cove_storage_visible": storage_state["visible"],
+		"storage_chest_position": storage_state["position"],
+		"storage_chest_range": storage_state["interaction_range"],
+		"storage_chest_visible": storage_state["visible"],
+		"storage_chest_interaction_region_count": (
+			storage_state["interaction_region_count"]
+		),
+		"cove_storage_distance_from_ship_return": (
+			cove_storage.global_position.distance_to(
+				ship.get_dock_definition("cove")["shore_position"]
+			)
+		),
+		"cove_storage_outside_ship_return_range": (
+			cove_storage.global_position.distance_to(
+				ship.get_dock_definition("cove")["shore_position"]
+			) > SHORE_RETURN_DISTANCE + storage_state["interaction_range"]
+		),
+		"player_near_cove_storage": _player_near_cove_storage,
+		"storage_prompt_visible": (
+			interaction_prompt.visible
+			and interaction_prompt.text == "[E] OPEN COVE STORAGE"
+		),
+		"storage_prompt_text": (
+			interaction_prompt.text
+			if interaction_prompt.visible
+			and interaction_prompt.text == "[E] OPEN COVE STORAGE"
+			else ""
+		),
+		"storage_limit": storage_state["storage_limit"],
+		"storage_used_slots": storage_state["storage_used_slots"],
+		"storage_free_slots": storage_state["storage_free_slots"],
+		"storage_lots": storage_state["storage_lots"],
+		"storage_slots": storage_state["storage_slots"],
+		"storage_view_open": _storage_view_open,
+		"storage_view_visible": storage_view.visible,
+		"storage_view_text": (
+			"%s\n%s\n%s" % [
+				$Interface/StorageView/StorageTitle.text,
+				storage_details.text,
+				storage_result.text,
+			]
+			if storage_view.visible
+			else ""
+		),
+		"storage_transfer_controls": {
+			"ship_to_storage": "1_OR_2_OR_3",
+			"storage_to_ship": "4_OR_5_OR_6",
+			"close": "X",
+			"visible_text": STORAGE_CONTROLS_TEXT,
+		},
+		"last_storage_action": _last_storage_action,
+		"last_storage_result": _last_storage_result,
+		"last_storage_transfer_evidence": _last_storage_transfer_evidence.duplicate(true),
+		"storage_stored_count": _storage_stored_count,
+		"storage_withdrawn_count": _storage_withdrawn_count,
+		"storage_open_count": _storage_open_count,
+		"storage_close_count": _storage_close_count,
+		"storage_release_pending": _storage_release_pending,
+		"storage_input_blocked": (
+			(_storage_view_open or _storage_release_pending)
+			and not player_state["movement_enabled"]
+		),
+		"storage_modal_blocks": {
+			"walking": _storage_view_open and not player_state["movement_enabled"],
+			"chart": _storage_view_open and not waypoint_state["chart_visible"],
+			"ship_return": _storage_view_open,
+			"dialogue": _storage_view_open and not _dialogue_open,
+			"storage_reopen": _storage_view_open,
+			"other_interactions": _storage_view_open,
+		},
+		"storage_lists_saved_on_close": _storage_lists_saved_on_close,
+		"saved_ship_cargo_on_storage_close": _saved_ship_cargo_on_close.duplicate(),
+		"saved_cove_storage_on_close": _saved_cove_storage_on_close.duplicate(),
+		"saved_cove_storage_slots_on_close": (
+			_saved_cove_storage_slots_on_close.duplicate()
+		),
+		"storage_persistence": {
+			"tracking": _storage_persistence_tracking,
+			"saved_ship_snapshot": _persistence_ship_cargo.duplicate(),
+			"saved_storage_snapshot": _persistence_cove_storage.duplicate(),
+			"saved_storage_slot_snapshot": (
+				_persistence_cove_storage_slots.duplicate()
+			),
+			"returned_to_ship_after_save": _storage_returned_to_ship_after_save,
+			"released_cove_dock_after_save": _storage_released_cove_dock_after_save,
+			"sailed_after_save": _storage_sailed_after_save,
+			"ship_lots_after_sailing": _ship_lots_after_storage_sailing.duplicate(),
+			"storage_lots_after_sailing": _cove_lots_after_storage_sailing.duplicate(),
+			"return_docked_after_save": _storage_return_docked_after_save,
+			"ship_lots_at_return_dock": _ship_lots_at_storage_return_dock.duplicate(),
+			"storage_lots_at_return_dock": _cove_lots_at_storage_return_dock.duplicate(),
+			"returned_ashore_after_save": _storage_returned_ashore_after_save,
+			"walked_back_to_storage": _storage_walked_back_after_return,
+			"reopened_after_return": _storage_reopened_after_return,
+			"ship_lots_at_reopen": _ship_lots_at_storage_reopen.duplicate(),
+			"storage_lots_at_reopen": _cove_lots_at_storage_reopen.duplicate(),
+			"cargo_lists_unchanged_through_reopen": _storage_persistence_holds,
+		},
 		"starting_cargo_lots": ship_state["starting_cargo_lots"],
 		"all_but_one_slot_full_at_start": (
 			ship_state["all_but_one_slot_full_at_start"]
@@ -990,6 +1696,7 @@ func get_playtest_state() -> Dictionary:
 			ship_state["navigation_release_pending"]
 			or _chart_release_pending
 			or _cargo_choice_release_pending
+			or _storage_release_pending
 		),
 		"camera_position": travel_camera.global_position,
 		"camera_target": camera_target,
