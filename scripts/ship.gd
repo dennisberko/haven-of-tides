@@ -16,6 +16,12 @@ const COVE_ENTRANCE_RADIUS := 110.0
 const DOCK_DISTANCE_THRESHOLD := 70.0
 const DOCK_MAX_SPEED := 12.0
 const DOCK_MIN_ALIGNMENT := 0.92
+const CARGO_LIMIT := 3
+const TIMBER_LOT_NAME := "TIMBER LOT"
+const STARTING_CARGO_LOTS := [
+	"COVE MEDICINE LOT",
+	"VOYAGE FOOD LOT",
+]
 const DOCK_IDS := ["cove", "island", "port"]
 const DOCK_DEFINITIONS := {
 	"cove": {
@@ -73,6 +79,10 @@ var last_collision_response := "NONE"
 var navigation_input_blocked := false
 var navigation_release_pending := false
 var timber_lots := 0
+var cargo_lots: Array[String] = [
+	"COVE MEDICINE LOT",
+	"VOYAGE FOOD LOT",
+]
 
 var _sea_bounds := Rect2()
 var _island_center := Vector2.ZERO
@@ -82,9 +92,14 @@ var _cove_shoreline := PackedVector2Array()
 var _dock_exit_cleared := false
 var _departure_input_armed := false
 var _restore_controls_after_navigation_release := false
+var _starting_used_slots := 0
+var _max_used_slots_observed := 0
+var _cargo_limit_never_exceeded := true
 
 
 func _ready() -> void:
+	_starting_used_slots = cargo_lots.size()
+	_record_cargo_usage()
 	queue_redraw()
 
 
@@ -157,15 +172,74 @@ func get_forward_direction() -> Vector2:
 
 
 func can_accept_salvaged_timber_lot() -> bool:
-	return timber_lots == 0
+	return can_keep_cargo_lot() and not cargo_lots.has(TIMBER_LOT_NAME)
 
 
 func add_salvaged_timber_lot() -> bool:
 	if not can_accept_salvaged_timber_lot():
 		return false
-	timber_lots = 1
-	queue_redraw()
+	return keep_cargo_lot(TIMBER_LOT_NAME)
+
+
+func can_keep_cargo_lot() -> bool:
+	return cargo_lots.size() < CARGO_LIMIT
+
+
+func keep_cargo_lot(lot_name: String) -> bool:
+	if lot_name.is_empty() or not can_keep_cargo_lot():
+		return false
+	cargo_lots.append(lot_name)
+	_sync_cargo_state()
 	return true
+
+
+func undo_last_kept_cargo_lot(lot_name: String) -> bool:
+	if cargo_lots.is_empty() or cargo_lots.back() != lot_name:
+		return false
+	cargo_lots.pop_back()
+	_sync_cargo_state()
+	return true
+
+
+func replace_cargo_slot(slot_index: int, new_lot_name: String) -> String:
+	if (
+		new_lot_name.is_empty()
+		or slot_index < 0
+		or slot_index >= cargo_lots.size()
+	):
+		return ""
+	var removed_lot := cargo_lots[slot_index]
+	cargo_lots[slot_index] = new_lot_name
+	_sync_cargo_state()
+	return removed_lot
+
+
+func get_cargo_lots() -> Array[String]:
+	return cargo_lots.duplicate()
+
+
+func get_cargo_limit() -> int:
+	return CARGO_LIMIT
+
+
+func _get_cargo_slot_lot_counts() -> PackedInt32Array:
+	var lot_counts := PackedInt32Array()
+	lot_counts.resize(cargo_lots.size())
+	lot_counts.fill(1)
+	return lot_counts
+
+
+func _sync_cargo_state() -> void:
+	timber_lots = cargo_lots.count(TIMBER_LOT_NAME)
+	_record_cargo_usage()
+	queue_redraw()
+
+
+func _record_cargo_usage() -> void:
+	_max_used_slots_observed = maxi(_max_used_slots_observed, cargo_lots.size())
+	_cargo_limit_never_exceeded = (
+		_cargo_limit_never_exceeded and cargo_lots.size() <= CARGO_LIMIT
+	)
 
 
 func get_available_dock_id() -> String:
@@ -525,8 +599,21 @@ func get_playtest_state() -> Dictionary:
 		"departure_input_armed": _departure_input_armed,
 		"navigation_input_blocked": navigation_input_blocked,
 		"navigation_release_pending": navigation_release_pending,
+		"cargo_limit": CARGO_LIMIT,
+		"cargo_used_slots": cargo_lots.size(),
+		"cargo_free_slots": CARGO_LIMIT - cargo_lots.size(),
+		"cargo_lots": get_cargo_lots(),
+		"starting_cargo_lots": STARTING_CARGO_LOTS.duplicate(),
+		"starting_cargo_used_slots": _starting_used_slots,
+		"all_but_one_slot_full_at_start": (
+			_starting_used_slots == CARGO_LIMIT - 1
+		),
+		"each_cargo_lot_uses_one_slot": true,
+		"cargo_slot_lot_counts": _get_cargo_slot_lot_counts(),
+		"max_used_slots_observed": _max_used_slots_observed,
+		"cargo_limit_never_exceeded": _cargo_limit_never_exceeded,
 		"timber_lots": timber_lots,
-		"has_salvaged_timber": timber_lots == 1,
+		"has_salvaged_timber": timber_lots > 0,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),
@@ -558,14 +645,33 @@ func _draw() -> void:
 	draw_line(Vector2(-30, 18), Vector2(30, 18), Color("#6b452c"), 5.0)
 	draw_circle(Vector2(0, -12), 8.0, Color("#342b29"))
 	draw_line(Vector2(0, -12), Vector2(18, -47), Color("#e8d2a2"), 4.0)
-	if timber_lots == 1:
-		# One fixed timber stack shows the one collected lot on the deck.
-		for timber_y in [-1.0, 8.0, 27.0, 36.0]:
-			draw_line(
-				Vector2(-25.0, timber_y),
-				Vector2(25.0, timber_y),
-				Color("#d69b5d"),
-				7.0,
+	# Each cargo lot has one fixed deck position. Timber keeps its Phase 10 stack.
+	for slot_index in range(cargo_lots.size()):
+		var lot_name := cargo_lots[slot_index]
+		var cargo_y := 28.0 + float(slot_index) * 15.0
+		if lot_name == TIMBER_LOT_NAME:
+			for timber_offset in [-4.0, 4.0]:
+				draw_line(
+					Vector2(-25.0, cargo_y + timber_offset),
+					Vector2(25.0, cargo_y + timber_offset),
+					Color("#d69b5d"),
+					7.0,
+				)
+		else:
+			var cargo_color := Color("#d9c27a")
+			if lot_name.contains("MEDICINE"):
+				cargo_color = Color("#b75b5b")
+			elif lot_name.contains("FOOD"):
+				cargo_color = Color("#d7b45a")
+			draw_rect(
+				Rect2(Vector2(-24.0, cargo_y - 6.0), Vector2(48.0, 12.0)),
+				cargo_color,
+			)
+			draw_rect(
+				Rect2(Vector2(-24.0, cargo_y - 6.0), Vector2(48.0, 12.0)),
+				Color("#493323"),
+				false,
+				2.0,
 			)
 
 	# The gangplank is visible when the ship is at the damaged cove dock.

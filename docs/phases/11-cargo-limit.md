@@ -2,6 +2,24 @@
 
 [Previous: salvage](10-salvage.md) | [Next: cove storage](12-cove-storage.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Give the ship a small number of cargo slots | DONE |
+| Add 2: Show used and free slots in the cargo view | DONE |
+| Add 3: Make each cargo lot use one slot | DONE |
+| Add 4: Put more useful salvage lots at the wreck than the ship can hold | DONE |
+| Add 5: Let the player keep, leave, or replace cargo | DONE |
+| Complete when: A full ship cannot take another lot without a cargo choice | DONE |
+| Test 1: Start with all but one cargo slot full | DONE |
+| Test 2: Sail to the wreck and take one salvage lot | DONE |
+| Test 3: Try to take another lot | DONE |
+| Test 4: Replace one carried lot with the new lot | DONE |
+| Test 5: Confirm used slots never exceed the limit | DONE |
+
 ## Goal
 
 Limited ship space makes the player choose which cargo to keep.

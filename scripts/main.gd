@@ -31,6 +31,11 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var request_title: Label = $Interface/RequestView/RequestTitle
 @onready var request_status: Label = $Interface/RequestView/RequestStatus
 @onready var request_goal: Label = $Interface/RequestView/RequestGoal
+@onready var cargo_view: ColorRect = $Interface/CargoView
+@onready var cargo_details: Label = $Interface/CargoView/CargoDetails
+@onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
+@onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
+@onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
@@ -39,6 +44,7 @@ const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART"
 const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M CHART"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY · M CHART"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
+const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const SHORE_RETURN_DISTANCE := 64.0
 
@@ -70,6 +76,17 @@ var _timber_lots_at_cove_dock := 0
 var _timber_lots_while_ashore := 0
 var _timber_lots_after_return_to_ship := 0
 var _timber_lots_after_cove_dock_release := 0
+var _pending_salvage_lot := ""
+var _cargo_choice_open := false
+var _cargo_choice_release_pending := false
+var _prompt_refresh_after_navigation_release := false
+var _last_cargo_action := "NOT_ATTEMPTED"
+var _last_cargo_result := "NOT_ATTEMPTED"
+var _cargo_kept_count := 0
+var _cargo_left_count := 0
+var _cargo_replaced_count := 0
+var _cargo_choice_opened_count := 0
+var _cargo_choice_resolution_count := 0
 
 
 func _ready() -> void:
@@ -90,11 +107,13 @@ func _ready() -> void:
 		port_dock["approach_position"],
 	)
 	_update_wreck_opportunity()
+	_update_cargo_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
 	dialogue_box.hide()
 	request_view.hide()
+	cargo_choice_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -106,12 +125,15 @@ func _ready() -> void:
 
 func _physics_process(_delta: float) -> void:
 	_update_chart_release_pending()
+	_update_cargo_choice_release_pending()
 	waypoint_display.update_positions(
 		ship.global_position,
 		player.global_position,
 		_player_aboard_ship,
 	)
 	_update_wreck_opportunity()
+	_refresh_prompt_after_navigation_release()
+	_update_cargo_view()
 	_update_salvage_persistence()
 	if _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
@@ -128,7 +150,11 @@ func _physics_process(_delta: float) -> void:
 		):
 			_cove_dock_released_after_salvage = true
 			_timber_lots_after_cove_dock_release = ship.timber_lots
-		if waypoint_display.chart_visible:
+		if _cargo_choice_open:
+			controls_help.text = CARGO_CHOICE_CONTROLS_TEXT
+		elif _cargo_choice_release_pending or ship.navigation_release_pending:
+			controls_help.text = RELEASE_CONTROLS_TEXT
+		elif waypoint_display.chart_visible:
 			controls_help.text = CHART_CONTROLS_TEXT
 		elif _chart_release_pending:
 			controls_help.text = RELEASE_CONTROLS_TEXT
@@ -167,6 +193,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _cargo_choice_open:
+		_handle_cargo_choice_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if _cargo_choice_release_pending:
+		if not key_event.pressed and _key_matches(key_event, KEY_E):
+			_interact_held = false
+		get_viewport().set_input_as_handled()
+		return
 	if _handle_chart_input(key_event):
 		get_viewport().set_input_as_handled()
 		return
@@ -224,6 +259,24 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
+func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
+	if not key_event.pressed:
+		if _key_matches(key_event, KEY_E):
+			_interact_held = false
+		return
+	if key_event.echo:
+		return
+	if _key_matches(key_event, KEY_X):
+		_leave_pending_salvage_at_wreck()
+		return
+	if _key_matches(key_event, KEY_1):
+		_replace_cargo_with_pending_salvage(0)
+	elif _key_matches(key_event, KEY_2):
+		_replace_cargo_with_pending_salvage(1)
+	elif _key_matches(key_event, KEY_3):
+		_replace_cargo_with_pending_salvage(2)
+
+
 func _handle_chart_input(key_event: InputEventKey) -> bool:
 	if not key_event.pressed or key_event.echo:
 		return false
@@ -265,6 +318,7 @@ func _set_chart_visible(visible: bool) -> void:
 		interaction_prompt.hide()
 	else:
 		_chart_release_pending = true
+		_prompt_refresh_after_navigation_release = true
 		player.movement_enabled = false
 		ship.set_navigation_input_blocked(
 			false,
@@ -287,6 +341,39 @@ func _update_chart_release_pending() -> void:
 	_update_interaction_prompt()
 
 
+func _update_cargo_choice_release_pending() -> void:
+	if not _cargo_choice_release_pending or _cargo_choice_open:
+		return
+	if _is_any_cargo_choice_guard_key_pressed():
+		return
+
+	_cargo_choice_release_pending = false
+	ship.set_navigation_input_blocked(
+		false,
+		_player_aboard_ship and not ship.is_docked,
+	)
+	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
+	controls_help.text = RELEASE_CONTROLS_TEXT
+	_update_interaction_prompt()
+
+
+func _refresh_prompt_after_navigation_release() -> void:
+	if not _prompt_refresh_after_navigation_release:
+		return
+	if (
+		waypoint_display.chart_visible
+		or _chart_release_pending
+		or _cargo_choice_open
+		or _cargo_choice_release_pending
+		or ship.navigation_input_blocked
+		or ship.navigation_release_pending
+	):
+		return
+
+	_prompt_refresh_after_navigation_release = false
+	_update_interaction_prompt()
+
+
 func _is_any_movement_key_pressed() -> bool:
 	return (
 		Input.is_key_pressed(KEY_W)
@@ -300,7 +387,23 @@ func _is_any_movement_key_pressed() -> bool:
 	)
 
 
+func _is_any_cargo_choice_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+	)
+
+
 func _get_context_controls_text() -> String:
+	if _cargo_choice_open:
+		return CARGO_CHOICE_CONTROLS_TEXT
+	if _cargo_choice_release_pending or ship.navigation_release_pending:
+		return RELEASE_CONTROLS_TEXT
 	if _player_aboard_ship:
 		if ship.is_docked:
 			return DOCKED_CONTROLS_TEXT
@@ -317,8 +420,17 @@ func _update_wreck_opportunity() -> void:
 		ship.captain_aboard,
 		ship.has_departed_dock,
 		waypoint_display.selected_location_id,
-		_player_aboard_ship and not waypoint_display.chart_visible,
-		not waypoint_display.chart_visible,
+		(
+			_player_aboard_ship
+			and not waypoint_display.chart_visible
+			and not _cargo_choice_open
+			and not _cargo_choice_release_pending
+		),
+		(
+			not waypoint_display.chart_visible
+			and not _cargo_choice_open
+			and not _cargo_choice_release_pending
+		),
 	)
 
 
@@ -333,18 +445,163 @@ func _update_salvage_persistence() -> void:
 func _salvage_wreck() -> void:
 	if not wreck_opportunity.is_salvage_eligible():
 		wreck_opportunity.try_collect_timber_lot()
+		_last_cargo_action = "SALVAGE_ATTEMPT"
+		_last_cargo_result = "NO_CHANGE_INELIGIBLE"
 		_update_interaction_prompt()
 		return
-	if not ship.can_accept_salvaged_timber_lot():
+
+	var salvage_lot := wreck_opportunity.get_next_salvage_lot()
+	if salvage_lot.is_empty():
+		_last_cargo_action = "SALVAGE_ATTEMPT"
+		_last_cargo_result = "NO_CHANGE_WRECK_EMPTY"
 		return
-	if not wreck_opportunity.try_collect_timber_lot():
+	if not ship.can_keep_cargo_lot():
+		_open_cargo_choice(salvage_lot)
+		return
+	if not wreck_opportunity.can_take_next_salvage_lot(salvage_lot):
+		_last_cargo_action = "KEEP_NEW_LOT"
+		_last_cargo_result = "NO_CHANGE_WRECK_STATE"
 		_update_interaction_prompt()
 		return
-	if not ship.add_salvaged_timber_lot():
+	if not ship.keep_cargo_lot(salvage_lot):
+		_last_cargo_action = "KEEP_NEW_LOT"
+		_last_cargo_result = "NO_CHANGE_CARGO_FULL"
 		return
+	if not wreck_opportunity.take_next_salvage_lot(salvage_lot):
+		ship.undo_last_kept_cargo_lot(salvage_lot)
+		_last_cargo_action = "KEEP_NEW_LOT"
+		_last_cargo_result = "ROLLED_BACK_WRECK_STATE"
+		return
+
+	_cargo_kept_count += 1
+	_last_cargo_action = "KEEP_NEW_LOT"
+	_last_cargo_result = "KEPT_%s" % _cargo_result_name(salvage_lot)
 	_salvage_collection_position = ship.global_position
 	_last_salvage_eligible = false
+	_update_cargo_view()
 	_update_interaction_prompt()
+
+
+func _open_cargo_choice(salvage_lot: String) -> void:
+	if (
+		_cargo_choice_open
+		or salvage_lot.is_empty()
+		or not wreck_opportunity.mark_salvage_choice_pending(salvage_lot)
+	):
+		return
+	_pending_salvage_lot = salvage_lot
+	_cargo_choice_open = true
+	_cargo_choice_opened_count += 1
+	_last_cargo_action = "FULL_SHIP_SALVAGE_ATTEMPT"
+	_last_cargo_result = "CARGO_CHOICE_REQUIRED"
+	ship.set_navigation_input_blocked(true)
+	player.movement_enabled = false
+	controls_help.text = CARGO_CHOICE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_cargo_view()
+
+
+func _leave_pending_salvage_at_wreck() -> void:
+	if (
+		not _cargo_choice_open
+		or not wreck_opportunity.leave_salvage_lot_at_wreck(
+			_pending_salvage_lot
+		)
+	):
+		return
+	_cargo_left_count += 1
+	_cargo_choice_resolution_count += 1
+	_last_cargo_action = "LEAVE_NEW_LOT"
+	_last_cargo_result = "LEFT_%s_AT_WRECK" % _cargo_result_name(
+		_pending_salvage_lot
+	)
+	_close_cargo_choice()
+
+
+func _replace_cargo_with_pending_salvage(slot_index: int) -> void:
+	if (
+		not _cargo_choice_open
+		or _pending_salvage_lot.is_empty()
+		or wreck_opportunity.get_next_salvage_lot() != _pending_salvage_lot
+	):
+		return
+	var removed_lot: String = ship.replace_cargo_slot(
+		slot_index,
+		_pending_salvage_lot,
+	)
+	if removed_lot.is_empty():
+		_last_cargo_action = "REPLACE_CARGO_SLOT"
+		_last_cargo_result = "NO_CHANGE_INVALID_SLOT"
+		return
+	if not wreck_opportunity.exchange_salvage_lot(
+		_pending_salvage_lot,
+		removed_lot,
+	):
+		ship.replace_cargo_slot(slot_index, removed_lot)
+		_last_cargo_action = "REPLACE_CARGO_SLOT"
+		_last_cargo_result = "ROLLED_BACK_WRECK_STATE"
+		return
+
+	_cargo_replaced_count += 1
+	_cargo_choice_resolution_count += 1
+	_last_cargo_action = "REPLACE_CARGO_SLOT_%d" % (slot_index + 1)
+	_last_cargo_result = "REPLACED_%s_WITH_%s" % [
+		_cargo_result_name(removed_lot),
+		_cargo_result_name(_pending_salvage_lot),
+	]
+	_close_cargo_choice()
+
+
+func _close_cargo_choice() -> void:
+	_cargo_choice_open = false
+	_cargo_choice_release_pending = true
+	_prompt_refresh_after_navigation_release = true
+	_pending_salvage_lot = ""
+	cargo_choice_view.hide()
+	controls_help.text = RELEASE_CONTROLS_TEXT
+	_update_cargo_view()
+	_update_interaction_prompt()
+
+
+func _cargo_result_name(lot_name: String) -> String:
+	return lot_name.to_upper().replace(" ", "_")
+
+
+func _update_cargo_view() -> void:
+	var cargo_lots: Array[String] = ship.get_cargo_lots()
+	var cargo_lines := PackedStringArray([
+		"CARGO · USED %d/%d · FREE %d" % [
+			cargo_lots.size(),
+			ship.get_cargo_limit(),
+			ship.get_cargo_limit() - cargo_lots.size(),
+		],
+	])
+	for slot_index in range(ship.get_cargo_limit()):
+		var slot_text := "EMPTY"
+		if slot_index < cargo_lots.size():
+			slot_text = cargo_lots[slot_index]
+		cargo_lines.append("SLOT %d  %s" % [slot_index + 1, slot_text])
+	var wreck_lots := wreck_opportunity.get_salvage_lots()
+	cargo_lines.append("WRECK  %d LOTS REMAIN" % wreck_lots.size())
+	if _cargo_choice_open:
+		cargo_lines.append("PENDING  %s" % _pending_salvage_lot)
+	else:
+		cargo_lines.append("PENDING  NONE")
+	cargo_details.text = "\n".join(cargo_lines)
+	cargo_view.show()
+
+	if not _cargo_choice_open:
+		cargo_choice_view.hide()
+		return
+	cargo_choice_title.text = "CARGO FULL · NEW %s" % _pending_salvage_lot
+	var choice_lines := PackedStringArray()
+	for slot_index in range(cargo_lots.size()):
+		choice_lines.append(
+			"[%d] REPLACE %s" % [slot_index + 1, cargo_lots[slot_index]]
+		)
+	choice_lines.append("[X] LEAVE %s AT WRECK" % _pending_salvage_lot)
+	cargo_choice_details.text = "\n".join(choice_lines)
+	cargo_choice_view.show()
 
 
 func _on_sign_body_entered(body: Node2D) -> void:
@@ -579,7 +836,14 @@ func _update_request_view() -> void:
 
 
 func _update_interaction_prompt() -> void:
-	if _dialogue_open or waypoint_display.chart_visible or _chart_release_pending:
+	if (
+		_dialogue_open
+		or waypoint_display.chart_visible
+		or _chart_release_pending
+		or _cargo_choice_open
+		or _cargo_choice_release_pending
+		or ship.navigation_release_pending
+	):
 		interaction_prompt.hide()
 		return
 
@@ -593,7 +857,11 @@ func _update_interaction_prompt() -> void:
 			interaction_prompt.text = "[E] DOCK AT %s" % available_definition["name"]
 			interaction_prompt.show()
 		elif wreck_opportunity.is_salvage_eligible():
-			interaction_prompt.text = "[E] SALVAGE ONE TIMBER LOT"
+			var next_salvage_lot := wreck_opportunity.get_next_salvage_lot()
+			if next_salvage_lot == "TIMBER LOT":
+				interaction_prompt.text = "[E] SALVAGE ONE TIMBER LOT"
+			else:
+				interaction_prompt.text = "[E] SALVAGE %s" % next_salvage_lot
 			interaction_prompt.show()
 		elif ship.can_leave_at_damaged_dock():
 			interaction_prompt.text = "[E] LEAVE SHIP AT DOCK"
@@ -653,6 +921,30 @@ func get_playtest_state() -> Dictionary:
 		"ship_controls": ship_state["controls"],
 		"ship_controls_enabled": ship_state["controls_enabled"],
 		"ship_captain_aboard": ship_state["captain_aboard"],
+		"cargo_limit": ship_state["cargo_limit"],
+		"cargo_used_slots": ship_state["cargo_used_slots"],
+		"cargo_free_slots": ship_state["cargo_free_slots"],
+		"cargo_lots": ship_state["cargo_lots"],
+		"cargo_total_lots_in_world": (
+			ship_state["cargo_used_slots"]
+			+ wreck_state["wreck_salvage_lot_count"]
+		),
+		"cargo_initial_total_lots_in_world": (
+			ship_state["starting_cargo_used_slots"]
+			+ wreck_state["wreck_initial_salvage_lot_count"]
+		),
+		"cargo_lot_conservation_holds": (
+			ship_state["cargo_used_slots"]
+			+ wreck_state["wreck_salvage_lot_count"]
+			== ship_state["starting_cargo_used_slots"]
+			+ wreck_state["wreck_initial_salvage_lot_count"]
+		),
+		"starting_cargo_lots": ship_state["starting_cargo_lots"],
+		"all_but_one_slot_full_at_start": (
+			ship_state["all_but_one_slot_full_at_start"]
+		),
+		"max_used_slots_observed": ship_state["max_used_slots_observed"],
+		"cargo_limit_never_exceeded": ship_state["cargo_limit_never_exceeded"],
 		"ship_timber_lots": ship_state["timber_lots"],
 		"ship_has_departed_dock": ship_state["has_departed_dock"],
 		"ship_at_damaged_dock": ship_state["at_damaged_dock"],
@@ -695,7 +987,9 @@ func get_playtest_state() -> Dictionary:
 			and not player_state["movement_enabled"]
 		),
 		"input_release_pending": (
-			ship_state["navigation_release_pending"] or _chart_release_pending
+			ship_state["navigation_release_pending"]
+			or _chart_release_pending
+			or _cargo_choice_release_pending
 		),
 		"camera_position": travel_camera.global_position,
 		"camera_target": camera_target,
@@ -789,20 +1083,65 @@ func get_playtest_state() -> Dictionary:
 		"wreck_route_state": wreck_state["route_state"],
 		"wreck_known_chart_location": wreck_state["known_chart_location"],
 		"wreck_chart_marker_count": wreck_state["chart_marker_count"],
+		"wreck_salvage_lots": wreck_state["wreck_salvage_lots"],
+		"wreck_salvage_lot_count": wreck_state["wreck_salvage_lot_count"],
+		"wreck_initial_salvage_lots": wreck_state["wreck_initial_salvage_lots"],
+		"wreck_initial_salvage_lot_count": (
+			wreck_state["wreck_initial_salvage_lot_count"]
+		),
+		"wreck_has_more_lots_than_ship_limit_at_start": (
+			wreck_state["wreck_initial_salvage_lot_count"]
+			> ship_state["cargo_limit"]
+		),
+		"next_salvage_lot": wreck_state["next_salvage_lot"],
 		"salvage_range": wreck_state["salvage_range"],
 		"salvage_max_speed": wreck_state["salvage_max_speed"],
 		"salvage_eligibility": wreck_state["salvage_eligibility"],
 		"salvage_eligible": wreck_state["salvage_eligible"],
 		"salvage_prompt_visible": (
 			interaction_prompt.visible
-			and interaction_prompt.text == "[E] SALVAGE ONE TIMBER LOT"
+			and interaction_prompt.text.begins_with("[E] SALVAGE")
 		),
 		"salvage_prompt_text": (
 			interaction_prompt.text
 			if interaction_prompt.visible
-			and interaction_prompt.text == "[E] SALVAGE ONE TIMBER LOT"
+			and interaction_prompt.text.begins_with("[E] SALVAGE")
 			else ""
 		),
+		"cargo_view_visible": cargo_view.visible,
+		"cargo_view_text": cargo_details.text,
+		"pending_salvage_lot": _pending_salvage_lot,
+		"pending_salvage_lot_still_at_wreck": (
+			_pending_salvage_lot.is_empty()
+			or wreck_state["next_salvage_lot"] == _pending_salvage_lot
+		),
+		"cargo_choice_open": _cargo_choice_open,
+		"cargo_choice_prompt_visible": cargo_choice_view.visible,
+		"cargo_choice_prompt_text": (
+			"%s\n%s" % [cargo_choice_title.text, cargo_choice_details.text]
+			if cargo_choice_view.visible
+			else ""
+		),
+		"cargo_choice_prompt": {
+			"visible": cargo_choice_view.visible,
+			"title": cargo_choice_title.text,
+			"text": cargo_choice_details.text,
+			"controls": CARGO_CHOICE_CONTROLS_TEXT,
+		},
+		"cargo_choice_navigation_blocked": (
+			_cargo_choice_open and ship_state["navigation_input_blocked"]
+		),
+		"cargo_choice_chart_blocked": _cargo_choice_open,
+		"cargo_choice_docking_blocked": _cargo_choice_open,
+		"cargo_choice_other_interactions_blocked": _cargo_choice_open,
+		"cargo_choice_release_pending": _cargo_choice_release_pending,
+		"last_cargo_action": _last_cargo_action,
+		"last_cargo_result": _last_cargo_result,
+		"cargo_kept_count": _cargo_kept_count,
+		"cargo_left_count": _cargo_left_count,
+		"cargo_replaced_count": _cargo_replaced_count,
+		"cargo_choice_opened_count": _cargo_choice_opened_count,
+		"cargo_choice_resolution_count": _cargo_choice_resolution_count,
 		"wreck_empty": wreck_state["wreck_empty"],
 		"successful_salvage_collection_count": (
 			wreck_state["successful_collection_count"]

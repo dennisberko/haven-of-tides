@@ -12,6 +12,12 @@ const ROUTE_DEPARTURE_RANGE := 225.0
 const RETURN_PROGRESS_DISTANCE := 50.0
 const SAILING_VIEWPORT_SIZE := Vector2(1152.0, 648.0)
 const WRECK_VISUAL_LOCAL_BOUNDS := Rect2(-100.0, -248.0, 212.0, 304.0)
+const INITIAL_SALVAGE_LOTS := [
+	"TIMBER LOT",
+	"SAILCLOTH LOT",
+	"BRASS FITTINGS LOT",
+	"HERBAL SUPPLIES LOT",
+]
 
 var _route_start := Vector2.ZERO
 var _route_end := Vector2.ZERO
@@ -46,6 +52,12 @@ var _distance_to_port_at_reach := INF
 var _returning_to_port := false
 var _wreck_empty := false
 var _salvage_eligible := false
+var _salvage_lots: Array[String] = [
+	"TIMBER LOT",
+	"SAILCLOTH LOT",
+	"BRASS FITTINGS LOT",
+	"HERBAL SUPPLIES LOT",
+]
 var _successful_collection_count := 0
 var _last_salvage_result := "NOT_ATTEMPTED"
 var _repeat_salvage_result := "NOT_ATTEMPTED"
@@ -201,6 +213,76 @@ func is_salvage_eligible() -> bool:
 	return _salvage_eligible
 
 
+func get_next_salvage_lot() -> String:
+	if _salvage_lots.is_empty():
+		return ""
+	return _salvage_lots[0]
+
+
+func get_salvage_lots() -> Array[String]:
+	return _salvage_lots.duplicate()
+
+
+func can_take_next_salvage_lot(expected_lot: String) -> bool:
+	return (
+		_salvage_eligible
+		and not expected_lot.is_empty()
+		and get_next_salvage_lot() == expected_lot
+	)
+
+
+func take_next_salvage_lot(expected_lot: String) -> bool:
+	if _salvage_lots.is_empty():
+		_last_salvage_result = "NO_CHANGE_WRECK_EMPTY"
+		_repeat_salvage_result = _last_salvage_result
+		return false
+	if not can_take_next_salvage_lot(expected_lot):
+		_last_salvage_result = "NO_CHANGE_INELIGIBLE"
+		return false
+
+	_salvage_lots.pop_front()
+	_wreck_empty = _salvage_lots.is_empty()
+	_salvage_eligible = false
+	_successful_collection_count += 1
+	if expected_lot == "TIMBER LOT":
+		_last_salvage_result = "COLLECTED_ONE_TIMBER_LOT"
+	else:
+		_last_salvage_result = "KEPT_%s" % _result_name(expected_lot)
+	queue_redraw()
+	return true
+
+
+func mark_salvage_choice_pending(expected_lot: String) -> bool:
+	if expected_lot.is_empty() or get_next_salvage_lot() != expected_lot:
+		return false
+	_last_salvage_result = "CARGO_CHOICE_REQUIRED_%s" % _result_name(expected_lot)
+	return true
+
+
+func leave_salvage_lot_at_wreck(expected_lot: String) -> bool:
+	if expected_lot.is_empty() or get_next_salvage_lot() != expected_lot:
+		return false
+	_last_salvage_result = "LEFT_%s_AT_WRECK" % _result_name(expected_lot)
+	_repeat_salvage_result = _last_salvage_result
+	queue_redraw()
+	return true
+
+
+func exchange_salvage_lot(expected_lot: String, returned_lot: String) -> bool:
+	if (
+		expected_lot.is_empty()
+		or returned_lot.is_empty()
+		or get_next_salvage_lot() != expected_lot
+	):
+		return false
+	_salvage_lots[0] = returned_lot
+	_wreck_empty = false
+	_last_salvage_result = "REPLACED_WITH_%s" % _result_name(expected_lot)
+	_successful_collection_count += 1
+	queue_redraw()
+	return true
+
+
 func try_collect_timber_lot() -> bool:
 	if _wreck_empty:
 		_last_salvage_result = "NO_CHANGE_WRECK_EMPTY"
@@ -210,12 +292,10 @@ func try_collect_timber_lot() -> bool:
 		_last_salvage_result = "NO_CHANGE_INELIGIBLE"
 		return false
 
-	_wreck_empty = true
-	_salvage_eligible = false
-	_successful_collection_count = 1
-	_last_salvage_result = "COLLECTED_ONE_TIMBER_LOT"
-	queue_redraw()
-	return true
+	if get_next_salvage_lot() != "TIMBER LOT":
+		_last_salvage_result = "NO_CHANGE_TIMBER_NOT_NEXT"
+		return false
+	return take_next_salvage_lot("TIMBER LOT")
 
 
 func get_playtest_state() -> Dictionary:
@@ -285,11 +365,23 @@ func get_playtest_state() -> Dictionary:
 			"slow_enough": absf(_ship_speed) <= SALVAGE_MAX_SPEED,
 			"eligible": _salvage_eligible,
 		},
+		"wreck_salvage_lots": get_salvage_lots(),
+		"wreck_salvage_lot_count": _salvage_lots.size(),
+		"wreck_initial_salvage_lots": INITIAL_SALVAGE_LOTS.duplicate(),
+		"wreck_initial_salvage_lot_count": INITIAL_SALVAGE_LOTS.size(),
+		"wreck_has_more_lots_than_ship_limit_at_start": (
+			INITIAL_SALVAGE_LOTS.size() > 3
+		),
+		"next_salvage_lot": get_next_salvage_lot(),
 		"wreck_empty": _wreck_empty,
 		"successful_collection_count": _successful_collection_count,
 		"last_salvage_result": _last_salvage_result,
 		"repeat_salvage_result": _repeat_salvage_result,
 	}
+
+
+func _result_name(lot_name: String) -> String:
+	return lot_name.to_upper().replace(" ", "_")
 
 
 func _get_route_state() -> String:
@@ -353,6 +445,22 @@ func _draw() -> void:
 		draw_line(Vector2(42.0, 27.0), Vector2(108.0, 52.0), Color("#6b452c"), 9.0)
 	else:
 		draw_line(Vector2(42.0, 27.0), Vector2(108.0, 52.0), Color("#b27a47"), 9.0)
+		for lot_index in range(_salvage_lots.size()):
+			var lot_x := -45.0 + float(lot_index % 3) * 34.0
+			var lot_y := -10.0 + float(lot_index / 3) * 22.0
+			var lot_color := Color("#d7b45a")
+			if _salvage_lots[lot_index] == "TIMBER LOT":
+				lot_color = Color("#d69b5d")
+			draw_rect(
+				Rect2(Vector2(lot_x, lot_y), Vector2(28.0, 14.0)),
+				lot_color,
+			)
+			draw_rect(
+				Rect2(Vector2(lot_x, lot_y), Vector2(28.0, 14.0)),
+				Color("#493323"),
+				false,
+				2.0,
+			)
 		draw_line(Vector2(9.0, -20.0), Vector2(30.0, -78.0), Color("#342b29"), 8.0)
 		draw_circle(Vector2(19.0, -48.0), 13.0, Color("#ef6b35"))
 		draw_circle(Vector2(17.0, -56.0), 7.0, Color("#ffd067"))
@@ -368,9 +476,9 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	draw_arc(Vector2.ZERO, 124.0, 0.0, TAU, 48, Color("#fff1c5"), 5.0)
 	draw_line(Vector2(0.0, -124.0), Vector2(0.0, -238.0), Color("#fff1c5"), 4.0)
-	var marker_text := "WRECK"
-	var marker_width := 128.0
-	var marker_x := -64.0
+	var marker_text := "WRECK · %d LOTS" % _salvage_lots.size()
+	var marker_width := 210.0
+	var marker_x := -105.0
 	if _wreck_empty:
 		marker_text = "EMPTY WRECK"
 		marker_width = 176.0

@@ -181,7 +181,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 10 · Salvage timber"
+text = "Phase 11 · Cargo limit"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -217,6 +217,55 @@ offset_bottom = 102.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_font_sizes/font_size = 17
 text = "Inspect the damaged dock"
+
+[node name="CargoView" type="ColorRect" parent="Interface"]
+offset_left = 28.0
+offset_top = 96.0
+offset_right = 402.0
+offset_bottom = 286.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="CargoDetails" type="Label" parent="Interface/CargoView"]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 358.0
+offset_bottom = 180.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_colors/font_shadow_color = Color(0.0156863, 0.0627451, 0.0784314, 0.9)
+theme_override_constants/line_spacing = 3
+theme_override_constants/shadow_offset_x = 2
+theme_override_constants/shadow_offset_y = 2
+theme_override_font_sizes/font_size = 16
+text = "CARGO · USED 2/3 · FREE 1\nSLOT 1  COVE MEDICINE LOT\nSLOT 2  VOYAGE FOOD LOT\nSLOT 3  EMPTY\nWRECK  4 LOTS REMAIN\nPENDING  NONE"
+
+[node name="CargoChoiceView" type="ColorRect" parent="Interface"]
+visible = false
+offset_left = 208.0
+offset_top = 230.0
+offset_right = 944.0
+offset_bottom = 510.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.97)
+
+[node name="ChoiceTitle" type="Label" parent="Interface/CargoChoiceView"]
+offset_left = 28.0
+offset_top = 24.0
+offset_right = 708.0
+offset_bottom = 58.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 23
+text = "CARGO FULL · NEW SAILCLOTH LOT"
+horizontal_alignment = 1
+
+[node name="ChoiceDetails" type="Label" parent="Interface/CargoChoiceView"]
+offset_left = 34.0
+offset_top = 76.0
+offset_right = 702.0
+offset_bottom = 250.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_constants/line_spacing = 10
+theme_override_font_sizes/font_size = 20
+text = "[1] REPLACE COVE MEDICINE LOT\n[2] REPLACE VOYAGE FOOD LOT\n[3] REPLACE TIMBER LOT\n[X] LEAVE SAILCLOTH LOT AT WRECK"
+horizontal_alignment = 1
 
 [node name="SignMessage" type="Label" parent="Interface"]
 visible = false
