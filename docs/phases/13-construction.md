@@ -2,6 +2,24 @@
 
 [Previous: cove storage](12-cove-storage.md) | [Next: buying and selling](14-buying-and-selling.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Place one construction site for a storage shed | DONE |
+| Add 2: Show its fixed timber cost | DONE |
+| Add 3: Count timber in cove storage | DONE |
+| Add 4: Confirm construction when enough timber is stored | DONE |
+| Add 5: Remove timber and replace the site with the finished building | DONE |
+| Complete when: Salvage and store timber, build the shed, and see it after returning | DONE |
+| Test 1: Open the site before enough timber is stored | DONE |
+| Test 2: Confirm construction is unavailable and the cost is clear | DONE |
+| Test 3: Salvage and store the missing timber | DONE |
+| Test 4: Confirm construction and check that timber is removed | DONE |
+| Test 5: Leave and return and confirm the finished building remains | DONE |
+
 ## Goal
 
 The player can use salvaged timber to make one visible building in the cove.

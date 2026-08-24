@@ -27,6 +27,30 @@ func get_storage_slots() -> Array[String]:
 	return cargo_slots.duplicate()
 
 
+func count_cargo_lot(lot_name: String) -> int:
+	return cargo_slots.count(lot_name)
+
+
+func consume_cargo_lots(lot_name: String, amount: int) -> Array[String]:
+	var consumed_lots: Array[String] = []
+	if lot_name.is_empty() or amount <= 0:
+		return consumed_lots
+
+	var matching_slots: Array[int] = []
+	for slot_index in range(STORAGE_LIMIT):
+		if cargo_slots[slot_index] == lot_name:
+			matching_slots.append(slot_index)
+			if matching_slots.size() == amount:
+				break
+	if matching_slots.size() != amount:
+		return consumed_lots
+
+	for slot_index in matching_slots:
+		consumed_lots.append(cargo_slots[slot_index])
+		cargo_slots[slot_index] = ""
+	return consumed_lots
+
+
 func get_first_free_slot_index() -> int:
 	for slot_index in range(STORAGE_LIMIT):
 		if cargo_slots[slot_index].is_empty():

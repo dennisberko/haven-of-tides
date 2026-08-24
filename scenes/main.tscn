@@ -1,4 +1,4 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=24 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -10,6 +10,9 @@
 [ext_resource type="Script" path="res://scripts/waypoint_display.gd" id="7_waypoint"]
 [ext_resource type="Script" path="res://scripts/wreck_opportunity.gd" id="8_wreck"]
 [ext_resource type="Script" path="res://scripts/cove_storage.gd" id="9_storage"]
+[ext_resource type="Script" path="res://scripts/storage_shed_construction.gd" id="10_construction"]
+[ext_resource type="Script" path="res://scripts/storage_shed_unbuilt_visual.gd" id="11_unbuilt"]
+[ext_resource type="Script" path="res://scripts/storage_shed_finished_visual.gd" id="12_finished"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -38,6 +41,9 @@ radius = 54.0
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_cove_storage"]
 radius = 58.0
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_construction_site"]
+radius = 64.0
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
@@ -150,6 +156,23 @@ script = ExtResource("9_storage")
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/CoveStorage"]
 shape = SubResource("CircleShape2D_cove_storage")
 
+[node name="StorageShedConstruction" type="Area2D" parent="InteractiveObjects" groups=["interactive"]]
+z_index = 1
+position = Vector2(350, 430)
+collision_layer = 0
+collision_mask = 1
+script = ExtResource("10_construction")
+
+[node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/StorageShedConstruction"]
+shape = SubResource("CircleShape2D_construction_site")
+
+[node name="UnbuiltSiteVisual" type="Node2D" parent="InteractiveObjects/StorageShedConstruction"]
+script = ExtResource("11_unbuilt")
+
+[node name="FinishedStorageShedVisual" type="Node2D" parent="InteractiveObjects/StorageShedConstruction"]
+visible = false
+script = ExtResource("12_finished")
+
 [node name="RequestAreas" type="Node2D" parent="."]
 
 [node name="DamagedDockGoal" type="Area2D" parent="RequestAreas"]
@@ -195,7 +218,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 12 · Cove storage"
+text = "Phase 13 · Construction"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -332,6 +355,55 @@ theme_override_font_sizes/font_size = 17
 text = "[1 / 2 / 3] SHIP → STORAGE · [4 / 5 / 6] STORAGE → SHIP · [X] CLOSE"
 horizontal_alignment = 1
 
+[node name="ConstructionView" type="ColorRect" parent="Interface"]
+visible = false
+offset_left = 216.0
+offset_top = 150.0
+offset_right = 936.0
+offset_bottom = 498.0
+color = Color(0.0313726, 0.109804, 0.133333, 0.985)
+
+[node name="ConstructionTitle" type="Label" parent="Interface/ConstructionView"]
+offset_left = 28.0
+offset_top = 24.0
+offset_right = 692.0
+offset_bottom = 60.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 27
+text = "STORAGE SHED"
+horizontal_alignment = 1
+
+[node name="ConstructionDetails" type="Label" parent="Interface/ConstructionView"]
+offset_left = 36.0
+offset_top = 86.0
+offset_right = 684.0
+offset_bottom = 180.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_constants/line_spacing = 10
+theme_override_font_sizes/font_size = 21
+text = "FIXED COST · 1 TIMBER LOT\nCOVE-STORED TIMBER · 0/1"
+horizontal_alignment = 1
+
+[node name="ConstructionResult" type="Label" parent="Interface/ConstructionView"]
+offset_left = 36.0
+offset_top = 206.0
+offset_right = 684.0
+offset_bottom = 242.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 21
+text = "CONSTRUCTION UNAVAILABLE"
+horizontal_alignment = 1
+
+[node name="ConstructionControls" type="Label" parent="Interface/ConstructionView"]
+offset_left = 28.0
+offset_top = 286.0
+offset_right = 692.0
+offset_bottom = 322.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 18
+text = "[E] BUILD UNAVAILABLE · [X] CLOSE"
+horizontal_alignment = 1
+
 [node name="SignMessage" type="Label" parent="Interface"]
 visible = false
 offset_left = 290.0
@@ -407,7 +479,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 16
-text = "WASD / ARROWS TO MOVE · E INTERACT"
+text = "WASD / ARROWS TO MOVE · E INTERACT · M CHART"
 
 [node name="WaypointDisplay" type="Control" parent="Interface"]
 layout_mode = 3
