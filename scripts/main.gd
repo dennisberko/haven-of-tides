@@ -4,6 +4,7 @@ const TradeContact := preload("res://scripts/trade_contact.gd")
 const PortConditionState := preload("res://scripts/port_condition.gd")
 const TradeJournalState := preload("res://scripts/trade_journal.gd")
 const ShipFoodState := preload("res://scripts/ship_food.gd")
+const ShipAmmunitionState := preload("res://scripts/ship_ammunition.gd")
 const InspectableTargetShipState := preload(
 	"res://scripts/inspectable_target_ship.gd"
 )
@@ -84,6 +85,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var broadside_title: Label = $Interface/BroadsideView/BroadsideTitle
 @onready var broadside_areas: Label = $Interface/BroadsideView/BroadsideAreas
 @onready var broadside_result: Label = $Interface/BroadsideView/BroadsideResult
+@onready var ammunition_view: ColorRect = $Interface/AmmunitionView
+@onready var ammunition_title: Label = $Interface/AmmunitionView/AmmunitionTitle
+@onready var ammunition_status: Label = $Interface/AmmunitionView/AmmunitionStatus
+@onready var ammunition_cargo: Label = $Interface/AmmunitionView/AmmunitionCargo
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -128,9 +133,14 @@ const CONSTRUCTION_READY_CONTROLS_TEXT := "E BUILD STORAGE SHED · X CLOSE"
 const CONSTRUCTION_UNAVAILABLE_CONTROLS_TEXT := "E BUILD UNAVAILABLE · X CLOSE"
 const CONSTRUCTION_COMPLETE_CONTROLS_TEXT := "X CLOSE · E CANNOT BUILD AGAIN"
 const CONSTRUCTION_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, WASD / ARROW KEYS"
-const TRADE_BUY_CONTROLS_TEXT := "E BUY ONE LOT · X CLOSE"
+const TRADE_BUY_CONTROLS_TEXT := (
+	"E BUY SPICE · B BUY WEAPONS AND GUNPOWDER · "
+	+ "L LOAD AMMUNITION · X CLOSE"
+)
 const TRADE_SELL_CONTROLS_TEXT := "E SELL ONE LOT · X CLOSE"
-const TRADE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, 1-6, WASD / ARROW KEYS"
+const TRADE_RELEASE_CONTROLS_TEXT := (
+	"RELEASE E, B, L, X, M, 1-6, WASD / ARROW KEYS"
+)
 const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
@@ -251,6 +261,16 @@ var _trade_denied_purchase_count := 0
 var _trade_denied_sale_count := 0
 var _trade_held_input_count := 0
 var _trade_blocked_input_count := 0
+var _ammunition_supply_purchase_attempt_count := 0
+var _ammunition_supply_purchase_success_count := 0
+var _ammunition_supply_purchase_denied_count := 0
+var _ammunition_supply_purchased_lot_count := 0
+var _ammunition_supply_money_spent := 0
+var _last_ammunition_supply_purchase_evidence: Dictionary = {}
+var _successful_ammunition_supply_purchase_evidence: Dictionary = {}
+var _last_denied_ammunition_supply_purchase_evidence: Dictionary = {}
+var _last_ammunition_load_evidence: Dictionary = {}
+var _last_held_ammunition_trade_evidence: Dictionary = {}
 var _last_trade_attempt_evidence: Dictionary = {}
 var _successful_purchase_evidence: Dictionary = {}
 var _successful_sale_evidence: Dictionary = {}
@@ -326,6 +346,9 @@ var _last_broadside_result := "NO BROADSIDE ATTEMPT"
 var _last_broadside_attempt_evidence: Dictionary = {}
 var _successful_broadside_evidence: Dictionary = {}
 var _reload_rejected_broadside_evidence: Dictionary = {}
+var _inactive_rejected_broadside_evidence: Dictionary = {}
+var _zero_ammunition_rejected_broadside_evidence: Dictionary = {}
+var _held_rejected_broadside_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -357,6 +380,7 @@ func _ready() -> void:
 	_update_repair_view()
 	_update_target_inspection()
 	_update_broadside_view()
+	_update_ammunition_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -374,6 +398,7 @@ func _ready() -> void:
 	repair_view.hide()
 	target_inspection_view.hide()
 	broadside_view.hide()
+	ammunition_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -413,6 +438,7 @@ func _physics_process(_delta: float) -> void:
 	_update_hull_view()
 	_update_repair_view()
 	_update_broadside_view()
+	_update_ammunition_view()
 	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
@@ -676,12 +702,34 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 		return
 	if key_event.echo or bool(_broadside_pressed_keys.get(side, false)):
 		_broadside_held_input_count += 1
+		var held_broadside_state: Dictionary = (
+			ship.get_broadside_playtest_state()
+		)
+		var held_target_hulls: Dictionary = _get_target_hull_snapshots()
 		_last_broadside_result = (
 			"NO SHOT · RELEASE %s BROADSIDE KEY" % (
 				"Q" if side == "LEFT" else "F"
 			)
 		)
+		_held_rejected_broadside_evidence = {
+			"success": false,
+			"shot_fired": false,
+			"rejection_reason": "HELD_KEY",
+			"side": side,
+			"result": _last_broadside_result,
+			"ammunition_before": held_broadside_state["ammunition_units"],
+			"ammunition_after": held_broadside_state["ammunition_units"],
+			"ammunition_delta": 0,
+			"shot_count_before": held_broadside_state["shot_count"],
+			"shot_count_after": held_broadside_state["shot_count"],
+			"target_hulls_before": held_target_hulls,
+			"target_hulls_after": held_target_hulls.duplicate(true),
+			"no_shot_no_ammunition_use": true,
+			"no_shot_no_target_damage": true,
+			"fresh_press_required": true,
+		}
 		_update_broadside_view()
+		_update_ammunition_view()
 		return
 	_broadside_pressed_keys[side] = true
 	_attempt_broadside_attack(side)
@@ -939,15 +987,54 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 	if key_event.echo or bool(_trade_pressed_keys.get(trade_key, false)):
 		_trade_held_input_count += 1
 		_last_trade_action = "HELD_TRADE_KEY_%s" % (
-			"E" if trade_key == KEY_E else "X"
+			_get_trade_key_name(trade_key)
 		)
 		_last_trade_result = "NO CHANGE · RELEASE THE KEY FIRST"
+		if trade_key == KEY_B or trade_key == KEY_L:
+			var held_cargo: Array[String] = ship.get_cargo_lots()
+			var held_ammunition: int = ship.get_ammunition_units()
+			var held_spice_mark: Dictionary = (
+				port_trader.get_mark_state(completed_voyages)
+			)
+			_last_held_ammunition_trade_evidence = {
+				"action": _last_trade_action,
+				"key": _get_trade_key_name(trade_key),
+				"result": _last_trade_result,
+				"money_before": money,
+				"money_after": money,
+				"cargo_before": held_cargo,
+				"cargo_after": held_cargo.duplicate(),
+				"ammunition_before": held_ammunition,
+				"ammunition_after": held_ammunition,
+				"spice_mark_before": held_spice_mark,
+				"spice_mark_after": held_spice_mark.duplicate(true),
+				"no_state_change": true,
+				"fresh_press_required": true,
+			}
 		_update_trade_view()
 		return
 
 	_trade_pressed_keys[trade_key] = true
 	if trade_key == KEY_X:
 		_close_trade_contact()
+		return
+	if trade_key == KEY_B:
+		if _active_trade_contact != null and _active_trade_contact.is_port_trader():
+			_attempt_ammunition_supply_purchase()
+		else:
+			_trade_blocked_input_count += 1
+			_last_trade_action = "BUY_AMMUNITION_SUPPLY_BLOCKED_AT_COVE"
+			_last_trade_result = "SHIP SUPPLY AVAILABLE AT PORT ONLY"
+			_update_trade_view()
+		return
+	if trade_key == KEY_L:
+		if _active_trade_contact != null and _active_trade_contact.is_port_trader():
+			_attempt_ammunition_load()
+		else:
+			_trade_blocked_input_count += 1
+			_last_trade_action = "LOAD_AMMUNITION_BLOCKED_AT_COVE"
+			_last_trade_result = "AMMUNITION LOADING AVAILABLE AT PORT ONLY"
+			_update_trade_view()
 		return
 	if _active_trade_contact != null and _active_trade_contact.is_port_trader():
 		_attempt_trade_purchase()
@@ -960,7 +1047,24 @@ func _get_trade_key(key_event: InputEventKey) -> int:
 		return KEY_E
 	if _key_matches(key_event, KEY_X):
 		return KEY_X
+	if _key_matches(key_event, KEY_B):
+		return KEY_B
+	if _key_matches(key_event, KEY_L):
+		return KEY_L
 	return 0
+
+
+func _get_trade_key_name(trade_key: int) -> String:
+	match trade_key:
+		KEY_E:
+			return "E"
+		KEY_B:
+			return "B"
+		KEY_L:
+			return "L"
+		KEY_X:
+			return "X"
+	return "UNKNOWN"
 
 
 func _get_near_trade_contact():
@@ -1149,6 +1253,216 @@ func _attempt_trade_purchase() -> void:
 		TradeJournalState.LOCAL_PURCHASE_SOURCE
 	)
 	_successful_purchase_evidence = _last_trade_attempt_evidence.duplicate(true)
+
+
+func _attempt_ammunition_supply_purchase() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_port_trader()
+	):
+		return
+
+	_ammunition_supply_purchase_attempt_count += 1
+	_last_trade_action = "BUY_WEAPONS_AND_GUNPOWDER_CARGO_LOT"
+	var money_before: int = money
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var ammunition_before: int = ship.get_ammunition_units()
+	var spice_mark_before: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var denial_reasons := PackedStringArray()
+	if not ship.is_docked or ship.current_dock_id != TradeContact.PORT_SHORE_ID:
+		denial_reasons.append("SHIP MUST BE DOCKED AT PORT")
+	if money < ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE:
+		denial_reasons.append(
+			"NEED %d COINS" % ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE
+		)
+	if not ship.can_keep_cargo_lot():
+		denial_reasons.append("NO FREE SHIP CARGO SLOT")
+	if not denial_reasons.is_empty():
+		_ammunition_supply_purchase_denied_count += 1
+		_last_trade_result = "SUPPLY PURCHASE DENIED · %s" % (
+			" · ".join(denial_reasons)
+		)
+		_record_ammunition_supply_purchase(
+			false,
+			money_before,
+			cargo_before,
+			ammunition_before,
+			spice_mark_before,
+		)
+		return
+
+	if not ship.keep_cargo_lot(ShipAmmunitionState.SOURCE_CARGO_LOT_NAME):
+		_ammunition_supply_purchase_denied_count += 1
+		_last_trade_result = "SUPPLY PURCHASE DENIED · CARGO DID NOT CHANGE"
+		_record_ammunition_supply_purchase(
+			false,
+			money_before,
+			cargo_before,
+			ammunition_before,
+			spice_mark_before,
+		)
+		return
+
+	money -= ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE
+	_ammunition_supply_purchase_success_count += 1
+	_ammunition_supply_purchased_lot_count += 1
+	_ammunition_supply_money_spent += (
+		ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE
+	)
+	_last_trade_result = "BOUGHT 1 %s · PAID %d COINS" % [
+		ShipAmmunitionState.SOURCE_CARGO_LOT_NAME,
+		ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE,
+	]
+	_record_ammunition_supply_purchase(
+		true,
+		money_before,
+		cargo_before,
+		ammunition_before,
+		spice_mark_before,
+	)
+	_successful_ammunition_supply_purchase_evidence = (
+		_last_ammunition_supply_purchase_evidence.duplicate(true)
+	)
+
+
+func _record_ammunition_supply_purchase(
+	success: bool,
+	money_before: int,
+	cargo_before: Array[String],
+	ammunition_before: int,
+	spice_mark_before: Dictionary,
+) -> void:
+	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var ammunition_after: int = ship.get_ammunition_units()
+	var spice_mark_after: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var money_delta: int = money - money_before
+	var cargo_delta: int = cargo_after.size() - cargo_before.size()
+	var spice_state_unchanged: bool = _trade_mark_resources_equal(
+		spice_mark_before,
+		spice_mark_after,
+	)
+	_last_ammunition_supply_purchase_evidence = {
+		"success": success,
+		"action": _last_trade_action,
+		"result": _last_trade_result,
+		"source_cargo_lot_name": ShipAmmunitionState.SOURCE_CARGO_LOT_NAME,
+		"fixed_price": ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE,
+		"price_is_visible_fixed_ship_supply_price": true,
+		"separate_from_spice_trade_route": true,
+		"money_before": money_before,
+		"money_after": money,
+		"money_delta": money_delta,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_delta": cargo_delta,
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_delta": ammunition_after - ammunition_before,
+		"source_purchase_does_not_load_ammunition": (
+			ammunition_after == ammunition_before
+		),
+		"spice_mark_before": spice_mark_before,
+		"spice_mark_after": spice_mark_after,
+		"spice_marks_and_price_state_unchanged": spice_state_unchanged,
+		"transaction_atomic": (
+			(
+				success
+				and money_delta
+					== -ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE
+				and cargo_delta == 1
+				and cargo_after.count(
+					ShipAmmunitionState.SOURCE_CARGO_LOT_NAME
+				) == cargo_before.count(
+					ShipAmmunitionState.SOURCE_CARGO_LOT_NAME
+				) + 1
+				and spice_state_unchanged
+			)
+			or (
+				not success
+				and money_delta == 0
+				and cargo_after == cargo_before
+				and ammunition_after == ammunition_before
+				and spice_state_unchanged
+			)
+		),
+		"money_not_negative": money >= 0,
+		"cargo_limit_not_exceeded": (
+			cargo_after.size() <= ship.get_cargo_limit()
+		),
+	}
+	if not success:
+		_last_denied_ammunition_supply_purchase_evidence = (
+			_last_ammunition_supply_purchase_evidence.duplicate(true)
+		)
+	_update_cargo_view()
+	_update_money_view()
+	_update_ammunition_view()
+	_update_trade_view()
+
+
+func _attempt_ammunition_load() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_port_trader()
+	):
+		return
+
+	_last_trade_action = "LOAD_AMMUNITION_AT_PORT"
+	var money_before: int = money
+	var spice_mark_before: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var evidence: Dictionary = ship.load_ammunition_at_port()
+	var spice_mark_after: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var spice_state_unchanged: bool = _trade_mark_resources_equal(
+		spice_mark_before,
+		spice_mark_after,
+	)
+	var load_transaction_atomic: bool = (
+		(
+			bool(evidence["success"])
+			and bool(evidence["loaded_exactly_three"])
+			and bool(evidence["same_cargo_slot"])
+			and bool(evidence["one_source_lot_converted"])
+			and money == money_before
+			and spice_state_unchanged
+		)
+		or (
+			not bool(evidence["success"])
+			and evidence["cargo_before"] == evidence["cargo_after"]
+			and int(evidence["ammunition_before"])
+				== int(evidence["ammunition_after"])
+			and money == money_before
+			and spice_state_unchanged
+		)
+	)
+	evidence.merge({
+		"money_before": money_before,
+		"money_after": money,
+		"money_delta": money - money_before,
+		"money_unchanged": money == money_before,
+		"spice_mark_before": spice_mark_before,
+		"spice_mark_after": spice_mark_after,
+		"spice_marks_and_price_state_unchanged": spice_state_unchanged,
+		"conversion_is_cargo_neutral": bool(
+			evidence["cargo_slot_count_unchanged"]
+		),
+		"transaction_atomic": load_transaction_atomic,
+	}, true)
+	_last_ammunition_load_evidence = evidence.duplicate(true)
+	_last_trade_result = String(evidence["result"])
+	_update_cargo_view()
+	_update_money_view()
+	_update_ammunition_view()
+	_update_trade_view()
 
 
 func _attempt_trade_sale() -> void:
@@ -2134,6 +2448,8 @@ func _is_any_trade_guard_key_pressed() -> bool:
 	return (
 		_is_any_movement_key_pressed()
 		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_B)
+		or Input.is_key_pressed(KEY_L)
 		or Input.is_key_pressed(KEY_M)
 		or Input.is_key_pressed(KEY_X)
 		or Input.is_key_pressed(KEY_1)
@@ -2420,7 +2736,17 @@ func _attempt_broadside_attack(side: String) -> void:
 			_reload_rejected_broadside_evidence = (
 				_last_broadside_attempt_evidence.duplicate(true)
 			)
+		elif String(evidence["rejection_reason"]) == "NO_AMMUNITION":
+			_zero_ammunition_rejected_broadside_evidence = (
+				_last_broadside_attempt_evidence.duplicate(true)
+			)
+		elif String(evidence["rejection_reason"]) == "FIRING_AREAS_INACTIVE":
+			_inactive_rejected_broadside_evidence = (
+				_last_broadside_attempt_evidence.duplicate(true)
+			)
+		_update_cargo_view()
 		_update_broadside_view()
+		_update_ammunition_view()
 		return
 
 	var target: InspectableTargetShipState = _get_broadside_target(side)
@@ -2499,7 +2825,9 @@ func _attempt_broadside_attack(side: String) -> void:
 	_last_broadside_result = String(
 		_last_broadside_attempt_evidence["result"]
 	)
+	_update_cargo_view()
 	_update_broadside_view()
+	_update_ammunition_view()
 
 
 func _get_broadside_target(side: String) -> InspectableTargetShipState:
@@ -2528,12 +2856,14 @@ func _get_target_hull_snapshots() -> Dictionary:
 
 func _update_broadside_view() -> void:
 	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
-	if bool(broadside_state["ready"]):
-		broadside_title.text = "BROADSIDE · READY"
-	else:
+	if not bool(broadside_state["reload_ready"]):
 		broadside_title.text = "BROADSIDE · RELOADING %.1f" % (
 			broadside_state["reload_remaining"]
 		)
+	elif int(broadside_state["ammunition_units"]) <= 0:
+		broadside_title.text = "BROADSIDE · NO AMMUNITION"
+	else:
+		broadside_title.text = "BROADSIDE · READY"
 	if bool(broadside_state["firing_areas_active"]):
 		broadside_areas.text = (
 			"FIRING AREAS VISIBLE · [Q] LEFT · [F] RIGHT"
@@ -2542,6 +2872,22 @@ func _update_broadside_view() -> void:
 		broadside_areas.text = "FIRING AREAS INACTIVE WHILE DOCKED OR ASHORE"
 	broadside_result.text = _last_broadside_result
 	broadside_view.visible = _player_aboard_ship
+
+
+func _update_ammunition_view() -> void:
+	var ammunition_state: Dictionary = ship.get_ammunition_playtest_state()
+	var ammunition_units: int = int(ammunition_state["ammunition_units"])
+	ammunition_title.text = "AMMUNITION · %d" % ammunition_units
+	if ammunition_units == 0:
+		ammunition_status.text = "NO AMMUNITION · BROADSIDES BLOCKED"
+	elif ammunition_units == 2:
+		ammunition_status.text = "LOW AMMUNITION"
+	else:
+		ammunition_status.text = "AMMUNITION READY"
+	ammunition_cargo.text = "LOADED CARGO LOTS · %d · 1 SLOT EACH" % (
+		ammunition_state["loaded_lot_count"]
+	)
+	ammunition_view.visible = _player_aboard_ship and not ship.is_docked
 
 
 func _update_salvage_persistence() -> void:
@@ -3144,6 +3490,7 @@ func _update_trade_view() -> void:
 		var cargo_lots: Array[String] = ship.get_cargo_lots()
 		var used_slots := cargo_lots.size()
 		var free_slots: int = ship.get_cargo_limit() - used_slots
+		var ammunition_state: Dictionary = ship.get_ammunition_playtest_state()
 		var contact_state: Dictionary = (
 			_active_trade_contact.get_mark_state(completed_voyages)
 		)
@@ -3221,11 +3568,32 @@ func _update_trade_view() -> void:
 			port_lines.append("TRADE · %s" % (
 				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE"
 			))
+			port_lines.append("")
+			port_lines.append(
+				"SHIP SUPPLY · SEPARATE FROM SPICE PRICE AND MARKS"
+			)
+			port_lines.append("[B] %s · FIXED %d COINS" % [
+				ShipAmmunitionState.SOURCE_CARGO_LOT_NAME,
+				ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE,
+			])
+			port_lines.append(
+				"SOURCE CARGO LOTS IN SHIP · %d" % (
+					ammunition_state["source_lot_count"]
+				)
+			)
+			port_lines.append(
+				"[L] LOAD 1 SOURCE LOT · 3 AMMUNITION · SAME SLOT"
+			)
+			port_lines.append("AMMUNITION · %d · LOADED CARGO LOTS %d" % [
+				ammunition_state["ammunition_units"],
+				ammunition_state["loaded_lot_count"],
+			])
 			trade_details.text = "\n".join(port_lines)
 			trade_controls.text = (
-				"[E] BUY ONE LOT · [X] CLOSE"
-				if contact_state["trade_available"]
-				else "[E] BUY UNAVAILABLE · [X] CLOSE"
+				"[E] %s · [B] BUY SUPPLY · [L] LOAD 3 AMMUNITION · [X] CLOSE" % (
+					"BUY SPICE" if contact_state["trade_available"]
+					else "SPICE UNAVAILABLE"
+				)
 			)
 		else:
 			trade_details.text = (
@@ -4088,6 +4456,12 @@ func get_playtest_state() -> Dictionary:
 		repair_result.text,
 		repair_controls.text,
 	]
+	var ammunition_state: Dictionary = ship.get_ammunition_playtest_state()
+	var ammunition_view_full_text: String = "%s\n%s\n%s" % [
+		ammunition_title.text,
+		ammunition_status.text,
+		ammunition_cargo.text,
+	]
 	var repair_view_rect := repair_view.get_global_rect()
 	var hull_view_rect := hull_view.get_global_rect()
 	var food_view_rect := food_view.get_global_rect()
@@ -4108,10 +4482,25 @@ func get_playtest_state() -> Dictionary:
 		+ _trade_sold_lot_count
 		+ food_state["total_units_used"]
 		+ repair_state["consumed_timber_count"]
+		+ ammunition_state["depleted_lot_count"]
 	)
 	var expected_cargo_total: int = (
-		initial_physical_cargo_total + _trade_bought_lot_count
+		initial_physical_cargo_total
+		+ _trade_bought_lot_count
+		+ _ammunition_supply_purchased_lot_count
 	)
+	var expected_money: int = (
+		STARTING_MONEY
+		- _trade_bought_lot_count * TradeContact.CHEAP_PRICE
+		+ _trade_sold_lot_count * TradeContact.VALUABLE_PRICE
+		- _ammunition_supply_money_spent
+	)
+	var ammunition_load_state: Dictionary = ammunition_state["last_load_evidence"]
+	var ammunition_conversion_cargo_delta: int = 0
+	if not ammunition_load_state.is_empty():
+		ammunition_conversion_cargo_delta = int(
+			ammunition_load_state["cargo_slot_count_after"]
+		) - int(ammunition_load_state["cargo_slot_count_before"])
 	var target_ship_states: Array[Dictionary] = []
 	var target_ship_ids: Array[String] = []
 	var target_hull_states: Dictionary = {}
@@ -4192,12 +4581,17 @@ func get_playtest_state() -> Dictionary:
 			construction_state["consumed_lot_count"]
 			+ food_state["total_units_used"]
 			+ repair_state["consumed_timber_count"]
+			+ ammunition_state["depleted_lot_count"]
 		),
 		"cargo_construction_consumed_lots": (
 			construction_state["consumed_lot_count"]
 		),
 		"cargo_food_consumed_lots": food_state["total_units_used"],
 		"cargo_repair_consumed_lots": repair_state["consumed_timber_count"],
+		"cargo_ammunition_depleted_lots": ammunition_state["depleted_lot_count"],
+		"cargo_ammunition_source_purchased_lots": (
+			_ammunition_supply_purchased_lot_count
+		),
 		"cargo_accounted_total_including_consumed": accounted_cargo_total,
 		"cargo_accounted_total_including_consumed_and_sold": accounted_cargo_total,
 		"cargo_initial_total_lots_in_world": initial_physical_cargo_total,
@@ -4512,6 +4906,9 @@ func get_playtest_state() -> Dictionary:
 		"broadside_reload_rejected_count": (
 			broadside_state["reload_rejected_count"]
 		),
+		"broadside_no_ammunition_rejected_count": (
+			broadside_state["no_ammunition_rejected_count"]
+		),
 		"broadside_held_input_count": _broadside_held_input_count,
 		"broadside_last_result": _last_broadside_result,
 		"broadside_last_attempt_evidence": (
@@ -4522,6 +4919,15 @@ func get_playtest_state() -> Dictionary:
 		),
 		"broadside_reload_rejected_evidence": (
 			_reload_rejected_broadside_evidence.duplicate(true)
+		),
+		"broadside_inactive_rejected_evidence": (
+			_inactive_rejected_broadside_evidence.duplicate(true)
+		),
+		"broadside_zero_ammunition_rejected_evidence": (
+			_zero_ammunition_rejected_broadside_evidence.duplicate(true)
+		),
+		"broadside_held_rejected_evidence": (
+			_held_rejected_broadside_evidence.duplicate(true)
 		),
 		"broadside_ship_state": broadside_state,
 		"broadside_view_count": get_tree().get_nodes_in_group(
@@ -4538,6 +4944,7 @@ func get_playtest_state() -> Dictionary:
 		"broadside_view_shows_reload": (
 			broadside_view_text.contains("BROADSIDE · READY")
 			or broadside_view_text.contains("BROADSIDE · RELOADING")
+			or broadside_view_text.contains("BROADSIDE · NO AMMUNITION")
 		),
 		"target_hull_states": target_hull_states,
 		"target_hull_max": InspectableTargetShipState.HULL_MAX,
@@ -4547,7 +4954,117 @@ func get_playtest_state() -> Dictionary:
 			InspectableTargetShipState.HIT_FEEDBACK_DURATION
 		),
 		"broadside_uses_ammunition": broadside_state["uses_ammunition"],
-		"broadside_ammunition_system_count": 0,
+		"broadside_ammunition_system_count": ammunition_state["system_count"],
+		"ammunition_system_count": ammunition_state["system_count"],
+		"ammunition_type_count": ammunition_state["ammunition_type_count"],
+		"ammunition_units": ammunition_state["ammunition_units"],
+		"ammunition_units_per_loaded_lot": (
+			ammunition_state["units_per_loaded_lot"]
+		),
+		"ammunition_source_cargo_lot_name": (
+			ammunition_state["source_cargo_lot_name"]
+		),
+		"ammunition_loaded_cargo_lot_prefix": (
+			ammunition_state["loaded_cargo_lot_prefix"]
+		),
+		"ammunition_source_cargo_fixed_price": (
+			ammunition_state["source_cargo_fixed_price"]
+		),
+		"ammunition_source_lot_count": ammunition_state["source_lot_count"],
+		"ammunition_loaded_lot_count": ammunition_state["loaded_lot_count"],
+		"ammunition_low_warning": ammunition_state["low_ammunition_warning"],
+		"ammunition_no_warning": ammunition_state["no_ammunition_warning"],
+		"ammunition_total_units_loaded": ammunition_state["total_units_loaded"],
+		"ammunition_total_units_consumed": (
+			ammunition_state["total_units_consumed"]
+		),
+		"ammunition_depleted_lot_count": ammunition_state["depleted_lot_count"],
+		"ammunition_cargo_lot_consumed_only_at_zero": (
+			ammunition_state[
+				"cargo_lot_consumed_only_when_ammunition_reaches_zero"
+			]
+		),
+		"ammunition_load_attempt_count": ammunition_state["load_attempt_count"],
+		"ammunition_load_success_count": ammunition_state["load_success_count"],
+		"ammunition_load_denied_count": ammunition_state["load_denied_count"],
+		"ammunition_last_load_evidence": ammunition_state["last_load_evidence"],
+		"ammunition_successful_load_evidence": (
+			ammunition_state["successful_load_evidence"]
+		),
+		"ammunition_last_denied_load_evidence": (
+			ammunition_state["last_denied_load_evidence"]
+		),
+		"ammunition_last_consumption_evidence": (
+			ammunition_state["last_consumption_evidence"]
+		),
+		"ammunition_main_last_load_evidence": (
+			_last_ammunition_load_evidence.duplicate(true)
+		),
+		"ammunition_supply_purchase_key": "B",
+		"ammunition_port_load_key": "L",
+		"ammunition_trade_keys_use_fresh_press_guard": true,
+		"ammunition_trade_release_guard_includes_b_and_l": (
+			TRADE_RELEASE_CONTROLS_TEXT.contains("B")
+			and TRADE_RELEASE_CONTROLS_TEXT.contains("L")
+		),
+		"ammunition_last_held_trade_evidence": (
+			_last_held_ammunition_trade_evidence.duplicate(true)
+		),
+		"ammunition_supply_purchase_attempt_count": (
+			_ammunition_supply_purchase_attempt_count
+		),
+		"ammunition_supply_purchase_success_count": (
+			_ammunition_supply_purchase_success_count
+		),
+		"ammunition_supply_purchase_denied_count": (
+			_ammunition_supply_purchase_denied_count
+		),
+		"ammunition_supply_purchased_lot_count": (
+			_ammunition_supply_purchased_lot_count
+		),
+		"ammunition_supply_money_spent": _ammunition_supply_money_spent,
+		"ammunition_last_supply_purchase_evidence": (
+			_last_ammunition_supply_purchase_evidence.duplicate(true)
+		),
+		"ammunition_successful_supply_purchase_evidence": (
+			_successful_ammunition_supply_purchase_evidence.duplicate(true)
+		),
+		"ammunition_last_denied_supply_purchase_evidence": (
+			_last_denied_ammunition_supply_purchase_evidence.duplicate(true)
+		),
+		"ammunition_view_count": get_tree().get_nodes_in_group(
+			"ship_ammunition_view"
+		).size(),
+		"ammunition_view_visible": ammunition_view.visible,
+		"ammunition_view_text": (
+			ammunition_view_full_text if ammunition_view.visible else ""
+		),
+		"ammunition_view_exact_count_visible": (
+			not ammunition_view.visible
+			or ammunition_view_full_text.contains(
+				"AMMUNITION · %d" % ammunition_state["ammunition_units"]
+			)
+		),
+		"ammunition_view_low_warning_exactly_at_two": (
+			(ammunition_status.text == "LOW AMMUNITION")
+			== (int(ammunition_state["ammunition_units"]) == 2)
+		),
+		"ammunition_view_zero_block_visible": (
+			int(ammunition_state["ammunition_units"]) != 0
+			or ammunition_status.text.contains("BROADSIDES BLOCKED")
+		),
+		"ammunition_loaded_lot_uses_one_cargo_slot": true,
+		"ammunition_conversion_is_cargo_neutral": true,
+		"ammunition_free_at_sea_count": (
+			ammunition_state["free_ammunition_at_sea_count"]
+		),
+		"ammunition_cannon_upgrade_count": (
+			ammunition_state["cannon_upgrade_count"]
+		),
+		"ammunition_prize_cannon_count": ammunition_state["prize_cannon_count"],
+		"ammunition_crew_task_count": (
+			ammunition_state["crew_ammunition_task_count"]
+		),
 		"broadside_sail_damage_system_count": (
 			broadside_state["sail_damage_system_count"]
 		),
@@ -5447,6 +5964,8 @@ func get_playtest_state() -> Dictionary:
 		"starting_money": STARTING_MONEY,
 		"money": money,
 		"money_not_negative": money >= 0,
+		"expected_money_after_all_transactions": expected_money,
+		"money_accounting_holds": money == expected_money,
 		"money_view_visible": $Interface/MoneyView.visible,
 		"money_view_text": money_details.text,
 		"ship_trade_lot_count": (
@@ -5459,6 +5978,33 @@ func get_playtest_state() -> Dictionary:
 		"trade_view_result": trade_result.text,
 		"trade_view_controls": trade_controls.text,
 		"trade_view_text": trade_view_full_text,
+		"port_ammunition_supply_price_visible": (
+			not (
+				_trade_view_open
+				and _active_trade_contact == port_trader
+				and trade_view.visible
+			)
+			or (
+				trade_view_full_text.contains(
+					ShipAmmunitionState.SOURCE_CARGO_LOT_NAME
+				)
+				and trade_view_full_text.contains(
+					"FIXED %d COINS" % (
+						ShipAmmunitionState.SOURCE_CARGO_FIXED_PRICE
+					)
+				)
+			)
+		),
+		"port_ammunition_load_action_visible": (
+			not (
+				_trade_view_open
+				and _active_trade_contact == port_trader
+				and trade_view.visible
+			)
+			or trade_view_full_text.contains(
+				"[L] LOAD 1 SOURCE LOT · 3 AMMUNITION · SAME SLOT"
+			)
+		),
 		"active_trade_contact": (
 			_active_trade_contact.get_display_name()
 			if _active_trade_contact != null
@@ -5521,12 +6067,19 @@ func get_playtest_state() -> Dictionary:
 			"construction_consumed": construction_state["consumed_lot_count"],
 			"food_consumed": food_state["total_units_used"],
 			"repair_timber_consumed": repair_state["consumed_timber_count"],
+			"ammunition_depleted_lots": ammunition_state["depleted_lot_count"],
 			"sold_trade_lots": _trade_sold_lot_count,
 			"initial_physical_cargo": initial_physical_cargo_total,
 			"initial_storage_lots": (
 				storage_state["starting_storage_used_slots"]
 			),
 			"bought_trade_lots": _trade_bought_lot_count,
+			"bought_ammunition_source_lots": (
+				_ammunition_supply_purchased_lot_count
+			),
+			"ammunition_conversion_cargo_delta": (
+				ammunition_conversion_cargo_delta
+			),
 			"accounted_total": accounted_cargo_total,
 			"expected_total": expected_cargo_total,
 			"holds": accounted_cargo_total == expected_cargo_total,

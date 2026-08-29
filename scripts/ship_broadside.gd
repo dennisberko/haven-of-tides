@@ -18,6 +18,7 @@ var hit_count := 0
 var miss_count := 0
 var reload_rejected_count := 0
 var unavailable_rejected_count := 0
+var no_ammunition_rejected_count := 0
 var side_shot_counts: Dictionary = {
 	SIDE_LEFT: 0,
 	SIDE_RIGHT: 0,
@@ -40,7 +41,11 @@ func update_timers(delta: float) -> bool:
 	)
 
 
-func attempt_fire(side: String, firing_areas_active: bool) -> Dictionary:
+func attempt_fire(
+	side: String,
+	firing_areas_active: bool,
+	ammunition_units: int,
+) -> Dictionary:
 	attempt_count += 1
 	var normalized_side: String = side.to_upper()
 	var reload_before: float = reload_remaining
@@ -54,7 +59,11 @@ func attempt_fire(side: String, firing_areas_active: bool) -> Dictionary:
 		"reload_duration": RELOAD_DURATION,
 		"shot_count_before": shot_count_before,
 		"hull_damage": HULL_DAMAGE,
-		"uses_ammunition": false,
+		"ammunition_before": ammunition_units,
+		"ammunition_after": ammunition_units,
+		"ammunition_delta": 0,
+		"ammunition_consumed": false,
+		"uses_ammunition": true,
 	}
 	if not VALID_SIDES.has(normalized_side):
 		unavailable_rejected_count += 1
@@ -73,6 +82,10 @@ func attempt_fire(side: String, firing_areas_active: bool) -> Dictionary:
 		)
 		last_reload_rejected_evidence = reload_evidence.duplicate(true)
 		return reload_evidence
+	if ammunition_units <= 0:
+		no_ammunition_rejected_count += 1
+		last_result = "NO SHOT · NO AMMUNITION"
+		return _record_rejected(base_evidence, "NO_AMMUNITION")
 
 	shot_count += 1
 	side_shot_counts[normalized_side] = int(side_shot_counts[normalized_side]) + 1
@@ -92,6 +105,9 @@ func attempt_fire(side: String, firing_areas_active: bool) -> Dictionary:
 			reload_remaining,
 			RELOAD_DURATION,
 		),
+		"ammunition_after": ammunition_units - 1,
+		"ammunition_delta": -1,
+		"ammunition_consumed": true,
 		"result": last_result,
 	})
 	last_attempt_evidence = evidence.duplicate(true)
@@ -183,6 +199,7 @@ func get_playtest_state() -> Dictionary:
 		"miss_count": miss_count,
 		"reload_rejected_count": reload_rejected_count,
 		"unavailable_rejected_count": unavailable_rejected_count,
+		"no_ammunition_rejected_count": no_ammunition_rejected_count,
 		"last_fired_side": last_fired_side,
 		"left_shot_count": int(side_shot_counts[SIDE_LEFT]),
 		"right_shot_count": int(side_shot_counts[SIDE_RIGHT]),
@@ -193,7 +210,7 @@ func get_playtest_state() -> Dictionary:
 		"last_reload_rejected_evidence": (
 			last_reload_rejected_evidence.duplicate(true)
 		),
-		"uses_ammunition": false,
+		"uses_ammunition": true,
 		"sail_damage_system_count": 0,
 		"boarding_system_count": 0,
 		"prize_action_system_count": 0,

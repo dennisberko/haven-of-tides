@@ -3,6 +3,7 @@ extends Node2D
 const ShipFoodState := preload("res://scripts/ship_food.gd")
 const ShipDamageState := preload("res://scripts/ship_damage.gd")
 const ShipBroadsideState := preload("res://scripts/ship_broadside.gd")
+const ShipAmmunitionState := preload("res://scripts/ship_ammunition.gd")
 
 const ACCELERATION := 140.0
 const COAST_DECELERATION := 90.0
@@ -110,6 +111,7 @@ var _cargo_limit_never_exceeded := true
 var _food_state = ShipFoodState.new()
 var _damage_state = ShipDamageState.new()
 var _broadside_state = ShipBroadsideState.new()
+var _ammunition_state = ShipAmmunitionState.new()
 var _repair_attempt_count := 0
 var _repair_success_count := 0
 var _repair_denied_attempt_count := 0
@@ -243,10 +245,48 @@ func are_broadside_firing_areas_active() -> bool:
 
 
 func attempt_broadside(side: String) -> Dictionary:
+	var cargo_before: Array[String] = get_cargo_lots()
+	var ammunition_before: int = get_ammunition_units()
 	var evidence: Dictionary = _broadside_state.attempt_fire(
 		side,
 		are_broadside_firing_areas_active(),
+		ammunition_before,
 	)
+	var consumption_evidence: Dictionary = {}
+	if bool(evidence["shot_fired"]):
+		consumption_evidence = (
+			_ammunition_state.consume_for_accepted_broadside(cargo_lots)
+		)
+		if bool(consumption_evidence["success"]):
+			_sync_cargo_state()
+	var cargo_after: Array[String] = get_cargo_lots()
+	var ammunition_after: int = get_ammunition_units()
+	evidence.merge({
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_delta": ammunition_after - ammunition_before,
+		"ammunition_consumed": bool(consumption_evidence.get(
+			"success",
+			false,
+		)),
+		"ammunition_consumption_evidence": (
+			consumption_evidence.duplicate(true)
+		),
+		"cargo_before_ammunition_use": cargo_before,
+		"cargo_after_ammunition_use": cargo_after,
+		"rejected_ammunition_unchanged": (
+			bool(evidence["shot_fired"])
+			or ammunition_before == ammunition_after
+		),
+		"rejected_cargo_unchanged": (
+			bool(evidence["shot_fired"])
+			or cargo_before == cargo_after
+		),
+		"accepted_shot_consumed_exactly_one": (
+			not bool(evidence["shot_fired"])
+			or ammunition_after == ammunition_before - 1
+		),
+	}, true)
 	queue_redraw()
 	return evidence
 
@@ -273,6 +313,10 @@ func get_broadside_area_world_corners(side: String) -> PackedVector2Array:
 
 func get_broadside_playtest_state() -> Dictionary:
 	var state: Dictionary = _broadside_state.get_playtest_state()
+	var ammunition_units: int = get_ammunition_units()
+	state["reload_ready"] = state["ready"]
+	state["ready"] = bool(state["ready"]) and ammunition_units > 0
+	state["ammunition_units"] = ammunition_units
 	state["firing_areas_active"] = are_broadside_firing_areas_active()
 	state["left_world_corners"] = get_broadside_area_world_corners(
 		ShipBroadsideState.SIDE_LEFT
@@ -286,6 +330,26 @@ func get_broadside_playtest_state() -> Dictionary:
 		are_broadside_firing_areas_active()
 	)
 	return state
+
+
+func get_ammunition_units() -> int:
+	return _ammunition_state.get_ammunition_units(cargo_lots)
+
+
+func get_ammunition_playtest_state() -> Dictionary:
+	return _ammunition_state.get_playtest_state(cargo_lots)
+
+
+func load_ammunition_at_port() -> Dictionary:
+	var evidence: Dictionary = _ammunition_state.attempt_port_load(
+		cargo_lots,
+		is_docked,
+		current_dock_id,
+	)
+	if bool(evidence["success"]):
+		_sync_cargo_state()
+	queue_redraw()
+	return evidence
 
 
 func can_accept_salvaged_timber_lot() -> bool:
@@ -1109,6 +1173,7 @@ func get_playtest_state() -> Dictionary:
 	var damage_state: Dictionary = get_damage_playtest_state()
 	var repair_state: Dictionary = get_repair_playtest_state()
 	var broadside_state: Dictionary = get_broadside_playtest_state()
+	var ammunition_state: Dictionary = get_ammunition_playtest_state()
 	var fixed_pose := false
 	if not current_definition.is_empty():
 		fixed_pose = (
@@ -1276,6 +1341,13 @@ func get_playtest_state() -> Dictionary:
 			broadside_state["reload_rejected_count"]
 		),
 		"ship_broadside": broadside_state,
+		"ammunition_system_count": ammunition_state["system_count"],
+		"ammunition_units": ammunition_state["ammunition_units"],
+		"ammunition_source_lot_count": ammunition_state["source_lot_count"],
+		"ammunition_loaded_lot_count": ammunition_state["loaded_lot_count"],
+		"ammunition_low_warning": ammunition_state["low_ammunition_warning"],
+		"ammunition_no_warning": ammunition_state["no_ammunition_warning"],
+		"ship_ammunition": ammunition_state,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),
@@ -1360,6 +1432,12 @@ func _draw() -> void:
 				cargo_color = Color("#d7b45a")
 			elif lot_name.contains("SPICE"):
 				cargo_color = Color("#c77b3d")
+			elif lot_name == ShipAmmunitionState.SOURCE_CARGO_LOT_NAME:
+				cargo_color = Color("#5f6b72")
+			elif lot_name.begins_with(
+				ShipAmmunitionState.LOADED_CARGO_LOT_PREFIX
+			):
+				cargo_color = Color("#8d6a3f")
 			draw_rect(
 				Rect2(Vector2(-24.0, cargo_y - 6.0), Vector2(48.0, 12.0)),
 				cargo_color,

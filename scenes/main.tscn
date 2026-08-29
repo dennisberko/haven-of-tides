@@ -288,7 +288,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 23 · Naval attack"
+text = "Phase 24 · Ammunition"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -585,6 +585,41 @@ theme_override_font_sizes/font_size = 12
 text = "NO BROADSIDE ATTEMPT"
 horizontal_alignment = 1
 
+[node name="AmmunitionView" type="ColorRect" parent="Interface" groups=["ship_ammunition_view"]]
+visible = false
+offset_left = 786.0
+offset_top = 418.0
+offset_right = 1124.0
+offset_bottom = 510.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="AmmunitionTitle" type="Label" parent="Interface/AmmunitionView"]
+offset_left = 16.0
+offset_top = 9.0
+offset_right = 322.0
+offset_bottom = 31.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 17
+text = "AMMUNITION · 0"
+
+[node name="AmmunitionStatus" type="Label" parent="Interface/AmmunitionView"]
+offset_left = 16.0
+offset_top = 36.0
+offset_right = 322.0
+offset_bottom = 58.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 14
+text = "NO AMMUNITION · BROADSIDES BLOCKED"
+
+[node name="AmmunitionCargo" type="Label" parent="Interface/AmmunitionView"]
+offset_left = 16.0
+offset_top = 64.0
+offset_right = 322.0
+offset_bottom = 84.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "LOADED CARGO LOTS · 0 · 1 SLOT EACH"
+
 [node name="CargoChoiceView" type="ColorRect" parent="Interface"]
 visible = false
 offset_left = 208.0
@@ -738,8 +773,8 @@ offset_top = 54.0
 offset_right = 982.0
 offset_bottom = 414.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
-theme_override_constants/line_spacing = 2
-theme_override_font_sizes/font_size = 16
+theme_override_constants/line_spacing = 0
+theme_override_font_sizes/font_size = 12
 text = "ONE GOOD · PRICE STATE · FIXED PRICE"
 horizontal_alignment = 1
 
@@ -760,8 +795,8 @@ offset_top = 484.0
 offset_right = 984.0
 offset_bottom = 520.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
-theme_override_font_sizes/font_size = 17
-text = "[E] BUY ONE LOT · [X] CLOSE"
+theme_override_font_sizes/font_size = 14
+text = "[E] BUY SPICE · [B] BUY SUPPLY · [L] LOAD 3 AMMUNITION · [X] CLOSE"
 horizontal_alignment = 1
 
 [node name="TradeJournalView" type="ColorRect" parent="Interface" groups=["trade_journal_screen"]]
