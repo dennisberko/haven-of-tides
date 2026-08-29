@@ -222,6 +222,15 @@ func remove_cargo_slot_for_storage(slot_index: int) -> String:
 	return removed_lot
 
 
+func remove_cargo_lot(lot_name: String) -> bool:
+	var slot_index := cargo_lots.find(lot_name)
+	if lot_name.is_empty() or slot_index < 0:
+		return false
+	cargo_lots.pop_at(slot_index)
+	_sync_cargo_state()
+	return true
+
+
 func restore_cargo_slot_from_storage(slot_index: int, lot_name: String) -> bool:
 	if (
 		lot_name.is_empty()
@@ -684,6 +693,8 @@ func _draw() -> void:
 				cargo_color = Color("#b75b5b")
 			elif lot_name.contains("FOOD"):
 				cargo_color = Color("#d7b45a")
+			elif lot_name.contains("SPICE"):
+				cargo_color = Color("#c77b3d")
 			draw_rect(
 				Rect2(Vector2(-24.0, cargo_y - 6.0), Vector2(48.0, 12.0)),
 				cargo_color,

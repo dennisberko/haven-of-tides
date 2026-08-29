@@ -1,5 +1,7 @@
 extends Node2D
 
+const TradeContact := preload("res://scripts/trade_contact.gd")
+
 enum RequestState {
 	AVAILABLE,
 	ACTIVE,
@@ -18,6 +20,8 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var construction_site: StorageShedConstructionSite = (
 	$InteractiveObjects/StorageShedConstruction
 )
+@onready var port_trader = $InteractiveObjects/PortTrader
+@onready var cove_buyer = $InteractiveObjects/CoveBuyer
 @onready var sea_area = $SeaArea
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var ship = $Ship
@@ -37,6 +41,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var request_goal: Label = $Interface/RequestView/RequestGoal
 @onready var cargo_view: ColorRect = $Interface/CargoView
 @onready var cargo_details: Label = $Interface/CargoView/CargoDetails
+@onready var money_details: Label = $Interface/MoneyView/MoneyDetails
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -56,6 +61,11 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var construction_controls: Label = (
 	$Interface/ConstructionView/ConstructionControls
 )
+@onready var trade_view: ColorRect = $Interface/TradeView
+@onready var trade_title: Label = $Interface/TradeView/TradeTitle
+@onready var trade_details: Label = $Interface/TradeView/TradeDetails
+@onready var trade_result: Label = $Interface/TradeView/TradeResult
+@onready var trade_controls: Label = $Interface/TradeView/TradeControls
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
@@ -71,14 +81,20 @@ const CONSTRUCTION_READY_CONTROLS_TEXT := "E BUILD STORAGE SHED · X CLOSE"
 const CONSTRUCTION_UNAVAILABLE_CONTROLS_TEXT := "E BUILD UNAVAILABLE · X CLOSE"
 const CONSTRUCTION_COMPLETE_CONTROLS_TEXT := "X CLOSE · E CANNOT BUILD AGAIN"
 const CONSTRUCTION_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, WASD / ARROW KEYS"
+const TRADE_BUY_CONTROLS_TEXT := "E BUY ONE LOT · X CLOSE"
+const TRADE_SELL_CONTROLS_TEXT := "E SELL ONE LOT · X CLOSE"
+const TRADE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, 1-6, WASD / ARROW KEYS"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const SHORE_RETURN_DISTANCE := 64.0
+const STARTING_MONEY := 25
 
 var _player_near_sign := false
 var _player_near_resident := false
 var _player_near_ship_entry := false
 var _player_near_cove_storage := false
 var _player_near_construction_site := false
+var _player_near_port_trader := false
+var _player_near_cove_buyer := false
 var _player_aboard_ship := false
 var _interact_held := false
 var _read_count := 0
@@ -169,6 +185,33 @@ var _construction_returned_ashore := false
 var _construction_walked_back := false
 var _construction_finished_visible_after_return := false
 var _construction_site_absent_after_return := false
+var money := STARTING_MONEY
+var _trade_view_open := false
+var _trade_release_pending := false
+var _trade_pressed_keys: Dictionary = {}
+var _active_trade_contact
+var _last_trade_action := "NOT_ATTEMPTED"
+var _last_trade_result := "NOT_ATTEMPTED"
+var _trade_open_count := 0
+var _trade_close_count := 0
+var _trade_purchase_attempt_count := 0
+var _trade_sale_attempt_count := 0
+var _trade_bought_lot_count := 0
+var _trade_sold_lot_count := 0
+var _trade_denied_purchase_count := 0
+var _trade_denied_sale_count := 0
+var _trade_held_input_count := 0
+var _trade_blocked_input_count := 0
+var _last_trade_attempt_evidence: Dictionary = {}
+var _successful_purchase_evidence: Dictionary = {}
+var _successful_sale_evidence: Dictionary = {}
+var _trade_purchase_money_snapshot := 0
+var _trade_purchase_cargo_snapshot: Array[String] = []
+var _trade_returned_to_ship_at_port := false
+var _trade_sailed_from_port := false
+var _trade_cove_docked := false
+var _trade_cove_ashore := false
+var _trade_persistence_holds := false
 
 
 func _ready() -> void:
@@ -192,6 +235,8 @@ func _ready() -> void:
 	_update_cargo_view()
 	_update_storage_view()
 	_update_construction_view()
+	_update_money_view()
+	_update_trade_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -200,6 +245,7 @@ func _ready() -> void:
 	cargo_choice_view.hide()
 	storage_view.hide()
 	construction_view.hide()
+	trade_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -208,6 +254,10 @@ func _ready() -> void:
 	cove_storage.body_exited.connect(_on_cove_storage_body_exited)
 	construction_site.body_entered.connect(_on_construction_site_body_entered)
 	construction_site.body_exited.connect(_on_construction_site_body_exited)
+	port_trader.body_entered.connect(_on_port_trader_body_entered)
+	port_trader.body_exited.connect(_on_port_trader_body_exited)
+	cove_buyer.body_entered.connect(_on_cove_buyer_body_entered)
+	cove_buyer.body_exited.connect(_on_cove_buyer_body_exited)
 	ship_entry.body_entered.connect(_on_ship_entry_body_entered)
 	ship_entry.body_exited.connect(_on_ship_entry_body_exited)
 	damaged_dock_goal.body_entered.connect(_on_damaged_dock_goal_body_entered)
@@ -218,6 +268,7 @@ func _physics_process(_delta: float) -> void:
 	_update_cargo_choice_release_pending()
 	_update_storage_release_pending()
 	_update_construction_release_pending()
+	_update_trade_release_pending()
 	waypoint_display.update_positions(
 		ship.global_position,
 		player.global_position,
@@ -226,9 +277,12 @@ func _physics_process(_delta: float) -> void:
 	_update_wreck_opportunity()
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
+	_update_money_view()
+	_update_trade_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
+	_update_trade_persistence()
 	if _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
@@ -301,6 +355,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _trade_view_open:
+		_handle_trade_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if _trade_release_pending:
+		if not key_event.pressed:
+			var released_key := _get_trade_key(key_event)
+			if released_key != 0:
+				_trade_pressed_keys.erase(released_key)
+			if _key_matches(key_event, KEY_E):
+				_interact_held = false
+		get_viewport().set_input_as_handled()
+		return
 	if _construction_view_open:
 		_handle_construction_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -374,6 +441,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _can_open_trade_contact():
+		_open_trade_contact()
+		get_viewport().set_input_as_handled()
+		return
+
 	if _can_open_construction_site():
 		_open_construction_site()
 		get_viewport().set_input_as_handled()
@@ -397,6 +469,235 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _handle_trade_input(key_event: InputEventKey) -> void:
+	var trade_key := _get_trade_key(key_event)
+	if not key_event.pressed:
+		if trade_key != 0:
+			_trade_pressed_keys.erase(trade_key)
+		if _key_matches(key_event, KEY_E):
+			_interact_held = false
+		return
+
+	if trade_key == 0:
+		_trade_blocked_input_count += 1
+		_last_trade_action = "BLOCKED_WHILE_TRADE_OPEN"
+		_last_trade_result = "NO CHANGE · TRADE VIEW BLOCKED INPUT"
+		_update_trade_view()
+		return
+	if key_event.echo or bool(_trade_pressed_keys.get(trade_key, false)):
+		_trade_held_input_count += 1
+		_last_trade_action = "HELD_TRADE_KEY_%s" % (
+			"E" if trade_key == KEY_E else "X"
+		)
+		_last_trade_result = "NO CHANGE · RELEASE THE KEY FIRST"
+		_update_trade_view()
+		return
+
+	_trade_pressed_keys[trade_key] = true
+	if trade_key == KEY_X:
+		_close_trade_contact()
+		return
+	if _active_trade_contact != null and _active_trade_contact.is_port_trader():
+		_attempt_trade_purchase()
+	else:
+		_attempt_trade_sale()
+
+
+func _get_trade_key(key_event: InputEventKey) -> int:
+	if _key_matches(key_event, KEY_E):
+		return KEY_E
+	if _key_matches(key_event, KEY_X):
+		return KEY_X
+	return 0
+
+
+func _get_near_trade_contact():
+	if (
+		_player_near_port_trader
+		and _player_shore_id == TradeContact.PORT_SHORE_ID
+	):
+		return port_trader
+	if (
+		_player_near_cove_buyer
+		and (_player_shore_id.is_empty() or _player_shore_id == TradeContact.COVE_SHORE_ID)
+	):
+		return cove_buyer
+	return null
+
+
+func _can_open_trade_contact() -> bool:
+	return (
+		not _player_aboard_ship
+		and _get_near_trade_contact() != null
+		and not _dialogue_open
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+	)
+
+
+func _open_trade_contact() -> void:
+	if not _can_open_trade_contact():
+		return
+
+	_active_trade_contact = _get_near_trade_contact()
+	if _active_trade_contact == null:
+		return
+	_trade_view_open = true
+	_trade_open_count += 1
+	_trade_pressed_keys.clear()
+	# The E press that opens the view cannot also complete a trade.
+	_trade_pressed_keys[KEY_E] = true
+	_last_trade_action = "OPEN_%s" % _active_trade_contact.get_display_name().replace(" ", "_")
+	_last_trade_result = (
+		"READY · BUY ONE LOT"
+		if _active_trade_contact.is_port_trader()
+		else "READY · SELL ONE LOT"
+	)
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(true)
+	controls_help.text = (
+		TRADE_BUY_CONTROLS_TEXT
+		if _active_trade_contact.is_port_trader()
+		else TRADE_SELL_CONTROLS_TEXT
+	)
+	interaction_prompt.hide()
+	sign_message.hide()
+	_update_cargo_view()
+	_update_money_view()
+	_update_trade_view()
+
+
+func _close_trade_contact() -> void:
+	if not _trade_view_open:
+		return
+
+	_trade_view_open = false
+	_trade_release_pending = true
+	_trade_close_count += 1
+	_last_trade_action = "CLOSE_TRADE_VIEW"
+	_last_trade_result = "TRADE VIEW CLOSED"
+	trade_view.hide()
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(false)
+	_prompt_refresh_after_navigation_release = true
+	controls_help.text = TRADE_RELEASE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_cargo_view()
+	_update_money_view()
+
+
+func _attempt_trade_purchase() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_port_trader()
+	):
+		return
+
+	_trade_purchase_attempt_count += 1
+	_last_trade_action = "BUY_ONE_%s" % TradeContact.GOOD_NAME.replace(" ", "_")
+	var money_before := money
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var denial_reasons := PackedStringArray()
+	if money < TradeContact.BUY_PRICE:
+		denial_reasons.append("NEED %d COINS" % TradeContact.BUY_PRICE)
+	if not ship.can_keep_cargo_lot():
+		denial_reasons.append("NO FREE SHIP CARGO SLOT")
+	if not denial_reasons.is_empty():
+		_trade_denied_purchase_count += 1
+		_last_trade_result = "PURCHASE DENIED · %s" % " · ".join(denial_reasons)
+		_record_trade_attempt(money_before, cargo_before, false)
+		return
+
+	if not ship.keep_cargo_lot(TradeContact.GOOD_NAME):
+		_trade_denied_purchase_count += 1
+		_last_trade_result = "PURCHASE DENIED · SHIP CARGO DID NOT CHANGE"
+		_record_trade_attempt(money_before, cargo_before, false)
+		return
+
+	money -= TradeContact.BUY_PRICE
+	_trade_bought_lot_count += 1
+	_trade_purchase_money_snapshot = money
+	_trade_purchase_cargo_snapshot = ship.get_cargo_lots()
+	_trade_persistence_holds = true
+	_last_trade_result = "BOUGHT 1 %s · PAID %d COINS" % [
+		TradeContact.GOOD_NAME,
+		TradeContact.BUY_PRICE,
+	]
+	_record_trade_attempt(money_before, cargo_before, true)
+	_successful_purchase_evidence = _last_trade_attempt_evidence.duplicate(true)
+
+
+func _attempt_trade_sale() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_cove_buyer()
+	):
+		return
+
+	_trade_sale_attempt_count += 1
+	_last_trade_action = "SELL_ONE_%s" % TradeContact.GOOD_NAME.replace(" ", "_")
+	var money_before := money
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	if not cargo_before.has(TradeContact.GOOD_NAME):
+		_trade_denied_sale_count += 1
+		_last_trade_result = "SALE DENIED · NO %s IN SHIP CARGO" % TradeContact.GOOD_NAME
+		_record_trade_attempt(money_before, cargo_before, false)
+		return
+
+	if not ship.remove_cargo_lot(TradeContact.GOOD_NAME):
+		_trade_denied_sale_count += 1
+		_last_trade_result = "SALE DENIED · SHIP CARGO DID NOT CHANGE"
+		_record_trade_attempt(money_before, cargo_before, false)
+		return
+
+	money += TradeContact.SELL_PRICE
+	_trade_sold_lot_count += 1
+	_last_trade_result = "SOLD 1 %s · RECEIVED %d COINS" % [
+		TradeContact.GOOD_NAME,
+		TradeContact.SELL_PRICE,
+	]
+	_record_trade_attempt(money_before, cargo_before, true)
+	_successful_sale_evidence = _last_trade_attempt_evidence.duplicate(true)
+
+
+func _record_trade_attempt(
+	money_before: int,
+	cargo_before: Array[String],
+	success: bool,
+) -> void:
+	var cargo_after: Array[String] = ship.get_cargo_lots()
+	_last_trade_attempt_evidence = {
+		"action": _last_trade_action,
+		"result": _last_trade_result,
+		"success": success,
+		"good_name": TradeContact.GOOD_NAME,
+		"buy_price": TradeContact.BUY_PRICE,
+		"sell_price": TradeContact.SELL_PRICE,
+		"money_before": money_before,
+		"money_after": money,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"money_delta": money - money_before,
+		"cargo_delta": cargo_after.size() - cargo_before.size(),
+		"no_state_change": money == money_before and cargo_after == cargo_before,
+		"money_not_negative": money >= 0,
+		"cargo_limit_not_exceeded": cargo_after.size() <= ship.get_cargo_limit(),
+	}
+	_update_cargo_view()
+	_update_money_view()
+	_update_trade_view()
 
 
 func _handle_construction_input(key_event: InputEventKey) -> void:
@@ -460,6 +761,8 @@ func _can_open_construction_site() -> bool:
 		and not _storage_release_pending
 		and not _construction_view_open
 		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
 	)
 
 
@@ -653,6 +956,8 @@ func _can_open_cove_storage() -> bool:
 		and not _storage_release_pending
 		and not _construction_view_open
 		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
 	)
 
 
@@ -971,6 +1276,8 @@ func _set_chart_visible(visible: bool) -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 	waypoint_display.set_chart_visible(visible)
@@ -1050,6 +1357,20 @@ func _update_construction_release_pending() -> void:
 	_update_interaction_prompt()
 
 
+func _update_trade_release_pending() -> void:
+	if not _trade_release_pending or _trade_view_open:
+		return
+	if _is_any_trade_guard_key_pressed():
+		player.movement_enabled = false
+		return
+
+	_trade_release_pending = false
+	_trade_pressed_keys.clear()
+	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
+	controls_help.text = _get_context_controls_text()
+	_update_interaction_prompt()
+
+
 func _refresh_prompt_after_navigation_release() -> void:
 	if not _prompt_refresh_after_navigation_release:
 		return
@@ -1062,6 +1383,8 @@ func _refresh_prompt_after_navigation_release() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 		or ship.navigation_input_blocked
 		or ship.navigation_release_pending
 	):
@@ -1121,7 +1444,30 @@ func _is_any_construction_guard_key_pressed() -> bool:
 	)
 
 
+func _is_any_trade_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+		or Input.is_key_pressed(KEY_4)
+		or Input.is_key_pressed(KEY_5)
+		or Input.is_key_pressed(KEY_6)
+	)
+
+
 func _get_context_controls_text() -> String:
+	if _trade_view_open:
+		return (
+			TRADE_BUY_CONTROLS_TEXT
+			if _active_trade_contact != null and _active_trade_contact.is_port_trader()
+			else TRADE_SELL_CONTROLS_TEXT
+		)
+	if _trade_release_pending:
+		return TRADE_RELEASE_CONTROLS_TEXT
 	if _construction_view_open:
 		if construction_site.completed:
 			return CONSTRUCTION_COMPLETE_CONTROLS_TEXT
@@ -1163,6 +1509,8 @@ func _update_wreck_opportunity() -> void:
 			and not _storage_release_pending
 			and not _construction_view_open
 			and not _construction_release_pending
+			and not _trade_view_open
+			and not _trade_release_pending
 		),
 		(
 			not waypoint_display.chart_visible
@@ -1172,6 +1520,8 @@ func _update_wreck_opportunity() -> void:
 			and not _storage_release_pending
 			and not _construction_view_open
 			and not _construction_release_pending
+			and not _trade_view_open
+			and not _trade_release_pending
 		),
 	)
 
@@ -1215,6 +1565,24 @@ func _update_construction_persistence() -> void:
 		_construction_sailed_away = true
 
 
+func _update_trade_persistence() -> void:
+	if _trade_bought_lot_count <= _trade_sold_lot_count:
+		return
+	if (
+		_player_aboard_ship
+		and not ship.is_docked
+		and ship.last_dock_id == TradeContact.PORT_SHORE_ID
+		and ship.global_position.distance_to(
+			ship.get_dock_definition(TradeContact.PORT_SHORE_ID)["snap_position"]
+		) > 8.0
+	):
+		_trade_sailed_from_port = true
+		_trade_persistence_holds = (
+			money == _trade_purchase_money_snapshot
+			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
+		)
+
+
 func _storage_matches_persistence_snapshot() -> bool:
 	return (
 		ship.get_cargo_lots() == _persistence_ship_cargo
@@ -1232,6 +1600,8 @@ func _get_world_cargo_total() -> int:
 
 
 func _salvage_wreck() -> void:
+	if _trade_view_open or _trade_release_pending:
+		return
 	if not wreck_opportunity.is_salvage_eligible():
 		wreck_opportunity.try_collect_timber_lot()
 		_last_cargo_action = "SALVAGE_ATTEMPT"
@@ -1377,7 +1747,7 @@ func _update_cargo_view() -> void:
 	else:
 		cargo_lines.append("PENDING  NONE")
 	cargo_details.text = "\n".join(cargo_lines)
-	if _storage_view_open or _construction_view_open:
+	if _storage_view_open or _construction_view_open or _trade_view_open:
 		cargo_view.hide()
 	else:
 		cargo_view.show()
@@ -1464,6 +1834,57 @@ func _update_construction_view() -> void:
 		construction_view.hide()
 
 
+func _update_money_view() -> void:
+	money_details.text = "MONEY · %d COINS" % money
+
+
+func _update_trade_view() -> void:
+	if _active_trade_contact == null:
+		trade_title.text = "TRADE"
+		trade_details.text = "ONE GOOD · FIXED PRICES"
+		trade_result.text = _last_trade_result
+		trade_controls.text = "[X] CLOSE"
+	else:
+		var cargo_lots: Array[String] = ship.get_cargo_lots()
+		var used_slots := cargo_lots.size()
+		var free_slots: int = ship.get_cargo_limit() - used_slots
+		trade_title.text = _active_trade_contact.get_display_name()
+		if _active_trade_contact.is_port_trader():
+			trade_details.text = (
+				"GOOD · %s\nFIXED BUY PRICE · %d COINS\n"
+				+ "MONEY · %d COINS\nSHIP CARGO · USED %d/%d · FREE %d"
+			) % [
+				TradeContact.GOOD_NAME,
+				TradeContact.BUY_PRICE,
+				money,
+				used_slots,
+				ship.get_cargo_limit(),
+				free_slots,
+			]
+			trade_controls.text = "[E] BUY ONE LOT · [X] CLOSE"
+		else:
+			trade_details.text = (
+				"GOOD · %s\nFIXED SELL PRICE · %d COINS\n"
+				+ "MONEY · %d COINS\nSHIP CARGO · USED %d/%d · FREE %d\n"
+				+ "%s AVAILABLE · %d LOT"
+			) % [
+				TradeContact.GOOD_NAME,
+				TradeContact.SELL_PRICE,
+				money,
+				used_slots,
+				ship.get_cargo_limit(),
+				free_slots,
+				TradeContact.GOOD_NAME,
+				cargo_lots.count(TradeContact.GOOD_NAME),
+			]
+			trade_controls.text = "[E] SELL ONE LOT · [X] CLOSE"
+		trade_result.text = _last_trade_result
+	if _trade_view_open:
+		trade_view.show()
+	else:
+		trade_view.hide()
+
+
 func _on_sign_body_entered(body: Node2D) -> void:
 	if body != player:
 		return
@@ -1540,6 +1961,34 @@ func _on_construction_site_body_exited(body: Node2D) -> void:
 	_update_interaction_prompt()
 
 
+func _on_port_trader_body_entered(body: Node2D) -> void:
+	if body != player:
+		return
+	_player_near_port_trader = true
+	_update_interaction_prompt()
+
+
+func _on_port_trader_body_exited(body: Node2D) -> void:
+	if body != player:
+		return
+	_player_near_port_trader = false
+	_update_interaction_prompt()
+
+
+func _on_cove_buyer_body_entered(body: Node2D) -> void:
+	if body != player:
+		return
+	_player_near_cove_buyer = true
+	_update_interaction_prompt()
+
+
+func _on_cove_buyer_body_exited(body: Node2D) -> void:
+	if body != player:
+		return
+	_player_near_cove_buyer = false
+	_update_interaction_prompt()
+
+
 func _on_ship_entry_body_entered(body: Node2D) -> void:
 	if body != player or _player_aboard_ship:
 		return
@@ -1570,6 +2019,8 @@ func _read_sign() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 	_read_count += 1
@@ -1585,6 +2036,8 @@ func _enter_ship() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 
@@ -1608,6 +2061,8 @@ func _leave_ship_at_damaged_dock() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 
@@ -1631,6 +2086,8 @@ func _dock_ship() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 
@@ -1651,6 +2108,16 @@ func _dock_ship() -> void:
 		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	if dock_id == "cove" and _construction_sailed_away:
 		_construction_return_docked = true
+	if (
+		dock_id == TradeContact.COVE_SHORE_ID
+		and _trade_sailed_from_port
+		and _trade_bought_lot_count > _trade_sold_lot_count
+	):
+		_trade_cove_docked = true
+		_trade_persistence_holds = (
+			money == _trade_purchase_money_snapshot
+			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
+		)
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
 
@@ -1663,6 +2130,8 @@ func _go_ashore() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 
@@ -1680,6 +2149,16 @@ func _go_ashore() -> void:
 		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	if _player_shore_id == "cove" and _construction_return_docked:
 		_construction_returned_ashore = true
+	if (
+		_player_shore_id == TradeContact.COVE_SHORE_ID
+		and _trade_cove_docked
+		and _trade_bought_lot_count > _trade_sold_lot_count
+	):
+		_trade_cove_ashore = true
+		_trade_persistence_holds = (
+			money == _trade_purchase_money_snapshot
+			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
+		)
 	_player_near_ship_return = true
 	ship.set_captain_aboard(false)
 	player.go_ashore(
@@ -1699,6 +2178,8 @@ func _return_to_ship() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 	if not ship.is_docked or ship.current_dock_id != _player_shore_id:
@@ -1718,6 +2199,15 @@ func _return_to_ship() -> void:
 		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	if returning_shore_id == "cove" and _construction_persistence_tracking:
 		_construction_returned_to_ship = true
+	if (
+		returning_shore_id == TradeContact.PORT_SHORE_ID
+		and _trade_bought_lot_count > _trade_sold_lot_count
+	):
+		_trade_returned_to_ship_at_port = true
+		_trade_persistence_holds = (
+			money == _trade_purchase_money_snapshot
+			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
+		)
 	_last_ship_docked = true
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
@@ -1729,6 +2219,8 @@ func _start_dialogue() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 	):
 		return
 	_dialogue_lines = _get_resident_dialogue()
@@ -1815,6 +2307,8 @@ func _update_interaction_prompt() -> void:
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
 		or ship.navigation_release_pending
 	):
 		interaction_prompt.hide()
@@ -1845,6 +2339,13 @@ func _update_interaction_prompt() -> void:
 
 	if not _player_shore_id.is_empty() and _player_near_ship_return:
 		interaction_prompt.text = "[E] RETURN TO SHIP"
+		interaction_prompt.show()
+		return
+
+	if _can_open_trade_contact():
+		interaction_prompt.text = "[E] TRADE WITH %s" % (
+			_get_near_trade_contact().get_display_name()
+		)
 		interaction_prompt.show()
 		return
 
@@ -1885,6 +2386,25 @@ func get_playtest_state() -> Dictionary:
 	var construction_state: Dictionary = construction_site.get_playtest_state(
 		cove_storage
 	)
+	var port_trader_state: Dictionary = port_trader.get_playtest_state()
+	var cove_buyer_state: Dictionary = cove_buyer.get_playtest_state()
+	var physical_cargo_total: int = int(
+		ship_state["cargo_used_slots"]
+		+ wreck_state["wreck_salvage_lot_count"]
+		+ storage_state["storage_used_slots"]
+	)
+	var initial_physical_cargo_total: int = int(
+		ship_state["starting_cargo_used_slots"]
+		+ wreck_state["wreck_initial_salvage_lot_count"]
+	)
+	var accounted_cargo_total: int = int(
+		physical_cargo_total
+		+ construction_state["consumed_lot_count"]
+		+ _trade_sold_lot_count
+	)
+	var expected_cargo_total: int = (
+		initial_physical_cargo_total + _trade_bought_lot_count
+	)
 	var camera_target := "COVE"
 	if _player_aboard_ship:
 		camera_target = "SHIP"
@@ -1912,48 +2432,19 @@ func get_playtest_state() -> Dictionary:
 		"cargo_used_slots": ship_state["cargo_used_slots"],
 		"cargo_free_slots": ship_state["cargo_free_slots"],
 		"cargo_lots": ship_state["cargo_lots"],
-		"cargo_total_lots_in_world": (
-			ship_state["cargo_used_slots"]
-			+ wreck_state["wreck_salvage_lot_count"]
-			+ storage_state["storage_used_slots"]
-		),
+		"cargo_total_lots_in_world": physical_cargo_total,
 		"cargo_deliberately_consumed_lots": (
 			construction_state["consumed_lot_count"]
 		),
-		"cargo_accounted_total_including_consumed": (
-			ship_state["cargo_used_slots"]
-			+ wreck_state["wreck_salvage_lot_count"]
-			+ storage_state["storage_used_slots"]
-			+ construction_state["consumed_lot_count"]
-		),
-		"cargo_initial_total_lots_in_world": (
-			ship_state["starting_cargo_used_slots"]
-			+ wreck_state["wreck_initial_salvage_lot_count"]
-		),
-		"cargo_lot_conservation_holds": (
-			ship_state["cargo_used_slots"]
-			+ wreck_state["wreck_salvage_lot_count"]
-			+ storage_state["storage_used_slots"]
-			+ construction_state["consumed_lot_count"]
-			== ship_state["starting_cargo_used_slots"]
-			+ wreck_state["wreck_initial_salvage_lot_count"]
-		),
+		"cargo_accounted_total_including_consumed": accounted_cargo_total,
+		"cargo_accounted_total_including_consumed_and_sold": accounted_cargo_total,
+		"cargo_initial_total_lots_in_world": initial_physical_cargo_total,
+		"cargo_expected_total_including_bought": expected_cargo_total,
+		"cargo_lot_conservation_holds": accounted_cargo_total == expected_cargo_total,
 		"cargo_conservation_including_consumed_holds": (
-			ship_state["cargo_used_slots"]
-			+ wreck_state["wreck_salvage_lot_count"]
-			+ storage_state["storage_used_slots"]
-			+ construction_state["consumed_lot_count"]
-			== ship_state["starting_cargo_used_slots"]
-			+ wreck_state["wreck_initial_salvage_lot_count"]
+			accounted_cargo_total == expected_cargo_total
 		),
-		"cargo_unaccounted_loss_count": (
-			ship_state["starting_cargo_used_slots"]
-			+ wreck_state["wreck_initial_salvage_lot_count"]
-			- ship_state["cargo_used_slots"]
-			- wreck_state["wreck_salvage_lot_count"]
-			- storage_state["storage_used_slots"]
-			- construction_state["consumed_lot_count"]
-		),
+		"cargo_unaccounted_loss_count": expected_cargo_total - accounted_cargo_total,
 		"cargo_world_total_includes_cove_storage": true,
 		"cove_storage_place_count": storage_state["place_count"],
 		"cove_storage_position": storage_state["position"],
@@ -2197,6 +2688,103 @@ func get_playtest_state() -> Dictionary:
 				construction_state["completion_count"]
 			),
 		},
+		"trade_contact_count": (
+			get_tree().get_nodes_in_group("port_trader").size()
+			+ get_tree().get_nodes_in_group("cove_buyer").size()
+		),
+		"port_trader_count": get_tree().get_nodes_in_group("port_trader").size(),
+		"cove_buyer_count": get_tree().get_nodes_in_group("cove_buyer").size(),
+		"port_trader": port_trader_state,
+		"cove_buyer": cove_buyer_state,
+		"port_trader_interaction_connected": (
+			port_trader.body_entered.is_connected(_on_port_trader_body_entered)
+			and port_trader.body_exited.is_connected(_on_port_trader_body_exited)
+		),
+		"cove_buyer_interaction_connected": (
+			cove_buyer.body_entered.is_connected(_on_cove_buyer_body_entered)
+			and cove_buyer.body_exited.is_connected(_on_cove_buyer_body_exited)
+		),
+		"player_near_port_trader": _player_near_port_trader,
+		"player_near_cove_buyer": _player_near_cove_buyer,
+		"trade_good_name": TradeContact.GOOD_NAME,
+		"trade_buy_price": TradeContact.BUY_PRICE,
+		"trade_sell_price": TradeContact.SELL_PRICE,
+		"starting_money": STARTING_MONEY,
+		"money": money,
+		"money_not_negative": money >= 0,
+		"money_view_visible": $Interface/MoneyView.visible,
+		"money_view_text": money_details.text,
+		"ship_trade_lot_count": (
+			ship.get_cargo_lots().count(TradeContact.GOOD_NAME)
+		),
+		"trade_view_open": _trade_view_open,
+		"trade_view_visible": trade_view.visible,
+		"trade_view_title": trade_title.text,
+		"trade_view_details": trade_details.text,
+		"trade_view_result": trade_result.text,
+		"trade_view_controls": trade_controls.text,
+		"trade_view_text": (
+			"%s\n%s\n%s\n%s" % [
+				trade_title.text,
+				trade_details.text,
+				trade_result.text,
+				trade_controls.text,
+			]
+			if trade_view.visible
+			else ""
+		),
+		"active_trade_contact": (
+			_active_trade_contact.get_display_name()
+			if _active_trade_contact != null
+			else ""
+		),
+		"last_trade_action": _last_trade_action,
+		"last_trade_result": _last_trade_result,
+		"last_trade_attempt_evidence": _last_trade_attempt_evidence.duplicate(true),
+		"successful_purchase_evidence": _successful_purchase_evidence.duplicate(true),
+		"successful_sale_evidence": _successful_sale_evidence.duplicate(true),
+		"trade_open_count": _trade_open_count,
+		"trade_close_count": _trade_close_count,
+		"trade_purchase_attempt_count": _trade_purchase_attempt_count,
+		"trade_sale_attempt_count": _trade_sale_attempt_count,
+		"trade_bought_lot_count": _trade_bought_lot_count,
+		"trade_sold_lot_count": _trade_sold_lot_count,
+		"trade_denied_purchase_count": _trade_denied_purchase_count,
+		"trade_denied_sale_count": _trade_denied_sale_count,
+		"trade_held_input_count": _trade_held_input_count,
+		"trade_blocked_input_count": _trade_blocked_input_count,
+		"trade_release_pending": _trade_release_pending,
+		"trade_modal_blocks": {
+			"walking": _trade_view_open and not player_state["movement_enabled"],
+			"chart": _trade_view_open and not waypoint_state["chart_visible"],
+			"ship_return": _trade_view_open,
+			"dialogue": _trade_view_open and not _dialogue_open,
+			"storage": _trade_view_open and not _storage_view_open,
+			"construction": _trade_view_open and not _construction_view_open,
+			"salvage": _trade_view_open,
+			"docking": _trade_view_open,
+			"other_interactions": _trade_view_open,
+		},
+		"trade_persistence": {
+			"purchase_money_snapshot": _trade_purchase_money_snapshot,
+			"purchase_cargo_snapshot": _trade_purchase_cargo_snapshot.duplicate(),
+			"returned_to_ship_at_port": _trade_returned_to_ship_at_port,
+			"sailed_from_port": _trade_sailed_from_port,
+			"cove_docked": _trade_cove_docked,
+			"cove_ashore": _trade_cove_ashore,
+			"money_and_cargo_hold": _trade_persistence_holds,
+		},
+		"trade_cargo_accounting": {
+			"physical_cargo": physical_cargo_total,
+			"construction_consumed": construction_state["consumed_lot_count"],
+			"sold_trade_lots": _trade_sold_lot_count,
+			"initial_physical_cargo": initial_physical_cargo_total,
+			"bought_trade_lots": _trade_bought_lot_count,
+			"accounted_total": accounted_cargo_total,
+			"expected_total": expected_cargo_total,
+			"holds": accounted_cargo_total == expected_cargo_total,
+			"unaccounted_loss": expected_cargo_total - accounted_cargo_total,
+		},
 		"starting_cargo_lots": ship_state["starting_cargo_lots"],
 		"all_but_one_slot_full_at_start": (
 			ship_state["all_but_one_slot_full_at_start"]
@@ -2250,6 +2838,7 @@ func get_playtest_state() -> Dictionary:
 			or _cargo_choice_release_pending
 			or _storage_release_pending
 			or _construction_release_pending
+			or _trade_release_pending
 		),
 		"camera_position": travel_camera.global_position,
 		"camera_target": camera_target,

@@ -2,6 +2,24 @@
 
 [Previous: construction](13-construction.md) | [Next: price states](15-price-states.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Give the player a money total | DONE |
+| Add 2: Add one trader at the port and one buyer at the cove | DONE |
+| Add 3: Show one good with fixed buy and sell prices | DONE |
+| Add 4: Buy one cargo lot when money and cargo space are available | DONE |
+| Add 5: Sell the lot and update money and cargo | DONE |
+| Complete when: Buy at the port, carry to the cove, sell, and see correct totals | DONE |
+| Test 1: Dock at the port and open the trader view | DONE |
+| Test 2: Buy one lot and confirm its cost and cargo slot | DONE |
+| Test 3: Try to buy without enough money or free cargo space | DONE |
+| Test 4: Sail to the cove and sell the lot | DONE |
+| Test 5: Confirm final money and cargo totals | DONE |
+
 ## Goal
 
 The player can buy one trade good at the port and sell it at the cove.
