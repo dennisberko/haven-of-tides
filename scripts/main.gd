@@ -3,6 +3,7 @@ extends Node2D
 const TradeContact := preload("res://scripts/trade_contact.gd")
 const PortConditionState := preload("res://scripts/port_condition.gd")
 const TradeJournalState := preload("res://scripts/trade_journal.gd")
+const ShipFoodState := preload("res://scripts/ship_food.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -44,6 +45,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var cargo_view: ColorRect = $Interface/CargoView
 @onready var cargo_details: Label = $Interface/CargoView/CargoDetails
 @onready var money_details: Label = $Interface/MoneyView/MoneyDetails
+@onready var food_view: ColorRect = $Interface/FoodView
+@onready var food_title: Label = $Interface/FoodView/FoodTitle
+@onready var food_status: Label = $Interface/FoodView/FoodStatus
+@onready var food_details: Label = $Interface/FoodView/FoodDetails
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -274,6 +279,7 @@ func _ready() -> void:
 	_update_storage_view()
 	_update_construction_view()
 	_update_money_view()
+	_update_food_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -286,6 +292,7 @@ func _ready() -> void:
 	construction_view.hide()
 	trade_view.hide()
 	journal_view.hide()
+	food_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -319,6 +326,7 @@ func _physics_process(_delta: float) -> void:
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_money_view()
+	_update_food_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	_update_salvage_persistence()
@@ -1456,7 +1464,7 @@ func _storage_key_name(key: int) -> String:
 func _can_open_cove_storage() -> bool:
 	return (
 		not _player_aboard_ship
-		and _player_shore_id == "cove"
+		and (_player_shore_id.is_empty() or _player_shore_id == "cove")
 		and _player_near_cove_storage
 		and not _dialogue_open
 		and not waypoint_display.chart_visible
@@ -1725,6 +1733,7 @@ func _record_storage_action(
 	}
 	_update_cargo_view()
 	_update_storage_view()
+	_update_food_view()
 
 
 func _count_occupied_storage_slots(storage_slots: Array[String]) -> int:
@@ -2136,18 +2145,40 @@ func _update_trade_persistence() -> void:
 		) > 8.0
 	):
 		_trade_sailed_from_port = true
-		_trade_persistence_holds = (
-			money == _trade_purchase_money_snapshot
-			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
-		)
+		_trade_persistence_holds = _trade_purchase_state_persists()
 
 
 func _storage_matches_persistence_snapshot() -> bool:
+	var current_ship_cargo: Array[String] = ship.get_cargo_lots()
 	return (
-		ship.get_cargo_lots() == _persistence_ship_cargo
+		_get_non_food_lots(current_ship_cargo)
+			== _get_non_food_lots(_persistence_ship_cargo)
+		and current_ship_cargo.count(ShipFoodState.FOOD_LOT_NAME)
+			<= _persistence_ship_cargo.count(ShipFoodState.FOOD_LOT_NAME)
 		and cove_storage.get_cargo_lots() == _persistence_cove_storage
 		and cove_storage.get_storage_slots() == _persistence_cove_storage_slots
 	)
+
+
+func _trade_purchase_state_persists() -> bool:
+	var current_cargo: Array[String] = ship.get_cargo_lots()
+	return (
+		money == _trade_purchase_money_snapshot
+		and _get_non_food_lots(current_cargo)
+			== _get_non_food_lots(_trade_purchase_cargo_snapshot)
+		and current_cargo.count(ShipFoodState.FOOD_LOT_NAME)
+			<= _trade_purchase_cargo_snapshot.count(
+				ShipFoodState.FOOD_LOT_NAME
+			)
+	)
+
+
+func _get_non_food_lots(cargo: Array[String]) -> Array[String]:
+	var non_food_lots: Array[String] = []
+	for lot_name in cargo:
+		if lot_name != ShipFoodState.FOOD_LOT_NAME:
+			non_food_lots.append(lot_name)
+	return non_food_lots
 
 
 func _get_world_cargo_total() -> int:
@@ -2405,6 +2436,31 @@ func _update_construction_view() -> void:
 
 func _update_money_view() -> void:
 	money_details.text = "MONEY · %d COINS" % money
+
+
+func _update_food_view() -> void:
+	var food_state: Dictionary = ship.get_food_playtest_state()
+	var food_units := int(food_state["food_units"])
+	food_title.text = "SHIP FOOD · %d UNIT%s" % [
+		food_units,
+		"" if food_units == 1 else "S",
+	]
+	food_status.text = String(food_state["status"])
+	if food_units > 0:
+		food_details.text = (
+			"NEXT USE · %.1f / %.1f DISTANCE\n"
+			+ "DISTANCE UNTIL NEXT USE · %.1f"
+		) % [
+			food_state["progress_distance"],
+			food_state["distance_per_use"],
+			food_state["distance_to_next_use"],
+		]
+	else:
+		food_details.text = (
+			"NEXT USE · WAITING FOR FOOD\n"
+			+ "ZERO-FOOD SAILING · %.1f DISTANCE"
+		) % food_state["zero_food_sailing_distance"]
+	food_view.visible = _player_aboard_ship
 
 
 func _update_trade_view() -> void:
@@ -2776,10 +2832,7 @@ func _dock_ship() -> void:
 		and _trade_bought_lot_count > _trade_sold_lot_count
 	):
 		_trade_cove_docked = true
-		_trade_persistence_holds = (
-			money == _trade_purchase_money_snapshot
-			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
-		)
+		_trade_persistence_holds = _trade_purchase_state_persists()
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
 
@@ -2979,10 +3032,7 @@ func _go_ashore() -> void:
 		and _trade_bought_lot_count > _trade_sold_lot_count
 	):
 		_trade_cove_ashore = true
-		_trade_persistence_holds = (
-			money == _trade_purchase_money_snapshot
-			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
-		)
+		_trade_persistence_holds = _trade_purchase_state_persists()
 	_player_near_ship_return = true
 	ship.set_captain_aboard(false)
 	player.go_ashore(
@@ -3030,10 +3080,7 @@ func _return_to_ship() -> void:
 		and _trade_bought_lot_count > _trade_sold_lot_count
 	):
 		_trade_returned_to_ship_at_port = true
-		_trade_persistence_holds = (
-			money == _trade_purchase_money_snapshot
-			and ship.get_cargo_lots() == _trade_purchase_cargo_snapshot
-		)
+		_trade_persistence_holds = _trade_purchase_state_persists()
 	_last_ship_docked = true
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
@@ -3209,6 +3256,7 @@ func _update_interaction_prompt() -> void:
 
 func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
+	var food_state: Dictionary = ship.get_food_playtest_state()
 	var player_state: Dictionary = player.get_playtest_state()
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
 	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
@@ -3337,6 +3385,11 @@ func get_playtest_state() -> Dictionary:
 	var active_trade_preview := {}
 	if _active_trade_contact != null:
 		active_trade_preview = _active_trade_contact.get_money_preview(money)
+	var food_view_full_text := "%s\n%s\n%s" % [
+		food_title.text,
+		food_status.text,
+		food_details.text,
+	]
 	var physical_cargo_total: int = int(
 		ship_state["cargo_used_slots"]
 		+ wreck_state["wreck_salvage_lot_count"]
@@ -3345,11 +3398,13 @@ func get_playtest_state() -> Dictionary:
 	var initial_physical_cargo_total: int = int(
 		ship_state["starting_cargo_used_slots"]
 		+ wreck_state["wreck_initial_salvage_lot_count"]
+		+ storage_state["starting_storage_used_slots"]
 	)
 	var accounted_cargo_total: int = int(
 		physical_cargo_total
 		+ construction_state["consumed_lot_count"]
 		+ _trade_sold_lot_count
+		+ food_state["total_units_used"]
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total + _trade_bought_lot_count
@@ -3384,7 +3439,12 @@ func get_playtest_state() -> Dictionary:
 		"cargo_total_lots_in_world": physical_cargo_total,
 		"cargo_deliberately_consumed_lots": (
 			construction_state["consumed_lot_count"]
+			+ food_state["total_units_used"]
 		),
+		"cargo_construction_consumed_lots": (
+			construction_state["consumed_lot_count"]
+		),
+		"cargo_food_consumed_lots": food_state["total_units_used"],
 		"cargo_accounted_total_including_consumed": accounted_cargo_total,
 		"cargo_accounted_total_including_consumed_and_sold": accounted_cargo_total,
 		"cargo_initial_total_lots_in_world": initial_physical_cargo_total,
@@ -3395,6 +3455,173 @@ func get_playtest_state() -> Dictionary:
 		),
 		"cargo_unaccounted_loss_count": expected_cargo_total - accounted_cargo_total,
 		"cargo_world_total_includes_cove_storage": true,
+		"food_state_owner_count": food_state["owner_count"],
+		"food_view_count": get_tree().get_nodes_in_group(
+			"ship_food_view"
+		).size(),
+		"food_lot_name": food_state["food_lot_name"],
+		"food_use_distance": food_state["distance_per_use"],
+		"food_units": food_state["food_units"],
+		"food_source_cargo_count": ship.get_cargo_lots().count(
+			ShipFoodState.FOOD_LOT_NAME
+		),
+		"food_units_match_source_cargo": (
+			int(food_state["food_units"])
+			== ship.get_cargo_lots().count(ShipFoodState.FOOD_LOT_NAME)
+		),
+		"food_each_lot_uses_one_ship_cargo_slot": true,
+		"food_progress_distance": food_state["progress_distance"],
+		"food_distance_to_next_use": food_state["distance_to_next_use"],
+		"food_total_sailing_distance": food_state["total_sailing_distance"],
+		"food_total_units_used": food_state["total_units_used"],
+		"food_last_use_evidence": food_state["last_use_evidence"],
+		"food_last_use_cargo_before": (
+			(food_state["last_use_evidence"] as Dictionary).get(
+				"cargo_before",
+				[],
+			)
+		),
+		"food_last_use_cargo_after": (
+			(food_state["last_use_evidence"] as Dictionary).get(
+				"cargo_after",
+				[],
+			)
+		),
+		"food_last_use_removed_exactly_one": (
+			(food_state["last_use_evidence"] as Dictionary).get(
+				"removed_exactly_one_food_lot",
+				false,
+			)
+		),
+		"food_other_cargo_not_consumed": (
+			(food_state["last_use_evidence"] as Dictionary).is_empty()
+			or bool((food_state["last_use_evidence"] as Dictionary).get(
+				"other_cargo_unchanged",
+				false,
+			))
+		),
+		"food_zero_sailing_distance": (
+			food_state["zero_food_sailing_distance"]
+		),
+		"food_last_zero_movement_evidence": (
+			food_state["last_zero_food_movement_evidence"]
+		),
+		"food_sailing_after_empty_observed": (
+			bool((food_state[
+				"last_zero_food_movement_evidence"
+			] as Dictionary).get("sailing_continued", false))
+		),
+		"food_sailing_continues_without_food": (
+			food_state["sailing_continues_without_food"]
+		),
+		"food_progress_debt_while_empty": (
+			food_state["progress_debt_while_empty"]
+		),
+		"food_progress_is_zero_when_empty": (
+			int(food_state["food_units"]) > 0
+			or is_zero_approx(float(food_state["progress_distance"]))
+		),
+		"food_failed_use_count": food_state["failed_use_count"],
+		"food_progress_uses_actual_moved_distance_only": (
+			food_state["uses_actual_moved_distance_only"]
+		),
+		"food_dock_snap_distance_counted": false,
+		"food_walking_distance_counted": false,
+		"food_rotation_distance_counted": false,
+		"food_blocked_input_distance_counted": false,
+		"food_status": food_state["status"],
+		"food_low_warning": food_state["low_food_warning"],
+		"food_no_warning": food_state["no_food_warning"],
+		"food_view_visible": food_view.visible,
+		"food_view_should_be_visible": _player_aboard_ship,
+		"food_view_visibility_matches_aboard": (
+			food_view.visible == _player_aboard_ship
+		),
+		"food_view_title": food_title.text,
+		"food_view_status": food_status.text,
+		"food_view_details": food_details.text,
+		"food_view_text": food_view_full_text if food_view.visible else "",
+		"food_sea_view_visible": food_view.visible,
+		"food_sea_view_status": food_status.text,
+		"food_sea_view_text": (
+			food_view_full_text if food_view.visible else ""
+		),
+		"food_view_text_has_units": food_view_full_text.contains(
+			"SHIP FOOD · %d UNIT%s" % [
+				food_state["food_units"],
+				"" if int(food_state["food_units"]) == 1 else "S",
+			]
+		),
+		"food_view_text_has_next_use": food_view_full_text.contains("NEXT USE"),
+		"food_view_text_has_exact_progress": (
+			int(food_state["food_units"]) <= 0
+			or food_view_full_text.contains(
+				"NEXT USE · %.1f / %.1f DISTANCE" % [
+					food_state["progress_distance"],
+					food_state["distance_per_use"],
+				]
+			)
+		),
+		"food_view_text_has_exact_distance_to_next_use": (
+			int(food_state["food_units"]) <= 0
+			or food_view_full_text.contains(
+				"DISTANCE UNTIL NEXT USE · %.1f" % (
+					food_state["distance_to_next_use"]
+				)
+			)
+		),
+		"food_view_text_has_low_warning": (
+			not bool(food_state["low_food_warning"])
+			or food_view_full_text.contains("LOW FOOD")
+		),
+		"food_view_text_has_no_food_warning": (
+			not bool(food_state["no_food_warning"])
+			or (
+				food_view_full_text.contains("NO FOOD")
+				and food_view_full_text.contains("SAILING CONTINUES")
+			)
+		),
+		"food_real_input_load_ship_starting_slots": (
+			ship_state["starting_cargo_lots"]
+		),
+		"food_real_input_load_storage_starting_slots": (
+			storage_state["starting_storage_slots"]
+		),
+		"food_real_input_load_keys": "1_THEN_4_THEN_5",
+		"food_three_unit_load_possible_without_debug_mutation": (
+			ship_state["starting_cargo_lots"]
+				== ["COVE MEDICINE LOT", ShipFoodState.FOOD_LOT_NAME]
+			and storage_state["starting_storage_slots"]
+				== [
+					ShipFoodState.FOOD_LOT_NAME,
+					ShipFoodState.FOOD_LOT_NAME,
+					"",
+				]
+		),
+		"food_ship_starting_units": (
+			(ship_state["starting_cargo_lots"] as Array).count(
+				ShipFoodState.FOOD_LOT_NAME
+			)
+		),
+		"food_storage_starting_units": (
+			storage_state["starting_storage_food_units"]
+		),
+		"food_total_starting_loadable_units": 3,
+		"food_storage_starts_with_exact_two_and_one_empty": (
+			storage_state["starting_storage_slots"]
+				== [
+					ShipFoodState.FOOD_LOT_NAME,
+					ShipFoodState.FOOD_LOT_NAME,
+					"",
+				]
+		),
+		"food_crew_hunger_system_count": 0,
+		"food_crew_injury_system_count": 0,
+		"food_spoilage_system_count": 0,
+		"food_fast_travel_cost_system_count": 0,
+		"food_hard_voyage_limit_system_count": 0,
+		"ship_repair_system_count": 0,
+		"ship_hull_damage_system_count": 0,
 		"cove_storage_place_count": storage_state["place_count"],
 		"cove_storage_position": storage_state["position"],
 		"cove_storage_interaction_range": storage_state["interaction_range"],
@@ -3431,6 +3658,20 @@ func get_playtest_state() -> Dictionary:
 		"storage_free_slots": storage_state["storage_free_slots"],
 		"storage_lots": storage_state["storage_lots"],
 		"storage_slots": storage_state["storage_slots"],
+		"storage_starting_slots": storage_state["starting_storage_slots"],
+		"storage_starting_lots": storage_state["starting_storage_lots"],
+		"storage_starting_used_slots": (
+			storage_state["starting_storage_used_slots"]
+		),
+		"storage_starting_free_slots": (
+			storage_state["starting_storage_free_slots"]
+		),
+		"storage_starting_food_units": (
+			storage_state["starting_storage_food_units"]
+		),
+		"storage_phase_19_real_load_path": (
+			storage_state["phase_19_real_load_path"]
+		),
 		"storage_view_open": _storage_view_open,
 		"storage_view_visible": storage_view.visible,
 		"storage_view_text": (
@@ -4148,8 +4389,12 @@ func get_playtest_state() -> Dictionary:
 		"trade_cargo_accounting": {
 			"physical_cargo": physical_cargo_total,
 			"construction_consumed": construction_state["consumed_lot_count"],
+			"food_consumed": food_state["total_units_used"],
 			"sold_trade_lots": _trade_sold_lot_count,
 			"initial_physical_cargo": initial_physical_cargo_total,
+			"initial_storage_lots": (
+				storage_state["starting_storage_used_slots"]
+			),
 			"bought_trade_lots": _trade_bought_lot_count,
 			"accounted_total": accounted_cargo_total,
 			"expected_total": expected_cargo_total,

@@ -1,10 +1,22 @@
 class_name CoveStorageChest
 extends Area2D
 
+const ShipFoodState := preload("res://scripts/ship_food.gd")
+
 const STORAGE_LIMIT := 3
 const INTERACTION_RANGE := 58.0
+const FOOD_LOT_NAME := ShipFoodState.FOOD_LOT_NAME
+const STARTING_CARGO_SLOTS := [
+	FOOD_LOT_NAME,
+	FOOD_LOT_NAME,
+	"",
+]
 
-var cargo_slots: Array[String] = ["", "", ""]
+var cargo_slots: Array[String] = [
+	FOOD_LOT_NAME,
+	FOOD_LOT_NAME,
+	"",
+]
 
 
 func _ready() -> void:
@@ -105,6 +117,16 @@ func get_playtest_state() -> Dictionary:
 		"storage_free_slots": STORAGE_LIMIT - get_cargo_lots().size(),
 		"storage_lots": get_cargo_lots(),
 		"storage_slots": get_storage_slots(),
+		"food_lot_name": FOOD_LOT_NAME,
+		"starting_storage_slots": STARTING_CARGO_SLOTS.duplicate(),
+		"starting_storage_lots": [FOOD_LOT_NAME, FOOD_LOT_NAME],
+		"starting_storage_used_slots": 2,
+		"starting_storage_free_slots": 1,
+		"starting_storage_food_units": 2,
+		"food_units": count_cargo_lot(FOOD_LOT_NAME),
+		"phase_19_real_load_path": (
+			"STORE SHIP SLOT 1 WITH [1], THEN WITHDRAW COVE SLOTS 1 AND 2 WITH [4] AND [5]"
+		),
 	}
 
 

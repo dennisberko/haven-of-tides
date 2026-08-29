@@ -1,5 +1,7 @@
 extends Node2D
 
+const ShipFoodState := preload("res://scripts/ship_food.gd")
+
 const ACCELERATION := 140.0
 const COAST_DECELERATION := 90.0
 const BRAKE_DECELERATION := 260.0
@@ -18,9 +20,11 @@ const DOCK_MAX_SPEED := 12.0
 const DOCK_MIN_ALIGNMENT := 0.92
 const CARGO_LIMIT := 3
 const TIMBER_LOT_NAME := "TIMBER LOT"
+const FOOD_LOT_NAME := ShipFoodState.FOOD_LOT_NAME
+const FOOD_USE_DISTANCE := ShipFoodState.DISTANCE_PER_USE
 const STARTING_CARGO_LOTS := [
 	"COVE MEDICINE LOT",
-	"VOYAGE FOOD LOT",
+	FOOD_LOT_NAME,
 ]
 const DOCK_IDS := ["cove", "island", "port"]
 const DOCK_DEFINITIONS := {
@@ -81,7 +85,7 @@ var navigation_release_pending := false
 var timber_lots := 0
 var cargo_lots: Array[String] = [
 	"COVE MEDICINE LOT",
-	"VOYAGE FOOD LOT",
+	FOOD_LOT_NAME,
 ]
 
 var _sea_bounds := Rect2()
@@ -95,6 +99,7 @@ var _restore_controls_after_navigation_release := false
 var _starting_used_slots := 0
 var _max_used_slots_observed := 0
 var _cargo_limit_never_exceeded := true
+var _food_state = ShipFoodState.new()
 
 
 func _ready() -> void:
@@ -252,6 +257,14 @@ func get_cargo_limit() -> int:
 	return CARGO_LIMIT
 
 
+func get_food_units() -> int:
+	return cargo_lots.count(FOOD_LOT_NAME)
+
+
+func get_food_playtest_state() -> Dictionary:
+	return _food_state.get_playtest_state(get_food_units())
+
+
 func _get_cargo_slot_lot_counts() -> PackedInt32Array:
 	var lot_counts := PackedInt32Array()
 	lot_counts.resize(cargo_lots.size())
@@ -261,6 +274,7 @@ func _get_cargo_slot_lot_counts() -> PackedInt32Array:
 
 func _sync_cargo_state() -> void:
 	timber_lots = cargo_lots.count(TIMBER_LOT_NAME)
+	_food_state.sync_food_units(get_food_units())
 	_record_cargo_usage()
 	queue_redraw()
 
@@ -466,12 +480,16 @@ func _move_with_sailing_limits(delta: float) -> void:
 	if sailing_velocity.is_zero_approx() or _sea_bounds.size.is_zero_approx():
 		return
 
+	var movement_start := global_position
 	var proposed_position := global_position + sailing_velocity * delta
 	var minimum := _sea_bounds.position + Vector2.ONE * HULL_CLEARANCE
 	var maximum := _sea_bounds.end - Vector2.ONE * HULL_CLEARANCE
 	var bounded_position := proposed_position.clamp(minimum, maximum)
 	if not bounded_position.is_equal_approx(proposed_position):
 		global_position = bounded_position
+		_record_actual_sailing_movement(
+			movement_start.distance_to(global_position)
+		)
 		_stop_at_land("SEA_EDGE_STOP")
 		return
 
@@ -482,6 +500,9 @@ func _move_with_sailing_limits(delta: float) -> void:
 		if safe_direction.is_zero_approx():
 			safe_direction = -get_forward_direction()
 		global_position = _island_center + safe_direction * island_clearance
+		_record_actual_sailing_movement(
+			movement_start.distance_to(global_position)
+		)
 		_stop_at_land("ISLAND_STOP")
 		return
 
@@ -497,8 +518,63 @@ func _move_with_sailing_limits(delta: float) -> void:
 		return
 
 	global_position = proposed_position
+	_record_actual_sailing_movement(
+		movement_start.distance_to(global_position)
+	)
 	_update_dock_exit_state()
 	last_collision_response = "NONE"
+
+
+func _record_actual_sailing_movement(actual_distance: float) -> void:
+	if actual_distance <= 0.0:
+		return
+	var cargo_at_movement_start := get_cargo_lots()
+	var food_units_before := get_food_units()
+	var zero_food_distance_before: float = (
+		_food_state.get_playtest_state(food_units_before)[
+			"zero_food_sailing_distance"
+		]
+	)
+	var due_use_count: int = _food_state.record_sailing_movement(
+		actual_distance,
+		food_units_before,
+	)
+	if food_units_before <= 0:
+		_food_state.record_zero_food_movement(
+			actual_distance,
+			cargo_at_movement_start,
+			get_cargo_lots(),
+			controls_enabled,
+			captain_aboard,
+		)
+		return
+
+	for use_index in range(due_use_count):
+		var cargo_before_use := get_cargo_lots()
+		if not remove_cargo_lot(FOOD_LOT_NAME):
+			_food_state.record_failed_food_use(cargo_before_use)
+			break
+		_food_state.record_food_use(
+			cargo_before_use,
+			get_cargo_lots(),
+			actual_distance,
+			due_use_count,
+			use_index + 1,
+		)
+
+	var food_state_after: Dictionary = get_food_playtest_state()
+	var new_zero_food_distance := float(
+		food_state_after["zero_food_sailing_distance"]
+	) - zero_food_distance_before
+	if new_zero_food_distance > 0.0 and get_food_units() <= 0:
+		var cargo_after_food_use := get_cargo_lots()
+		_food_state.record_zero_food_movement(
+			new_zero_food_distance,
+			cargo_after_food_use,
+			cargo_after_food_use,
+			controls_enabled,
+			captain_aboard,
+		)
 
 
 func _stop_at_land(response: String) -> void:
@@ -565,6 +641,7 @@ func get_playtest_state() -> Dictionary:
 	for dock_id in DOCK_IDS:
 		eligibility[dock_id] = get_dock_eligibility(dock_id)
 	var current_definition := get_current_dock_definition()
+	var food_state: Dictionary = get_food_playtest_state()
 	var fixed_pose := false
 	if not current_definition.is_empty():
 		fixed_pose = (
@@ -644,6 +721,33 @@ func get_playtest_state() -> Dictionary:
 		"cargo_limit_never_exceeded": _cargo_limit_never_exceeded,
 		"timber_lots": timber_lots,
 		"has_salvaged_timber": timber_lots > 0,
+		"food_state_owner_count": food_state["owner_count"],
+		"food_lot_name": FOOD_LOT_NAME,
+		"food_use_distance": FOOD_USE_DISTANCE,
+		"food_units": food_state["food_units"],
+		"food_source_cargo_count": get_food_units(),
+		"food_progress_distance": food_state["progress_distance"],
+		"food_distance_to_next_use": food_state["distance_to_next_use"],
+		"food_total_sailing_distance": food_state["total_sailing_distance"],
+		"food_total_units_used": food_state["total_units_used"],
+		"food_last_use_evidence": food_state["last_use_evidence"],
+		"food_zero_sailing_distance": (
+			food_state["zero_food_sailing_distance"]
+		),
+		"food_last_zero_movement_evidence": (
+			food_state["last_zero_food_movement_evidence"]
+		),
+		"food_status": food_state["status"],
+		"food_low_warning": food_state["low_food_warning"],
+		"food_no_warning": food_state["no_food_warning"],
+		"food_progress_debt_while_empty": (
+			food_state["progress_debt_while_empty"]
+		),
+		"food_sailing_continues_without_food": (
+			food_state["sailing_continues_without_food"]
+		),
+		"food_failed_use_count": food_state["failed_use_count"],
+		"ship_food": food_state,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),

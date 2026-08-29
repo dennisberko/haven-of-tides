@@ -245,7 +245,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 18 · Trade journal"
+text = "Phase 19 · Food use"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -321,6 +321,42 @@ theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 18
 text = "MONEY · 25 COINS"
 
+[node name="FoodView" type="ColorRect" parent="Interface" groups=["ship_food_view"]]
+visible = false
+offset_left = 786.0
+offset_top = 154.0
+offset_right = 1124.0
+offset_bottom = 280.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="FoodTitle" type="Label" parent="Interface/FoodView"]
+offset_left = 16.0
+offset_top = 10.0
+offset_right = 322.0
+offset_bottom = 32.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 17
+text = "SHIP FOOD · 1 UNIT"
+
+[node name="FoodStatus" type="Label" parent="Interface/FoodView"]
+offset_left = 16.0
+offset_top = 38.0
+offset_right = 322.0
+offset_bottom = 60.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 16
+text = "LOW FOOD"
+
+[node name="FoodDetails" type="Label" parent="Interface/FoodView"]
+offset_left = 16.0
+offset_top = 68.0
+offset_right = 322.0
+offset_bottom = 116.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_constants/line_spacing = 3
+theme_override_font_sizes/font_size = 13
+text = "NEXT USE · 0.0 / 600.0 DISTANCE\nDISTANCE UNTIL NEXT USE · 600.0"
+
 [node name="CargoChoiceView" type="ColorRect" parent="Interface"]
 visible = false
 offset_left = 208.0
@@ -379,13 +415,13 @@ theme_override_constants/line_spacing = 7
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 19
-text = "SHIP CARGO · USED 3/3 · FREE 0\n[1] SLOT 1  COVE MEDICINE LOT\n[2] SLOT 2  VOYAGE FOOD LOT\n[3] SLOT 3  TIMBER LOT\n\nCOVE STORAGE · USED 0/3 · FREE 3\n[4] SLOT 1  EMPTY\n[5] SLOT 2  EMPTY\n[6] SLOT 3  EMPTY"
+text = "SHIP CARGO · USED 2/3 · FREE 1\n[1] SLOT 1  COVE MEDICINE LOT\n[2] SLOT 2  VOYAGE FOOD LOT\n[3] SLOT 3  EMPTY\n\nCOVE STORAGE · USED 2/3 · FREE 1\n[4] SLOT 1  VOYAGE FOOD LOT\n[5] SLOT 2  VOYAGE FOOD LOT\n[6] SLOT 3  EMPTY"
 
 [node name="StorageResult" type="Label" parent="Interface/StorageView"]
 offset_left = 42.0
-offset_top = 338.0
+offset_top = 366.0
 offset_right = 826.0
-offset_bottom = 371.0
+offset_bottom = 397.0
 theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
 theme_override_font_sizes/font_size = 17
 text = "READY · SELECT ONE CARGO SLOT"
@@ -393,9 +429,9 @@ horizontal_alignment = 1
 
 [node name="StorageControls" type="Label" parent="Interface/StorageView"]
 offset_left = 30.0
-offset_top = 390.0
+offset_top = 411.0
 offset_right = 838.0
-offset_bottom = 426.0
+offset_bottom = 443.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 17
 text = "[1 / 2 / 3] SHIP → STORAGE · [4 / 5 / 6] STORAGE → SHIP · [X] CLOSE"
