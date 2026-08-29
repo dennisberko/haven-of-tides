@@ -1,6 +1,7 @@
 extends Node2D
 
 const TradeContact := preload("res://scripts/trade_contact.gd")
+const PortConditionState := preload("res://scripts/port_condition.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -217,6 +218,8 @@ var _voyage_departure_dock_id := ""
 var _voyage_departure_count := 0
 var _same_dock_arrival_count := 0
 var _last_completed_voyage_evidence: Dictionary = {}
+var _port_condition = PortConditionState.new()
+var _last_port_condition_update_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -2080,29 +2083,59 @@ func _update_trade_view() -> void:
 			preview_text = "UNAVAILABLE · NO %s MARKS" % contact_state["mark_kind"]
 		trade_title.text = _active_trade_contact.get_display_name()
 		if _active_trade_contact.is_port_trader():
-			trade_details.text = (
-				"%s · %s · %d COINS\n"
-				+ "STOCK MARKS · %s · %d/%d\n"
-				+ "MARK RETURN · %s\n"
-				+ "VOYAGES COMPLETE · %d\n"
-				+ "BUY PREVIEW · %s\n"
-				+ "SHIP CARGO · %d/%d · FREE %d\n"
-				+ "TRADE · %s"
-			) % [
+			var condition_state: Dictionary = (
+				_port_condition.get_playtest_state(completed_voyages)
+			)
+			var port_lines := PackedStringArray([
+				"PORT CONDITION · %s · %s" % [
+					condition_state["name"],
+					condition_state["state"],
+				],
+				"START VOYAGE %d · END VOYAGE %d · %d COMPLETED VOYAGES REMAIN" % [
+					condition_state["start_voyage"],
+					condition_state["end_voyage"],
+					condition_state["remaining_voyages"],
+				],
+				(
+					"MARKET EFFECTS · THREE GOODS ARE VALUABLE"
+					if condition_state["active"]
+					else "MARKET EFFECTS ENDED · BASE STATES RESTORED"
+				),
+			])
+			for condition_good in condition_state["affected_goods"]:
+				port_lines.append(
+					"%s · %s · %d COINS · BASE %s · %d" % [
+						condition_good["good_name"],
+						condition_good["current_price_state"],
+						condition_good["current_fixed_price"],
+						condition_good["base_price_state"],
+						condition_good["base_fixed_price"],
+					]
+				)
+			port_lines.append("")
+			port_lines.append("SPICE LOT TRADE · CONDITION DOES NOT CHANGE THIS GOOD")
+			port_lines.append("%s · %s · %d COINS" % [
 				TradeContact.GOOD_NAME,
 				price_state,
 				fixed_price,
+			])
+			port_lines.append("STOCK MARKS · %s · %d/%d" % [
 				contact_state["mark_display"],
 				contact_state["marks_available"],
 				contact_state["mark_capacity"],
-				mark_return_text,
-				completed_voyages,
-				preview_text,
+			])
+			port_lines.append("MARK RETURN · %s" % mark_return_text)
+			port_lines.append("VOYAGES COMPLETE · %d" % completed_voyages)
+			port_lines.append("BUY PREVIEW · %s" % preview_text)
+			port_lines.append("SHIP CARGO · %d/%d · FREE %d" % [
 				used_slots,
 				ship.get_cargo_limit(),
 				free_slots,
-				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE",
-			]
+			])
+			port_lines.append("TRADE · %s" % (
+				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE"
+			))
+			trade_details.text = "\n".join(port_lines)
 			trade_controls.text = (
 				"[E] BUY ONE LOT · [X] CLOSE"
 				if contact_state["trade_available"]
@@ -2110,7 +2143,8 @@ func _update_trade_view() -> void:
 			)
 		else:
 			trade_details.text = (
-				"%s · %s · %d COINS\n"
+				"COVE MARKET · NO PORT CONDITION\n"
+				+ "%s · %s · %d COINS\n"
 				+ "DEMAND MARKS · %s · %d/%d\n"
 				+ "MARK RETURN · %s\n"
 				+ "VOYAGES COMPLETE · %d\n"
@@ -2394,20 +2428,45 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 	var origin_dock_id := _voyage_departure_dock_id
 	_voyage_departure_dock_id = ""
 	if origin_dock_id.is_empty():
+		_last_completed_voyage_evidence = {
+			"counted": false,
+			"condition_updated": false,
+			"origin_dock_id": origin_dock_id,
+			"destination_dock_id": dock_id,
+			"completed_voyage_before": completed_voyages,
+			"completed_voyage_after": completed_voyages,
+			"port_condition_before": (
+				_port_condition.get_playtest_state(completed_voyages)
+			),
+			"port_condition_after": (
+				_port_condition.get_playtest_state(completed_voyages)
+			),
+			"reason": "NO_RECORDED_DEPARTURE",
+		}
 		return
 	if origin_dock_id == dock_id:
 		_same_dock_arrival_count += 1
 		_last_completed_voyage_evidence = {
 			"counted": false,
+			"condition_updated": false,
 			"origin_dock_id": origin_dock_id,
 			"destination_dock_id": dock_id,
 			"completed_voyage_before": completed_voyages,
 			"completed_voyage_after": completed_voyages,
+			"port_condition_before": (
+				_port_condition.get_playtest_state(completed_voyages)
+			),
+			"port_condition_after": (
+				_port_condition.get_playtest_state(completed_voyages)
+			),
 			"reason": "SAME_DOCK_ARRIVAL",
 		}
 		return
 
 	var completed_voyage_before := completed_voyages
+	var port_condition_before: Dictionary = (
+		_port_condition.get_playtest_state(completed_voyage_before)
+	)
 	completed_voyages += 1
 	var port_marks_before: Dictionary = (
 		port_trader.get_mark_state(completed_voyage_before)
@@ -2415,6 +2474,46 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 	var cove_marks_before: Dictionary = (
 		cove_buyer.get_mark_state(completed_voyage_before)
 	)
+	var port_marks_before_condition_update: Dictionary = (
+		port_trader.get_mark_state(completed_voyages)
+	)
+	var cove_marks_before_condition_update: Dictionary = (
+		cove_buyer.get_mark_state(completed_voyages)
+	)
+	var condition_transition: Dictionary = (
+		_port_condition.update_completed_voyage(completed_voyages)
+	)
+	var port_marks_after_condition_update: Dictionary = (
+		port_trader.get_mark_state(completed_voyages)
+	)
+	var cove_marks_after_condition_update: Dictionary = (
+		cove_buyer.get_mark_state(completed_voyages)
+	)
+	var port_spice_marks_unchanged := _trade_mark_resources_equal(
+		port_marks_before_condition_update,
+		port_marks_after_condition_update,
+	)
+	var cove_contact_unchanged := _trade_mark_resources_equal(
+		cove_marks_before_condition_update,
+		cove_marks_after_condition_update,
+	)
+	_last_port_condition_update_evidence = {
+		"completed_voyage": completed_voyages,
+		"transition": condition_transition,
+		"condition_before": port_condition_before,
+		"condition_after": (
+			_port_condition.get_playtest_state(completed_voyages)
+		),
+		"port_spice_marks_before": port_marks_before_condition_update,
+		"port_spice_marks_after": port_marks_after_condition_update,
+		"port_spice_marks_unchanged": port_spice_marks_unchanged,
+		"cove_contact_before": cove_marks_before_condition_update,
+		"cove_contact_after": cove_marks_after_condition_update,
+		"cove_contact_unchanged": cove_contact_unchanged,
+		"condition_update_scope_holds": (
+			port_spice_marks_unchanged and cove_contact_unchanged
+		),
+	}
 	var port_marks_returned: int = (
 		port_trader.restore_due_marks(completed_voyages)
 	)
@@ -2423,10 +2522,18 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 	)
 	_last_completed_voyage_evidence = {
 		"counted": true,
+		"condition_updated": true,
 		"origin_dock_id": origin_dock_id,
 		"destination_dock_id": dock_id,
 		"completed_voyage_before": completed_voyage_before,
 		"completed_voyage_after": completed_voyages,
+		"port_condition_before": port_condition_before,
+		"port_condition_after": (
+			_port_condition.get_playtest_state(completed_voyages)
+		),
+		"port_condition_update": (
+			_last_port_condition_update_evidence.duplicate(true)
+		),
 		"port_marks_before": port_marks_before,
 		"port_marks_after": port_trader.get_mark_state(completed_voyages),
 		"port_marks_returned": port_marks_returned,
@@ -2706,6 +2813,36 @@ func get_playtest_state() -> Dictionary:
 	var cove_buyer_state: Dictionary = (
 		cove_buyer.get_playtest_state(completed_voyages)
 	)
+	var port_condition_state: Dictionary = (
+		_port_condition.get_playtest_state(completed_voyages)
+	)
+	var condition_cargo_lot_names: Array = (
+		port_condition_state["affected_cargo_lot_names"]
+	)
+	var trade_view_full_text := (
+		"%s\n%s\n%s\n%s" % [
+			trade_title.text,
+			trade_details.text,
+			trade_result.text,
+			trade_controls.text,
+		]
+		if trade_view.visible
+		else ""
+	)
+	var visible_port_condition_text := ""
+	if (
+		_trade_view_open
+		and _active_trade_contact == port_trader
+		and trade_view.visible
+	):
+		visible_port_condition_text = trade_view_full_text
+	var visible_cove_trade_text := ""
+	if (
+		_trade_view_open
+		and _active_trade_contact == cove_buyer
+		and trade_view.visible
+	):
+		visible_cove_trade_text = trade_view_full_text
 	var active_trade_preview := {}
 	if _active_trade_contact != null:
 		active_trade_preview = _active_trade_contact.get_money_preview(money)
@@ -3035,6 +3172,125 @@ func get_playtest_state() -> Dictionary:
 		"last_completed_voyage_evidence": (
 			_last_completed_voyage_evidence.duplicate(true)
 		),
+		"condition_count": port_condition_state["condition_count"],
+		"active_condition_count": (
+			port_condition_state["active_condition_count"]
+		),
+		"condition_name": port_condition_state["name"],
+		"condition_active": port_condition_state["active"],
+		"condition_ended": port_condition_state["ended"],
+		"condition_state": port_condition_state["state"],
+		"condition_start_voyage": port_condition_state["start_voyage"],
+		"condition_end_voyage": port_condition_state["end_voyage"],
+		"condition_current_voyage": port_condition_state["current_voyage"],
+		"condition_remaining_voyages": (
+			port_condition_state["remaining_voyages"]
+		),
+		"condition_duration_voyages": port_condition_state["duration_voyages"],
+		"condition_duration_is_exactly_two": (
+			port_condition_state["duration_is_exactly_two"]
+		),
+		"condition_affected_good_count": (
+			port_condition_state["affected_good_count"]
+		),
+		"condition_affected_good_count_is_exactly_three": (
+			port_condition_state["affected_good_count_is_exactly_three"]
+		),
+		"condition_affected_goods": port_condition_state["affected_goods"],
+		"condition_affected_good_names": (
+			port_condition_state["affected_good_names"]
+		),
+		"condition_affected_cargo_lot_names": (
+			port_condition_state["affected_cargo_lot_names"]
+		),
+		"condition_base_price_states": (
+			port_condition_state["base_price_states"]
+		),
+		"condition_current_price_states": (
+			port_condition_state["current_price_states"]
+		),
+		"condition_base_fixed_prices": (
+			port_condition_state["base_fixed_prices"]
+		),
+		"condition_current_fixed_prices": (
+			port_condition_state["current_fixed_prices"]
+		),
+		"condition_all_affected_goods_currently_valuable": (
+			port_condition_state["all_affected_goods_currently_valuable"]
+		),
+		"condition_all_affected_goods_valuable_while_active": (
+			port_condition_state["all_affected_goods_valuable_while_active"]
+		),
+		"condition_base_states_restored_after_expiry": (
+			port_condition_state["base_states_restored_after_expiry"]
+		),
+		"condition_expiry_count": port_condition_state["expiry_count"],
+		"condition_expiry_voyage": port_condition_state["expiry_voyage"],
+		"condition_expected_expiry_voyage": (
+			port_condition_state["expected_expiry_voyage"]
+		),
+		"condition_expiry_timing_is_exact": (
+			port_condition_state["expiry_timing_is_exact"]
+		),
+		"one_condition_invariant": (
+			int(port_condition_state["condition_count"]) == 1
+			and int(port_condition_state["active_condition_count"]) <= 1
+		),
+		"port_condition": port_condition_state,
+		"last_port_condition_update_evidence": (
+			_last_port_condition_update_evidence.duplicate(true)
+		),
+		"port_condition_visible_text": visible_port_condition_text,
+		"port_condition_text_visible": not visible_port_condition_text.is_empty(),
+		"port_condition_visible_text_has_name": (
+			visible_port_condition_text.contains(
+				String(port_condition_state["name"])
+			)
+		),
+		"port_condition_visible_text_has_market_effects": (
+			visible_port_condition_text.contains("MARKET EFFECTS")
+			and visible_port_condition_text.contains("TIMBER")
+			and visible_port_condition_text.contains("FOOD")
+			and visible_port_condition_text.contains("MEDICINE")
+		),
+		"port_condition_visible_text_has_exact_end_voyage": (
+			visible_port_condition_text.contains("END VOYAGE %d" % (
+				port_condition_state["end_voyage"]
+			))
+		),
+		"port_condition_visible_text_has_remaining_voyages": (
+			visible_port_condition_text.contains(
+				"%d COMPLETED VOYAGES REMAIN" % (
+					port_condition_state["remaining_voyages"]
+				)
+			)
+		),
+		"cove_condition_count": 0,
+		"cove_condition_applies": false,
+		"cove_trade_visible_text": visible_cove_trade_text,
+		"cove_trade_view_says_no_port_condition": (
+			visible_cove_trade_text.contains("NO PORT CONDITION")
+			and not visible_cove_trade_text.contains(
+				String(port_condition_state["name"])
+			)
+		),
+		"condition_excludes_spice_trade": (
+			not condition_cargo_lot_names.has(TradeContact.GOOD_NAME)
+		),
+		"condition_spice_marks_unchanged_on_last_update": (
+			_last_port_condition_update_evidence.is_empty()
+			or bool(_last_port_condition_update_evidence.get(
+				"port_spice_marks_unchanged",
+				false,
+			))
+		),
+		"condition_cove_contact_unchanged_on_last_update": (
+			_last_port_condition_update_evidence.is_empty()
+			or bool(_last_port_condition_update_evidence.get(
+				"cove_contact_unchanged",
+				false,
+			))
+		),
 		"mark_return_after_completed_voyages": (
 			TradeContact.MARK_RETURN_VOYAGES
 		),
@@ -3089,16 +3345,7 @@ func get_playtest_state() -> Dictionary:
 		"trade_view_details": trade_details.text,
 		"trade_view_result": trade_result.text,
 		"trade_view_controls": trade_controls.text,
-		"trade_view_text": (
-			"%s\n%s\n%s\n%s" % [
-				trade_title.text,
-				trade_details.text,
-				trade_result.text,
-				trade_controls.text,
-			]
-			if trade_view.visible
-			else ""
-		),
+		"trade_view_text": trade_view_full_text,
 		"active_trade_contact": (
 			_active_trade_contact.get_display_name()
 			if _active_trade_contact != null
