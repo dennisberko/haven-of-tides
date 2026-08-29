@@ -1,0 +1,207 @@
+class_name ShipDamageState
+extends RefCounted
+
+const HULL_MAX := 100
+const HULL_START := 100
+const REEF_HIT_DAMAGE := 20
+const HIT_COOLDOWN_DURATION := 1.0
+const DAMAGE_FLASH_DURATION := 0.45
+const IMPACT_SOUND_DURATION := 0.18
+const REEF_COLLISION_SOURCE := "REEF"
+const REEF_COLLISION_RESPONSE := "REEF_HIT_STOP"
+
+var _hull_condition := HULL_START
+var _hit_count := 0
+var _contact_active := false
+var _contact_clear_count := 0
+var _repeated_contact_blocked_count := 0
+var _cooldown_blocked_count := 0
+var _cooldown_remaining := 0.0
+var _flash_remaining := 0.0
+var _flash_count := 0
+var _sound_play_count := 0
+var _sound_stream_kind := "NONE"
+var _sound_duration := 0.0
+var _last_damage_event: Dictionary = {}
+var _last_blocked_contact_evidence: Dictionary = {}
+var _last_contact_clear_evidence: Dictionary = {}
+
+
+func update_timers(delta: float) -> void:
+	_cooldown_remaining = maxf(0.0, _cooldown_remaining - delta)
+	_flash_remaining = maxf(0.0, _flash_remaining - delta)
+
+
+func try_reef_hit(
+		cargo_snapshot: Array[String],
+		food_progress: float,
+		food_units: int,
+) -> bool:
+	if _contact_active:
+		_repeated_contact_blocked_count += 1
+		_record_blocked_contact(
+			"CONTINUOUS_CONTACT_LATCH",
+			cargo_snapshot,
+			food_progress,
+			food_units,
+		)
+		return false
+
+	_contact_active = true
+	if _cooldown_remaining > 0.0:
+		_cooldown_blocked_count += 1
+		_record_blocked_contact(
+			"HIT_COOLDOWN",
+			cargo_snapshot,
+			food_progress,
+			food_units,
+		)
+		return false
+
+	var hull_before := _hull_condition
+	_hull_condition = clampi(
+		_hull_condition - REEF_HIT_DAMAGE,
+		0,
+		HULL_MAX,
+	)
+	_hit_count += 1
+	_cooldown_remaining = HIT_COOLDOWN_DURATION
+	_flash_remaining = DAMAGE_FLASH_DURATION
+	_flash_count += 1
+	_last_damage_event = {
+		"event_count": _hit_count,
+		"source": REEF_COLLISION_SOURCE,
+		"collision_response": REEF_COLLISION_RESPONSE,
+		"damage": hull_before - _hull_condition,
+		"fixed_damage": REEF_HIT_DAMAGE,
+		"hull_before": hull_before,
+		"hull_after": _hull_condition,
+		"cargo_before": cargo_snapshot.duplicate(),
+		"cargo_after": cargo_snapshot.duplicate(),
+		"cargo_unchanged": true,
+		"food_progress_before": food_progress,
+		"food_progress_after": food_progress,
+		"food_progress_unchanged": true,
+		"food_units_before": food_units,
+		"food_units_after": food_units,
+		"food_units_unchanged": true,
+		"contact_latched": true,
+		"cooldown_started": HIT_COOLDOWN_DURATION,
+		"flash_started": DAMAGE_FLASH_DURATION,
+	}
+	return true
+
+
+func clear_contact_after_movement_away(
+		actual_distance: float,
+		distance_before: float,
+		distance_after: float,
+		collision_clearance: float,
+) -> bool:
+	if (
+		not _contact_active
+		or actual_distance <= 0.0
+		or distance_after <= collision_clearance
+		or distance_after <= distance_before
+	):
+		return false
+
+	_contact_active = false
+	_contact_clear_count += 1
+	_last_contact_clear_evidence = {
+		"clear_count": _contact_clear_count,
+		"actual_movement_distance": actual_distance,
+		"distance_before": distance_before,
+		"distance_after": distance_after,
+		"collision_clearance": collision_clearance,
+		"moved_away": true,
+	}
+	return true
+
+
+func record_sound_play(stream_kind: String, duration: float) -> void:
+	_sound_play_count += 1
+	_sound_stream_kind = stream_kind
+	_sound_duration = duration
+	if not _last_damage_event.is_empty():
+		_last_damage_event["sound_played"] = true
+		_last_damage_event["sound_play_count"] = _sound_play_count
+		_last_damage_event["sound_stream_kind"] = _sound_stream_kind
+		_last_damage_event["sound_duration"] = _sound_duration
+
+
+func configure_sound(stream_kind: String, duration: float) -> void:
+	_sound_stream_kind = stream_kind
+	_sound_duration = duration
+
+
+func is_flash_active() -> bool:
+	return _flash_remaining > 0.0
+
+
+func get_hull_condition() -> int:
+	return _hull_condition
+
+
+func get_playtest_state() -> Dictionary:
+	return {
+		"owner_count": 1,
+		"hull_current": _hull_condition,
+		"hull_max": HULL_MAX,
+		"hull_start": HULL_START,
+		"reef_hit_damage": REEF_HIT_DAMAGE,
+		"hit_count": _hit_count,
+		"last_damage_event": _last_damage_event.duplicate(true),
+		"contact_active": _contact_active,
+		"contact_clear_count": _contact_clear_count,
+		"last_contact_clear_evidence": (
+			_last_contact_clear_evidence.duplicate(true)
+		),
+		"repeated_contact_blocked_count": (
+			_repeated_contact_blocked_count
+		),
+		"cooldown_blocked_count": _cooldown_blocked_count,
+		"last_blocked_contact_evidence": (
+			_last_blocked_contact_evidence.duplicate(true)
+		),
+		"cooldown_duration": HIT_COOLDOWN_DURATION,
+		"cooldown_remaining": _cooldown_remaining,
+		"flash_active": is_flash_active(),
+		"flash_count": _flash_count,
+		"flash_duration": DAMAGE_FLASH_DURATION,
+		"flash_remaining": _flash_remaining,
+		"sound_play_count": _sound_play_count,
+		"sound_stream_kind": _sound_stream_kind,
+		"sound_duration": _sound_duration,
+		"collision_source": REEF_COLLISION_SOURCE,
+		"collision_response": REEF_COLLISION_RESPONSE,
+		"continuous_contact_requires_exit": true,
+		"contact_reset_requires_actual_movement_away": true,
+		"has_defeat_behavior": false,
+		"has_recovery_behavior": false,
+		"has_repair_behavior": false,
+	}
+
+
+func _record_blocked_contact(
+		reason: String,
+		cargo_snapshot: Array[String],
+		food_progress: float,
+		food_units: int,
+) -> void:
+	_last_blocked_contact_evidence = {
+		"reason": reason,
+		"source": REEF_COLLISION_SOURCE,
+		"collision_response": REEF_COLLISION_RESPONSE,
+		"cargo_before": cargo_snapshot.duplicate(),
+		"cargo_after": cargo_snapshot.duplicate(),
+		"cargo_unchanged": true,
+		"food_progress_before": food_progress,
+		"food_progress_after": food_progress,
+		"food_progress_unchanged": true,
+		"food_units_before": food_units,
+		"food_units_after": food_units,
+		"food_units_unchanged": true,
+		"cooldown_remaining": _cooldown_remaining,
+		"contact_latched": _contact_active,
+	}

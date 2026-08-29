@@ -1,6 +1,7 @@
 extends Node2D
 
 const ShipFoodState := preload("res://scripts/ship_food.gd")
+const ShipDamageState := preload("res://scripts/ship_damage.gd")
 
 const ACCELERATION := 140.0
 const COAST_DECELERATION := 90.0
@@ -26,6 +27,8 @@ const STARTING_CARGO_LOTS := [
 	"COVE MEDICINE LOT",
 	FOOD_LOT_NAME,
 ]
+
+@onready var damage_impact_sound: AudioStreamPlayer = $DamageImpactSound
 const DOCK_IDS := ["cove", "island", "port"]
 const DOCK_DEFINITIONS := {
 	"cove": {
@@ -93,6 +96,8 @@ var _island_center := Vector2.ZERO
 var _island_radius := 0.0
 var _port_land_rect := Rect2()
 var _cove_shoreline := PackedVector2Array()
+var _reef_center := Vector2.ZERO
+var _reef_radius := 0.0
 var _dock_exit_cleared := false
 var _departure_input_armed := false
 var _restore_controls_after_navigation_release := false
@@ -100,11 +105,13 @@ var _starting_used_slots := 0
 var _max_used_slots_observed := 0
 var _cargo_limit_never_exceeded := true
 var _food_state = ShipFoodState.new()
+var _damage_state = ShipDamageState.new()
 
 
 func _ready() -> void:
 	_starting_used_slots = cargo_lots.size()
 	_record_cargo_usage()
+	_configure_damage_impact_sound()
 	queue_redraw()
 
 
@@ -114,12 +121,47 @@ func configure_sailing_area(
 		island_radius: float,
 		port_land_rect: Rect2,
 		cove_shoreline: PackedVector2Array,
+		reef_center: Vector2,
+		reef_radius: float,
 ) -> void:
 	_sea_bounds = sea_bounds
 	_island_center = island_center
 	_island_radius = island_radius
 	_port_land_rect = port_land_rect
 	_cove_shoreline = cove_shoreline
+	_reef_center = reef_center
+	_reef_radius = reef_radius
+
+
+func _configure_damage_impact_sound() -> void:
+	var stream := AudioStreamWAV.new()
+	stream.format = AudioStreamWAV.FORMAT_16_BITS
+	stream.mix_rate = 22050
+	stream.stereo = false
+	var sample_count := int(
+		stream.mix_rate * ShipDamageState.IMPACT_SOUND_DURATION
+	)
+	var samples := PackedByteArray()
+	samples.resize(sample_count * 2)
+	for sample_index in range(sample_count):
+		var time_seconds := float(sample_index) / float(stream.mix_rate)
+		var envelope := 1.0 - float(sample_index) / float(sample_count)
+		var tone := (
+			sin(TAU * 115.0 * time_seconds)
+			+ 0.45 * sin(TAU * 230.0 * time_seconds)
+		)
+		var sample_value := clampi(
+			int(tone * envelope * 10500.0),
+			-32768,
+			32767,
+		)
+		samples.encode_s16(sample_index * 2, sample_value)
+	stream.data = samples
+	damage_impact_sound.stream = stream
+	_damage_state.configure_sound(
+		stream.get_class(),
+		ShipDamageState.IMPACT_SOUND_DURATION,
+	)
 
 
 func set_controls_enabled(enabled: bool) -> void:
@@ -265,6 +307,10 @@ func get_food_playtest_state() -> Dictionary:
 	return _food_state.get_playtest_state(get_food_units())
 
 
+func get_damage_playtest_state() -> Dictionary:
+	return _damage_state.get_playtest_state()
+
+
 func _get_cargo_slot_lot_counts() -> PackedInt32Array:
 	var lot_counts := PackedInt32Array()
 	lot_counts.resize(cargo_lots.size())
@@ -399,6 +445,11 @@ func _release_current_dock() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	var flash_was_active: bool = _damage_state.is_flash_active()
+	_damage_state.update_timers(delta)
+	if flash_was_active or _damage_state.is_flash_active():
+		queue_redraw()
+
 	if navigation_input_blocked:
 		current_speed = 0.0
 		sailing_velocity = Vector2.ZERO
@@ -487,10 +538,17 @@ func _move_with_sailing_limits(delta: float) -> void:
 	var bounded_position := proposed_position.clamp(minimum, maximum)
 	if not bounded_position.is_equal_approx(proposed_position):
 		global_position = bounded_position
-		_record_actual_sailing_movement(
-			movement_start.distance_to(global_position)
+		var edge_move_distance := movement_start.distance_to(global_position)
+		_record_actual_sailing_movement(edge_move_distance)
+		_update_reef_contact_after_movement(
+			movement_start,
+			edge_move_distance,
 		)
 		_stop_at_land("SEA_EDGE_STOP")
+		return
+
+	if _collides_with_reef(proposed_position):
+		_handle_reef_collision()
 		return
 
 	var island_clearance := _island_radius + HULL_CLEARANCE
@@ -500,8 +558,11 @@ func _move_with_sailing_limits(delta: float) -> void:
 		if safe_direction.is_zero_approx():
 			safe_direction = -get_forward_direction()
 		global_position = _island_center + safe_direction * island_clearance
-		_record_actual_sailing_movement(
-			movement_start.distance_to(global_position)
+		var island_move_distance := movement_start.distance_to(global_position)
+		_record_actual_sailing_movement(island_move_distance)
+		_update_reef_contact_after_movement(
+			movement_start,
+			island_move_distance,
 		)
 		_stop_at_land("ISLAND_STOP")
 		return
@@ -518,8 +579,11 @@ func _move_with_sailing_limits(delta: float) -> void:
 		return
 
 	global_position = proposed_position
-	_record_actual_sailing_movement(
-		movement_start.distance_to(global_position)
+	var actual_move_distance := movement_start.distance_to(global_position)
+	_record_actual_sailing_movement(actual_move_distance)
+	_update_reef_contact_after_movement(
+		movement_start,
+		actual_move_distance,
 	)
 	_update_dock_exit_state()
 	last_collision_response = "NONE"
@@ -616,6 +680,45 @@ func _collides_with_port_land(proposed_position: Vector2) -> bool:
 	)
 
 
+func _collides_with_reef(proposed_position: Vector2) -> bool:
+	if _reef_radius <= 0.0:
+		return false
+	return (
+		proposed_position.distance_to(_reef_center)
+		< _reef_radius + HULL_CLEARANCE
+	)
+
+
+func _handle_reef_collision() -> void:
+	var food_state: Dictionary = get_food_playtest_state()
+	var damage_applied: bool = _damage_state.try_reef_hit(
+		get_cargo_lots(),
+		float(food_state["progress_distance"]),
+		get_food_units(),
+	)
+	if damage_applied:
+		damage_impact_sound.play()
+		_damage_state.record_sound_play(
+			damage_impact_sound.stream.get_class(),
+			ShipDamageState.IMPACT_SOUND_DURATION,
+		)
+	_stop_at_land(ShipDamageState.REEF_COLLISION_RESPONSE)
+	queue_redraw()
+
+
+func _update_reef_contact_after_movement(
+		movement_start: Vector2,
+		actual_distance: float,
+) -> void:
+	var reef_clearance := _reef_radius + HULL_CLEARANCE
+	_damage_state.clear_contact_after_movement_away(
+		actual_distance,
+		movement_start.distance_to(_reef_center),
+		global_position.distance_to(_reef_center),
+		reef_clearance,
+	)
+
+
 func _collides_with_cove_shore(proposed_position: Vector2) -> bool:
 	if _cove_shoreline.size() < 3:
 		return false
@@ -642,6 +745,7 @@ func get_playtest_state() -> Dictionary:
 		eligibility[dock_id] = get_dock_eligibility(dock_id)
 	var current_definition := get_current_dock_definition()
 	var food_state: Dictionary = get_food_playtest_state()
+	var damage_state: Dictionary = get_damage_playtest_state()
 	var fixed_pose := false
 	if not current_definition.is_empty():
 		fixed_pose = (
@@ -679,6 +783,9 @@ func get_playtest_state() -> Dictionary:
 		"sea_bounds": _sea_bounds,
 		"island_center": _island_center,
 		"island_radius": _island_radius,
+		"reef_center": _reef_center,
+		"reef_radius": _reef_radius,
+		"reef_collision_clearance": _reef_radius + HULL_CLEARANCE,
 		"port_land_rect": _port_land_rect,
 		"cove_shoreline": _cove_shoreline,
 		"collision_radius": HULL_CLEARANCE,
@@ -748,6 +855,30 @@ func get_playtest_state() -> Dictionary:
 		),
 		"food_failed_use_count": food_state["failed_use_count"],
 		"ship_food": food_state,
+		"damage_state_owner_count": damage_state["owner_count"],
+		"hull_current": damage_state["hull_current"],
+		"hull_max": damage_state["hull_max"],
+		"hull_start": damage_state["hull_start"],
+		"reef_hit_damage": damage_state["reef_hit_damage"],
+		"reef_hit_count": damage_state["hit_count"],
+		"last_damage_event": damage_state["last_damage_event"],
+		"reef_contact_active": damage_state["contact_active"],
+		"reef_contact_clear_count": damage_state["contact_clear_count"],
+		"reef_repeated_contact_blocked_count": (
+			damage_state["repeated_contact_blocked_count"]
+		),
+		"reef_cooldown_remaining": damage_state["cooldown_remaining"],
+		"reef_cooldown_duration": damage_state["cooldown_duration"],
+		"damage_flash_active": damage_state["flash_active"],
+		"damage_flash_count": damage_state["flash_count"],
+		"damage_flash_duration": damage_state["flash_duration"],
+		"damage_flash_remaining": damage_state["flash_remaining"],
+		"damage_sound_player_count": 1 if damage_impact_sound != null else 0,
+		"damage_sound_stream_present": damage_impact_sound.stream != null,
+		"damage_sound_stream_kind": damage_state["sound_stream_kind"],
+		"damage_sound_play_count": damage_state["sound_play_count"],
+		"damage_sound_duration": damage_state["sound_duration"],
+		"ship_damage": damage_state,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),
@@ -814,3 +945,11 @@ func _draw() -> void:
 	if at_damaged_dock:
 		draw_line(Vector2(176, 24), Vector2(39, 24), Color("#493323"), 18.0)
 		draw_line(Vector2(176, 24), Vector2(39, 24), Color("#b27a47"), 11.0)
+
+	# A reef hit gives one short, high-contrast flash on the whole ship.
+	if _damage_state.is_flash_active():
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(-35, -91), Vector2(35, -91), Vector2(52, 39),
+			Vector2(0, 101), Vector2(-52, 39),
+		]), Color("#fff2d0b8"))
+		draw_arc(Vector2.ZERO, 104.0, 0.0, TAU, 40, Color("#ff4b3ee8"), 9.0)

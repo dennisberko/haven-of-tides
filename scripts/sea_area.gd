@@ -4,6 +4,8 @@ const SEA_BOUNDS := Rect2(-400.0, -400.0, 3600.0, 3000.0)
 const SEA_BACKGROUND := Rect2(-1100.0, -1100.0, 5000.0, 4400.0)
 const TEST_ISLAND_CENTER := Vector2(1550.0, 1250.0)
 const TEST_ISLAND_RADIUS := 220.0
+const TEST_REEF_CENTER := Vector2(1070.0, 1050.0)
+const TEST_REEF_RADIUS := 86.0
 const PORT_LAND_RECT := Rect2(2320.0, 240.0, 620.0, 440.0)
 const PORT_WALKING_RECT := Rect2(2420.0, 380.0, 420.0, 250.0)
 var cove_shoreline := PackedVector2Array([
@@ -23,6 +25,16 @@ func get_playtest_state() -> Dictionary:
 		"bounds": SEA_BOUNDS,
 		"island_center": TEST_ISLAND_CENTER,
 		"island_radius": TEST_ISLAND_RADIUS,
+		"reef_count": 1,
+		"reef_center": TEST_REEF_CENTER,
+		"reef_radius": TEST_REEF_RADIUS,
+		"reef_visible": visible,
+		"reef_visual_count": 1,
+		"reef_visual_bounds": Rect2(
+			TEST_REEF_CENTER - Vector2.ONE * TEST_REEF_RADIUS,
+			Vector2.ONE * TEST_REEF_RADIUS * 2.0,
+		),
+		"reef_authored_on_initial_straight_route": true,
 		"port_land_rect": PORT_LAND_RECT,
 		"port_walking_rect": PORT_WALKING_RECT,
 		"cove_shoreline": cove_shoreline,
@@ -39,6 +51,31 @@ func _draw() -> void:
 				Color("#48a8aa70"),
 				3.0,
 			)
+
+	# One authored reef is visible on the straight route out of the cove.
+	draw_circle(TEST_REEF_CENTER, TEST_REEF_RADIUS + 18.0, Color("#7cd0cf55"))
+	draw_arc(
+		TEST_REEF_CENTER,
+		TEST_REEF_RADIUS + 14.0,
+		0.0,
+		TAU,
+		40,
+		Color("#c5f0e3b0"),
+		5.0,
+	)
+	draw_circle(TEST_REEF_CENTER + Vector2(-37.0, 12.0), 35.0, Color("#657477"))
+	draw_circle(TEST_REEF_CENTER + Vector2(18.0, -22.0), 43.0, Color("#809193"))
+	draw_circle(TEST_REEF_CENTER + Vector2(45.0, 31.0), 27.0, Color("#56656a"))
+	draw_circle(TEST_REEF_CENTER + Vector2(1.0, 27.0), 31.0, Color("#708287"))
+	draw_arc(
+		TEST_REEF_CENTER,
+		TEST_REEF_RADIUS,
+		0.0,
+		TAU,
+		40,
+		Color("#263f46"),
+		4.0,
+	)
 
 	# One empty-sea test island gives the ship a clear land boundary.
 	draw_circle(TEST_ISLAND_CENTER, TEST_ISLAND_RADIUS + 34.0, Color("#55b8b380"))

@@ -73,6 +73,9 @@ script = ExtResource("5_ship")
 [node name="StandingPosition" type="Marker2D" parent="Ship"]
 position = Vector2(0, -42)
 
+[node name="DamageImpactSound" type="AudioStreamPlayer" parent="Ship"]
+volume_db = -5.0
+
 [node name="ShipAccess" type="Node2D" parent="."]
 
 [node name="EntryPoint" type="Area2D" parent="ShipAccess"]
@@ -245,7 +248,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 19 · Food use"
+text = "Phase 20 · Ship damage"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -356,6 +359,40 @@ theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_constants/line_spacing = 3
 theme_override_font_sizes/font_size = 13
 text = "NEXT USE · 0.0 / 600.0 DISTANCE\nDISTANCE UNTIL NEXT USE · 600.0"
+
+[node name="HullView" type="ColorRect" parent="Interface" groups=["ship_hull_view"]]
+visible = false
+offset_left = 786.0
+offset_top = 294.0
+offset_right = 1124.0
+offset_bottom = 404.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="HullTitle" type="Label" parent="Interface/HullView"]
+offset_left = 16.0
+offset_top = 10.0
+offset_right = 322.0
+offset_bottom = 33.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 17
+text = "HULL CONDITION 100/100"
+
+[node name="HullMeter" type="ProgressBar" parent="Interface/HullView"]
+offset_left = 16.0
+offset_top = 42.0
+offset_right = 322.0
+offset_bottom = 68.0
+value = 100.0
+show_percentage = false
+
+[node name="HullStatus" type="Label" parent="Interface/HullView"]
+offset_left = 16.0
+offset_top = 78.0
+offset_right = 322.0
+offset_bottom = 100.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 14
+text = "REEF DAMAGE · 20 PER HIT"
 
 [node name="CargoChoiceView" type="ColorRect" parent="Interface"]
 visible = false

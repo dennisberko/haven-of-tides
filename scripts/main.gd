@@ -49,6 +49,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var food_title: Label = $Interface/FoodView/FoodTitle
 @onready var food_status: Label = $Interface/FoodView/FoodStatus
 @onready var food_details: Label = $Interface/FoodView/FoodDetails
+@onready var hull_view: ColorRect = $Interface/HullView
+@onready var hull_title: Label = $Interface/HullView/HullTitle
+@onready var hull_meter: ProgressBar = $Interface/HullView/HullMeter
+@onready var hull_status: Label = $Interface/HullView/HullStatus
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -255,6 +259,13 @@ var _journal_return_market_snapshot_before_refresh: Dictionary = {}
 var _journal_return_market_snapshot_after_refresh: Dictionary = {}
 var _journal_return_market_refresh_count := 0
 var _journal_return_market_refresh_recorded := false
+var _damage_last_seen_hit_count := 0
+var _damage_snapshot_initial: Dictionary = {}
+var _damage_snapshot_at_hit: Dictionary = {}
+var _damage_snapshot_at_dock: Dictionary = {}
+var _damage_snapshot_ashore: Dictionary = {}
+var _damage_snapshot_return: Dictionary = {}
+var _damage_snapshot_release: Dictionary = {}
 
 
 func _ready() -> void:
@@ -265,6 +276,8 @@ func _ready() -> void:
 		sea_state["island_radius"],
 		sea_state["port_land_rect"],
 		sea_state["cove_shoreline"],
+		sea_state["reef_center"],
+		sea_state["reef_radius"],
 	)
 	waypoint_display.configure(sea_state["bounds"], ship.get_dock_definitions())
 	waypoint_display.update_positions(ship.global_position, player.global_position, false)
@@ -280,6 +293,7 @@ func _ready() -> void:
 	_update_construction_view()
 	_update_money_view()
 	_update_food_view()
+	_update_hull_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -293,6 +307,7 @@ func _ready() -> void:
 	trade_view.hide()
 	journal_view.hide()
 	food_view.hide()
+	hull_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -308,6 +323,7 @@ func _ready() -> void:
 	ship_entry.body_entered.connect(_on_ship_entry_body_entered)
 	ship_entry.body_exited.connect(_on_ship_entry_body_exited)
 	damaged_dock_goal.body_entered.connect(_on_damaged_dock_goal_body_entered)
+	_capture_damage_checkpoint("INITIAL")
 
 
 func _physics_process(_delta: float) -> void:
@@ -327,6 +343,8 @@ func _physics_process(_delta: float) -> void:
 	_update_cargo_view()
 	_update_money_view()
 	_update_food_view()
+	_update_hull_view()
+	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
 	_update_salvage_persistence()
@@ -342,6 +360,7 @@ func _physics_process(_delta: float) -> void:
 		var salvage_eligible := wreck_opportunity.is_salvage_eligible()
 		if _last_ship_docked and not ship_docked:
 			_record_voyage_departure(String(ship.last_dock_id))
+			_capture_damage_checkpoint("RELEASE")
 		if (
 			_last_ship_docked
 			and not ship_docked
@@ -2463,6 +2482,96 @@ func _update_food_view() -> void:
 	food_view.visible = _player_aboard_ship
 
 
+func _update_hull_view() -> void:
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var hull_current := int(damage_state["hull_current"])
+	var hull_max := int(damage_state["hull_max"])
+	hull_meter.min_value = 0.0
+	hull_meter.max_value = float(hull_max)
+	hull_meter.value = float(hull_current)
+	hull_title.text = "HULL CONDITION · %d / %d" % [
+		hull_current,
+		hull_max,
+	]
+	if int(damage_state["hit_count"]) > 0:
+		var last_damage_event: Dictionary = damage_state["last_damage_event"]
+		hull_status.text = "LAST REEF HIT · -%d · %d / %d" % [
+			last_damage_event.get("damage", damage_state["reef_hit_damage"]),
+			hull_current,
+			hull_max,
+		]
+	else:
+		hull_status.text = "REEF DAMAGE · %d PER HIT" % (
+			damage_state["reef_hit_damage"]
+		)
+	hull_view.visible = _player_aboard_ship
+
+
+func _update_damage_hit_checkpoint() -> void:
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var hit_count := int(damage_state["hit_count"])
+	if hit_count <= _damage_last_seen_hit_count:
+		return
+
+	_damage_last_seen_hit_count = hit_count
+	_damage_snapshot_at_dock = {}
+	_damage_snapshot_ashore = {}
+	_damage_snapshot_return = {}
+	_damage_snapshot_release = {}
+	_capture_damage_checkpoint("HIT")
+
+
+func _capture_damage_checkpoint(checkpoint: String) -> void:
+	_update_hull_view()
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var food_state: Dictionary = ship.get_food_playtest_state()
+	var snapshot := {
+		"checkpoint": checkpoint,
+		"hull_current": damage_state["hull_current"],
+		"hull_max": damage_state["hull_max"],
+		"reef_hit_count": damage_state["hit_count"],
+		"reef_contact_active": damage_state["contact_active"],
+		"reef_cooldown_remaining": damage_state["cooldown_remaining"],
+		"last_damage_event": (
+			(damage_state["last_damage_event"] as Dictionary).duplicate(true)
+		),
+		"ship_is_docked": ship.is_docked,
+		"current_dock_id": ship.current_dock_id,
+		"last_dock_id": ship.last_dock_id,
+		"player_aboard_ship": _player_aboard_ship,
+		"player_shore_id": _player_shore_id,
+		"hull_view_visible": hull_view.visible,
+		"hull_meter_value": hull_meter.value,
+		"food_units": food_state["food_units"],
+		"food_progress_distance": food_state["progress_distance"],
+		"cargo_lots": ship.get_cargo_lots(),
+	}
+	match checkpoint:
+		"INITIAL":
+			_damage_snapshot_initial = snapshot
+		"HIT":
+			_damage_snapshot_at_hit = snapshot
+		"DOCK":
+			_damage_snapshot_at_dock = snapshot
+		"ASHORE":
+			_damage_snapshot_ashore = snapshot
+		"RETURN":
+			_damage_snapshot_return = snapshot
+		"RELEASE":
+			_damage_snapshot_release = snapshot
+
+
+func _damage_checkpoint_matches_hit(checkpoint: Dictionary) -> bool:
+	return (
+		not _damage_snapshot_at_hit.is_empty()
+		and not checkpoint.is_empty()
+		and checkpoint["hull_current"]
+			== _damage_snapshot_at_hit["hull_current"]
+		and checkpoint["reef_hit_count"]
+			== _damage_snapshot_at_hit["reef_hit_count"]
+	)
+
+
 func _update_trade_view() -> void:
 	if _active_trade_contact == null:
 		trade_title.text = "TRADE"
@@ -2834,6 +2943,7 @@ func _dock_ship() -> void:
 		_trade_cove_docked = true
 		_trade_persistence_holds = _trade_purchase_state_persists()
 	controls_help.text = DOCKED_CONTROLS_TEXT
+	_capture_damage_checkpoint("DOCK")
 	_update_interaction_prompt()
 
 
@@ -3041,6 +3151,7 @@ func _go_ashore() -> void:
 		definition["shore_region"],
 	)
 	controls_help.text = WALKING_CONTROLS_TEXT
+	_capture_damage_checkpoint("ASHORE")
 	_update_interaction_prompt()
 
 
@@ -3083,6 +3194,7 @@ func _return_to_ship() -> void:
 		_trade_persistence_holds = _trade_purchase_state_persists()
 	_last_ship_docked = true
 	controls_help.text = DOCKED_CONTROLS_TEXT
+	_capture_damage_checkpoint("RETURN")
 	_update_interaction_prompt()
 
 
@@ -3257,6 +3369,8 @@ func _update_interaction_prompt() -> void:
 func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var food_state: Dictionary = ship.get_food_playtest_state()
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var sea_state: Dictionary = sea_area.get_playtest_state()
 	var player_state: Dictionary = player.get_playtest_state()
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
 	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
@@ -3389,6 +3503,10 @@ func get_playtest_state() -> Dictionary:
 		food_title.text,
 		food_status.text,
 		food_details.text,
+	]
+	var hull_view_full_text := "%s\n%s" % [
+		hull_title.text,
+		hull_status.text,
 	]
 	var physical_cargo_total: int = int(
 		ship_state["cargo_used_slots"]
@@ -3621,7 +3739,114 @@ func get_playtest_state() -> Dictionary:
 		"food_fast_travel_cost_system_count": 0,
 		"food_hard_voyage_limit_system_count": 0,
 		"ship_repair_system_count": 0,
-		"ship_hull_damage_system_count": 0,
+		"ship_hull_damage_system_count": damage_state["owner_count"],
+		"damage_state_owner_count": damage_state["owner_count"],
+		"hull_current": damage_state["hull_current"],
+		"hull_max": damage_state["hull_max"],
+		"hull_start": damage_state["hull_start"],
+		"reef_hit_damage": damage_state["reef_hit_damage"],
+		"reef_hit_count": damage_state["hit_count"],
+		"last_damage_event": damage_state["last_damage_event"],
+		"reef_contact_active": damage_state["contact_active"],
+		"reef_contact_clear_count": damage_state["contact_clear_count"],
+		"reef_last_contact_clear_evidence": (
+			damage_state["last_contact_clear_evidence"]
+		),
+		"reef_repeated_contact_blocked_count": (
+			damage_state["repeated_contact_blocked_count"]
+		),
+		"reef_cooldown_blocked_count": damage_state["cooldown_blocked_count"],
+		"reef_last_blocked_contact_evidence": (
+			damage_state["last_blocked_contact_evidence"]
+		),
+		"reef_cooldown_duration": damage_state["cooldown_duration"],
+		"reef_cooldown_remaining": damage_state["cooldown_remaining"],
+		"reef_continuous_contact_requires_exit": (
+			damage_state["continuous_contact_requires_exit"]
+		),
+		"reef_contact_reset_requires_actual_movement_away": (
+			damage_state["contact_reset_requires_actual_movement_away"]
+		),
+		"damage_flash_active": damage_state["flash_active"],
+		"damage_flash_count": damage_state["flash_count"],
+		"damage_flash_duration": damage_state["flash_duration"],
+		"damage_flash_remaining": damage_state["flash_remaining"],
+		"damage_sound_player_count": ship_state["damage_sound_player_count"],
+		"damage_sound_stream_present": ship_state["damage_sound_stream_present"],
+		"damage_sound_stream_kind": damage_state["sound_stream_kind"],
+		"damage_sound_play_count": damage_state["sound_play_count"],
+		"damage_sound_duration": damage_state["sound_duration"],
+		"damage_collision_source": damage_state["collision_source"],
+		"damage_collision_response": damage_state["collision_response"],
+		"ship_damage": damage_state,
+		"reef_count": sea_state["reef_count"],
+		"reef_center": sea_state["reef_center"],
+		"reef_radius": sea_state["reef_radius"],
+		"reef_visible": sea_state["reef_visible"],
+		"reef_visual_count": sea_state["reef_visual_count"],
+		"reef_visual_bounds": sea_state["reef_visual_bounds"],
+		"reef_authored_on_initial_straight_route": (
+			sea_state["reef_authored_on_initial_straight_route"]
+		),
+		"hull_view_count": get_tree().get_nodes_in_group(
+			"ship_hull_view"
+		).size(),
+		"hull_view_visible": hull_view.visible,
+		"hull_view_should_be_visible": _player_aboard_ship,
+		"hull_view_visibility_matches_aboard": (
+			hull_view.visible == _player_aboard_ship
+		),
+		"hull_view_text": hull_view_full_text if hull_view.visible else "",
+		"hull_view_title": hull_title.text,
+		"hull_view_status": hull_status.text,
+		"hull_meter_count": 1 if hull_meter is ProgressBar else 0,
+		"hull_meter_node_class": hull_meter.get_class(),
+		"hull_meter_min_value": hull_meter.min_value,
+		"hull_meter_max_value": hull_meter.max_value,
+		"hull_meter_value": hull_meter.value,
+		"hull_meter_show_percentage": hull_meter.show_percentage,
+		"hull_meter_matches_damage_state": (
+			is_equal_approx(
+				hull_meter.value,
+				float(damage_state["hull_current"]),
+			)
+			and is_equal_approx(
+				hull_meter.max_value,
+				float(damage_state["hull_max"]),
+			)
+		),
+		"hull_view_overlaps_food_view": hull_view.get_global_rect().intersects(
+			food_view.get_global_rect()
+		),
+		"damage_snapshot_initial": _damage_snapshot_initial.duplicate(true),
+		"damage_snapshot_at_hit": _damage_snapshot_at_hit.duplicate(true),
+		"damage_snapshot_at_dock": _damage_snapshot_at_dock.duplicate(true),
+		"damage_snapshot_ashore": _damage_snapshot_ashore.duplicate(true),
+		"damage_snapshot_return": _damage_snapshot_return.duplicate(true),
+		"damage_snapshot_release": _damage_snapshot_release.duplicate(true),
+		"damage_hull_persists_at_dock": _damage_checkpoint_matches_hit(
+			_damage_snapshot_at_dock
+		),
+		"damage_hull_persists_ashore": _damage_checkpoint_matches_hit(
+			_damage_snapshot_ashore
+		),
+		"damage_hull_persists_on_return": _damage_checkpoint_matches_hit(
+			_damage_snapshot_return
+		),
+		"damage_hull_persists_after_release": _damage_checkpoint_matches_hit(
+			_damage_snapshot_release
+		),
+		"damage_persistence_holds": (
+			_damage_checkpoint_matches_hit(_damage_snapshot_at_dock)
+			and _damage_checkpoint_matches_hit(_damage_snapshot_ashore)
+			and _damage_checkpoint_matches_hit(_damage_snapshot_return)
+			and _damage_checkpoint_matches_hit(_damage_snapshot_release)
+		),
+		"ship_sail_damage_system_count": 0,
+		"ship_crew_injury_system_count": 0,
+		"ship_naval_attack_system_count": 0,
+		"ship_defeat_system_count": 0,
+		"ship_recovery_system_count": 0,
 		"cove_storage_place_count": storage_state["place_count"],
 		"cove_storage_position": storage_state["position"],
 		"cove_storage_interaction_range": storage_state["interaction_range"],
