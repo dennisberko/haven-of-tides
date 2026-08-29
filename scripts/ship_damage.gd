@@ -4,6 +4,7 @@ extends RefCounted
 const HULL_MAX := 100
 const HULL_START := 100
 const REEF_HIT_DAMAGE := 20
+const FIXED_REPAIR_AMOUNT := 20
 const HIT_COOLDOWN_DURATION := 1.0
 const DAMAGE_FLASH_DURATION := 0.45
 const IMPACT_SOUND_DURATION := 0.18
@@ -22,9 +23,12 @@ var _flash_count := 0
 var _sound_play_count := 0
 var _sound_stream_kind := "NONE"
 var _sound_duration := 0.0
+var _repair_count := 0
+var _total_hull_restored := 0
 var _last_damage_event: Dictionary = {}
 var _last_blocked_contact_evidence: Dictionary = {}
 var _last_contact_clear_evidence: Dictionary = {}
+var _last_repair_evidence: Dictionary = {}
 
 
 func update_timers(delta: float) -> void:
@@ -143,6 +147,50 @@ func get_hull_condition() -> int:
 	return _hull_condition
 
 
+func apply_fixed_repair() -> Dictionary:
+	var hull_before := _hull_condition
+	var hit_count_before := _hit_count
+	var repair_count_before := _repair_count
+	if hull_before >= HULL_MAX:
+		return {
+			"success": false,
+			"result": "HULL_IS_FULL",
+			"fixed_repair_amount": FIXED_REPAIR_AMOUNT,
+			"hull_before": hull_before,
+			"hull_after": _hull_condition,
+			"hull_restored": 0,
+			"hit_count_before": hit_count_before,
+			"hit_count_after": _hit_count,
+			"repair_count_before": repair_count_before,
+			"repair_count_after": _repair_count,
+			"no_state_change": true,
+		}
+
+	_hull_condition = mini(
+		HULL_MAX,
+		_hull_condition + FIXED_REPAIR_AMOUNT,
+	)
+	var hull_restored := _hull_condition - hull_before
+	_repair_count += 1
+	_total_hull_restored += hull_restored
+	_last_repair_evidence = {
+		"success": true,
+		"result": "HULL_REPAIRED",
+		"fixed_repair_amount": FIXED_REPAIR_AMOUNT,
+		"hull_before": hull_before,
+		"hull_after": _hull_condition,
+		"hull_restored": hull_restored,
+		"hull_capped_at_max": _hull_condition == HULL_MAX,
+		"hit_count_before": hit_count_before,
+		"hit_count_after": _hit_count,
+		"hit_state_unchanged": hit_count_before == _hit_count,
+		"repair_count_before": repair_count_before,
+		"repair_count_after": _repair_count,
+		"one_repair_recorded": _repair_count == repair_count_before + 1,
+	}
+	return _last_repair_evidence.duplicate(true)
+
+
 func get_playtest_state() -> Dictionary:
 	return {
 		"owner_count": 1,
@@ -175,11 +223,18 @@ func get_playtest_state() -> Dictionary:
 		"sound_duration": _sound_duration,
 		"collision_source": REEF_COLLISION_SOURCE,
 		"collision_response": REEF_COLLISION_RESPONSE,
+		"fixed_repair_amount": FIXED_REPAIR_AMOUNT,
+		"repair_count": _repair_count,
+		"total_hull_restored": _total_hull_restored,
+		"last_repair_evidence": _last_repair_evidence.duplicate(true),
 		"continuous_contact_requires_exit": true,
 		"contact_reset_requires_actual_movement_away": true,
 		"has_defeat_behavior": false,
 		"has_recovery_behavior": false,
-		"has_repair_behavior": false,
+		"has_repair_behavior": true,
+		"repair_changes_hit_state": false,
+		"repair_resets_contact_latch": false,
+		"repair_resets_cooldown": false,
 	}
 
 

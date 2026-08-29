@@ -248,7 +248,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 20 · Ship damage"
+text = "Phase 21 · Repairs"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -393,6 +393,70 @@ offset_bottom = 100.0
 theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
 theme_override_font_sizes/font_size = 14
 text = "REEF DAMAGE · 20 PER HIT"
+
+[node name="RepairView" type="ColorRect" parent="Interface" groups=["ship_repair_view"]]
+visible = false
+offset_left = 786.0
+offset_top = 418.0
+offset_right = 1124.0
+offset_bottom = 580.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="RepairTitle" type="Label" parent="Interface/RepairView"]
+offset_left = 16.0
+offset_top = 5.0
+offset_right = 322.0
+offset_bottom = 24.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 16
+text = "DOCKED HULL REPAIR"
+
+[node name="RepairCost" type="Label" parent="Interface/RepairView"]
+offset_left = 16.0
+offset_top = 27.0
+offset_right = 322.0
+offset_bottom = 44.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 13
+text = "FIXED COST · 1 TIMBER LOT · NO MONEY"
+
+[node name="RepairPreview" type="Label" parent="Interface/RepairView"]
+offset_left = 16.0
+offset_top = 47.0
+offset_right = 322.0
+offset_bottom = 64.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 14
+text = "PREVIEW · 80 -> 100 (+20)"
+
+[node name="RepairStatus" type="Label" parent="Interface/RepairView"]
+offset_left = 16.0
+offset_top = 67.0
+offset_right = 322.0
+offset_bottom = 98.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 11
+text = "READY · PRESS R TO CONFIRM"
+autowrap_mode = 2
+
+[node name="RepairResult" type="Label" parent="Interface/RepairView"]
+offset_left = 16.0
+offset_top = 101.0
+offset_right = 322.0
+offset_bottom = 132.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 11
+text = "NO REPAIR ATTEMPT"
+autowrap_mode = 2
+
+[node name="RepairControls" type="Label" parent="Interface/RepairView"]
+offset_left = 16.0
+offset_top = 136.0
+offset_right = 322.0
+offset_bottom = 156.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 13
+text = "[R] CONFIRM REPAIR"
 
 [node name="CargoChoiceView" type="ColorRect" parent="Interface"]
 visible = false

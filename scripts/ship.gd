@@ -21,6 +21,8 @@ const DOCK_MAX_SPEED := 12.0
 const DOCK_MIN_ALIGNMENT := 0.92
 const CARGO_LIMIT := 3
 const TIMBER_LOT_NAME := "TIMBER LOT"
+const REPAIR_COST_LOT_NAME := TIMBER_LOT_NAME
+const REPAIR_COST_LOT_COUNT := 1
 const FOOD_LOT_NAME := ShipFoodState.FOOD_LOT_NAME
 const FOOD_USE_DISTANCE := ShipFoodState.DISTANCE_PER_USE
 const STARTING_CARGO_LOTS := [
@@ -106,6 +108,13 @@ var _max_used_slots_observed := 0
 var _cargo_limit_never_exceeded := true
 var _food_state = ShipFoodState.new()
 var _damage_state = ShipDamageState.new()
+var _repair_attempt_count := 0
+var _repair_success_count := 0
+var _repair_denied_attempt_count := 0
+var _repair_consumed_timber_count := 0
+var _last_repair_attempt_evidence: Dictionary = {}
+var _successful_repair_evidence: Dictionary = {}
+var _last_denied_repair_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -309,6 +318,294 @@ func get_food_playtest_state() -> Dictionary:
 
 func get_damage_playtest_state() -> Dictionary:
 	return _damage_state.get_playtest_state()
+
+
+func get_repair_playtest_state() -> Dictionary:
+	var damage_state: Dictionary = get_damage_playtest_state()
+	var hull_current := int(damage_state["hull_current"])
+	var hull_max := int(damage_state["hull_max"])
+	var preview_hull_after := mini(
+		hull_max,
+		hull_current + ShipDamageState.FIXED_REPAIR_AMOUNT,
+	)
+	var denial_reasons := PackedStringArray()
+	if not captain_aboard:
+		denial_reasons.append("CAPTAIN MUST BE ABOARD")
+	if not is_docked:
+		denial_reasons.append("SHIP MUST BE DOCKED")
+	if hull_current >= hull_max:
+		denial_reasons.append("HULL IS FULL")
+	if timber_lots < REPAIR_COST_LOT_COUNT:
+		denial_reasons.append("NEED 1 TIMBER LOT IN SHIP CARGO")
+	var available := denial_reasons.is_empty()
+	return {
+		"system_count": 1,
+		"available": available,
+		"denial_reasons": denial_reasons,
+		"status_text": (
+			"READY · PRESS R TO CONFIRM"
+			if available
+			else "DISABLED · %s" % " · ".join(denial_reasons)
+		),
+		"fixed_repair_amount": ShipDamageState.FIXED_REPAIR_AMOUNT,
+		"cost_lot_name": REPAIR_COST_LOT_NAME,
+		"cost_lot_count": REPAIR_COST_LOT_COUNT,
+		"fixed_cost_text": "1 TIMBER LOT",
+		"uses_money": false,
+		"hull_before_preview": hull_current,
+		"hull_after_preview": preview_hull_after,
+		"hull_gain_preview": preview_hull_after - hull_current,
+		"preview_text": "%d -> %d (+%d)" % [
+			hull_current,
+			preview_hull_after,
+			preview_hull_after - hull_current,
+		],
+		"captain_aboard": captain_aboard,
+		"ship_is_docked": is_docked,
+		"current_dock_id": current_dock_id,
+		"ship_timber_count": timber_lots,
+		"attempt_count": _repair_attempt_count,
+		"success_count": _repair_success_count,
+		"denied_attempt_count": _repair_denied_attempt_count,
+		"consumed_timber_count": _repair_consumed_timber_count,
+		"damage_owner_count": damage_state["owner_count"],
+		"damage_hit_count": damage_state["hit_count"],
+		"damage_repair_count": damage_state["repair_count"],
+		"last_repair_attempt_evidence": (
+			_last_repair_attempt_evidence.duplicate(true)
+		),
+		"successful_repair_evidence": (
+			_successful_repair_evidence.duplicate(true)
+		),
+		"last_denied_repair_evidence": (
+			_last_denied_repair_evidence.duplicate(true)
+		),
+		"manual_confirmation_required": true,
+		"automatic_repair_count": 0,
+	}
+
+
+func attempt_docked_hull_repair() -> Dictionary:
+	_repair_attempt_count += 1
+	var captain_aboard_before := captain_aboard
+	var ship_is_docked_before := is_docked
+	var current_dock_id_before := current_dock_id
+	var cargo_before: Array[String] = get_cargo_lots()
+	var damage_before: Dictionary = get_damage_playtest_state()
+	var repair_state_before: Dictionary = get_repair_playtest_state()
+	var repair_success_count_before := _repair_success_count
+	var denial_reasons: PackedStringArray = repair_state_before["denial_reasons"]
+	if not bool(repair_state_before["available"]):
+		_repair_denied_attempt_count += 1
+		return _record_repair_attempt(
+			false,
+			"REPAIR DENIED · %s" % " · ".join(denial_reasons),
+			denial_reasons,
+			cargo_before,
+			damage_before,
+			repair_success_count_before,
+			captain_aboard_before,
+			ship_is_docked_before,
+			current_dock_id_before,
+		)
+
+	var timber_slot := cargo_before.find(REPAIR_COST_LOT_NAME)
+	if timber_slot < 0 or not remove_cargo_lot(REPAIR_COST_LOT_NAME):
+		_repair_denied_attempt_count += 1
+		return _record_repair_attempt(
+			false,
+			"REPAIR DENIED · TIMBER CARGO DID NOT CHANGE",
+			PackedStringArray(["TIMBER CARGO DID NOT CHANGE"]),
+			cargo_before,
+			damage_before,
+			repair_success_count_before,
+			captain_aboard_before,
+			ship_is_docked_before,
+			current_dock_id_before,
+		)
+
+	var damage_repair: Dictionary = _damage_state.apply_fixed_repair()
+	if not bool(damage_repair["success"]):
+		var cargo_rollback_succeeded := restore_cargo_slot_from_storage(
+			timber_slot,
+			REPAIR_COST_LOT_NAME,
+		)
+		_repair_denied_attempt_count += 1
+		return _record_repair_attempt(
+			false,
+			(
+				"REPAIR DENIED · HULL DID NOT CHANGE · CARGO RESTORED"
+				if cargo_rollback_succeeded
+				else "REPAIR ERROR · CARGO ROLLBACK FAILED"
+			),
+			PackedStringArray(["HULL DID NOT CHANGE"]),
+			cargo_before,
+			damage_before,
+			repair_success_count_before,
+			captain_aboard_before,
+			ship_is_docked_before,
+			current_dock_id_before,
+			cargo_rollback_succeeded,
+		)
+
+	_repair_success_count += 1
+	_repair_consumed_timber_count += REPAIR_COST_LOT_COUNT
+	return _record_repair_attempt(
+		true,
+		"REPAIRED HULL · +%d" % damage_repair["hull_restored"],
+		PackedStringArray(),
+		cargo_before,
+		damage_before,
+		repair_success_count_before,
+		captain_aboard_before,
+		ship_is_docked_before,
+		current_dock_id_before,
+	)
+
+
+func _record_repair_attempt(
+	success: bool,
+	result: String,
+	denial_reasons: PackedStringArray,
+	cargo_before: Array[String],
+	damage_before: Dictionary,
+	repair_success_count_before: int,
+	captain_aboard_before: bool,
+	ship_is_docked_before: bool,
+	current_dock_id_before: String,
+	cargo_rollback_succeeded: bool = false,
+) -> Dictionary:
+	var cargo_after: Array[String] = get_cargo_lots()
+	var damage_after: Dictionary = get_damage_playtest_state()
+	var expected_cargo_after: Array[String] = cargo_before.duplicate()
+	expected_cargo_after.erase(REPAIR_COST_LOT_NAME)
+	var exactly_one_timber_removed := (
+		cargo_before.count(REPAIR_COST_LOT_NAME)
+			- cargo_after.count(REPAIR_COST_LOT_NAME)
+			== REPAIR_COST_LOT_COUNT
+	)
+	var other_cargo_unchanged := (
+		_get_non_timber_lots(cargo_before) == _get_non_timber_lots(cargo_after)
+	)
+	var no_state_change: bool = (
+		cargo_before == cargo_after
+		and damage_before["hull_current"] == damage_after["hull_current"]
+		and damage_before["repair_count"] == damage_after["repair_count"]
+		and damage_before["hit_count"] == damage_after["hit_count"]
+	)
+	var expected_hull_after := mini(
+		int(damage_before["hull_max"]),
+		int(damage_before["hull_current"])
+			+ ShipDamageState.FIXED_REPAIR_AMOUNT,
+	)
+	var expected_hull_delta := (
+		expected_hull_after - int(damage_before["hull_current"])
+	)
+	var evidence := {
+		"action": "REPAIR_HULL",
+		"result": result,
+		"success": success,
+		"attempt_number": _repair_attempt_count,
+		"denial_reasons": denial_reasons,
+		"captain_aboard_before": captain_aboard_before,
+		"captain_aboard_after": captain_aboard,
+		"captain_state_unchanged": captain_aboard_before == captain_aboard,
+		"ship_is_docked_before": ship_is_docked_before,
+		"ship_is_docked_after": is_docked,
+		"current_dock_id_before": current_dock_id_before,
+		"current_dock_id_after": current_dock_id,
+		"dock_state_unchanged": (
+			ship_is_docked_before == is_docked
+			and current_dock_id_before == current_dock_id
+		),
+		"fixed_repair_amount": ShipDamageState.FIXED_REPAIR_AMOUNT,
+		"cost_lot_name": REPAIR_COST_LOT_NAME,
+		"cost_lot_count": REPAIR_COST_LOT_COUNT,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"expected_cargo_after": expected_cargo_after,
+		"cargo_matches_exact_cost": cargo_after == expected_cargo_after,
+		"timber_before": cargo_before.count(REPAIR_COST_LOT_NAME),
+		"timber_after": cargo_after.count(REPAIR_COST_LOT_NAME),
+		"exactly_one_timber_removed": exactly_one_timber_removed,
+		"other_cargo_unchanged": other_cargo_unchanged,
+		"hull_before": damage_before["hull_current"],
+		"hull_after": damage_after["hull_current"],
+		"hull_delta": (
+			int(damage_after["hull_current"])
+			- int(damage_before["hull_current"])
+		),
+		"expected_hull_after": expected_hull_after,
+		"expected_hull_delta": expected_hull_delta,
+		"hull_matches_fixed_capped_repair": (
+			int(damage_after["hull_current"]) == expected_hull_after
+		),
+		"hull_capped_at_max": (
+			int(damage_after["hull_current"]) == int(damage_after["hull_max"])
+		),
+		"damage_owner_count_before": damage_before["owner_count"],
+		"damage_owner_count_after": damage_after["owner_count"],
+		"damage_owner_unchanged": (
+			damage_before["owner_count"] == damage_after["owner_count"]
+		),
+		"reef_hit_count_before": damage_before["hit_count"],
+		"reef_hit_count_after": damage_after["hit_count"],
+		"reef_hit_state_unchanged": (
+			damage_before["hit_count"] == damage_after["hit_count"]
+			and damage_before["last_damage_event"]
+				== damage_after["last_damage_event"]
+		),
+		"contact_latch_unchanged": (
+			damage_before["contact_active"] == damage_after["contact_active"]
+		),
+		"cooldown_unchanged": is_equal_approx(
+			float(damage_before["cooldown_remaining"]),
+			float(damage_after["cooldown_remaining"]),
+		),
+		"damage_repair_count_before": damage_before["repair_count"],
+		"damage_repair_count_after": damage_after["repair_count"],
+		"repair_success_count_before": repair_success_count_before,
+		"repair_success_count_after": _repair_success_count,
+		"one_action_one_repair": (
+			success
+			and int(damage_after["repair_count"])
+				== int(damage_before["repair_count"]) + 1
+			and _repair_success_count == repair_success_count_before + 1
+		),
+		"cargo_rollback_succeeded": cargo_rollback_succeeded,
+		"no_state_change": no_state_change,
+		"denied_no_state_change": not success and no_state_change,
+		"transaction_atomic": (
+			(
+				exactly_one_timber_removed
+				and other_cargo_unchanged
+				and cargo_after == expected_cargo_after
+				and int(damage_after["hull_current"])
+					== expected_hull_after
+				and int(damage_after["hull_current"])
+					- int(damage_before["hull_current"])
+					== expected_hull_delta
+			)
+			if success
+			else no_state_change
+		),
+		"manual_confirmation_required": true,
+		"automatic_repair": false,
+	}
+	_last_repair_attempt_evidence = evidence.duplicate(true)
+	if success:
+		_successful_repair_evidence = evidence.duplicate(true)
+	else:
+		_last_denied_repair_evidence = evidence.duplicate(true)
+	return evidence
+
+
+func _get_non_timber_lots(cargo: Array[String]) -> Array[String]:
+	var other_lots: Array[String] = []
+	for lot_name in cargo:
+		if lot_name != REPAIR_COST_LOT_NAME:
+			other_lots.append(lot_name)
+	return other_lots
 
 
 func _get_cargo_slot_lot_counts() -> PackedInt32Array:
@@ -746,6 +1043,7 @@ func get_playtest_state() -> Dictionary:
 	var current_definition := get_current_dock_definition()
 	var food_state: Dictionary = get_food_playtest_state()
 	var damage_state: Dictionary = get_damage_playtest_state()
+	var repair_state: Dictionary = get_repair_playtest_state()
 	var fixed_pose := false
 	if not current_definition.is_empty():
 		fixed_pose = (
@@ -879,6 +1177,29 @@ func get_playtest_state() -> Dictionary:
 		"damage_sound_play_count": damage_state["sound_play_count"],
 		"damage_sound_duration": damage_state["sound_duration"],
 		"ship_damage": damage_state,
+		"repair_system_count": repair_state["system_count"],
+		"repair_available": repair_state["available"],
+		"repair_denial_reasons": repair_state["denial_reasons"],
+		"repair_status_text": repair_state["status_text"],
+		"repair_fixed_amount": repair_state["fixed_repair_amount"],
+		"repair_cost_lot_name": repair_state["cost_lot_name"],
+		"repair_cost_lot_count": repair_state["cost_lot_count"],
+		"repair_preview_text": repair_state["preview_text"],
+		"repair_hull_before_preview": repair_state["hull_before_preview"],
+		"repair_hull_after_preview": repair_state["hull_after_preview"],
+		"repair_hull_gain_preview": repair_state["hull_gain_preview"],
+		"repair_attempt_count": repair_state["attempt_count"],
+		"repair_success_count": repair_state["success_count"],
+		"repair_denied_attempt_count": repair_state["denied_attempt_count"],
+		"repair_consumed_timber_count": repair_state["consumed_timber_count"],
+		"repair_last_attempt_evidence": (
+			repair_state["last_repair_attempt_evidence"]
+		),
+		"repair_successful_evidence": repair_state["successful_repair_evidence"],
+		"repair_last_denied_evidence": (
+			repair_state["last_denied_repair_evidence"]
+		),
+		"ship_repair": repair_state,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),
@@ -889,6 +1210,7 @@ func get_playtest_state() -> Dictionary:
 			"brake": "S_OR_DOWN",
 			"dock_or_ashore": "E",
 			"salvage": "E",
+			"repair": "R",
 		},
 	}
 

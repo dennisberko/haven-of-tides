@@ -53,6 +53,13 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var hull_title: Label = $Interface/HullView/HullTitle
 @onready var hull_meter: ProgressBar = $Interface/HullView/HullMeter
 @onready var hull_status: Label = $Interface/HullView/HullStatus
+@onready var repair_view: ColorRect = $Interface/RepairView
+@onready var repair_title: Label = $Interface/RepairView/RepairTitle
+@onready var repair_cost: Label = $Interface/RepairView/RepairCost
+@onready var repair_preview: Label = $Interface/RepairView/RepairPreview
+@onready var repair_status: Label = $Interface/RepairView/RepairStatus
+@onready var repair_result: Label = $Interface/RepairView/RepairResult
+@onready var repair_controls: Label = $Interface/RepairView/RepairControls
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -88,7 +95,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
 const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M CHART · J JOURNAL"
-const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY · M CHART · J JOURNAL"
+const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
 const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
@@ -266,6 +273,18 @@ var _damage_snapshot_at_dock: Dictionary = {}
 var _damage_snapshot_ashore: Dictionary = {}
 var _damage_snapshot_return: Dictionary = {}
 var _damage_snapshot_release: Dictionary = {}
+var _repair_key_held := false
+var _repair_held_input_count := 0
+var _last_repair_action := "NOT_ATTEMPTED"
+var _last_repair_result := "NO REPAIR ATTEMPT"
+var _last_repair_attempt_evidence: Dictionary = {}
+var _successful_repair_evidence: Dictionary = {}
+var _last_denied_repair_evidence: Dictionary = {}
+var _last_held_repair_evidence: Dictionary = {}
+var _repair_snapshot_success: Dictionary = {}
+var _repair_snapshot_ashore: Dictionary = {}
+var _repair_snapshot_return: Dictionary = {}
+var _repair_snapshot_release: Dictionary = {}
 
 
 func _ready() -> void:
@@ -294,6 +313,7 @@ func _ready() -> void:
 	_update_money_view()
 	_update_food_view()
 	_update_hull_view()
+	_update_repair_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -308,6 +328,7 @@ func _ready() -> void:
 	journal_view.hide()
 	food_view.hide()
 	hull_view.hide()
+	repair_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -344,6 +365,7 @@ func _physics_process(_delta: float) -> void:
 	_update_money_view()
 	_update_food_view()
 	_update_hull_view()
+	_update_repair_view()
 	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
@@ -361,6 +383,7 @@ func _physics_process(_delta: float) -> void:
 		if _last_ship_docked and not ship_docked:
 			_record_voyage_departure(String(ship.last_dock_id))
 			_capture_damage_checkpoint("RELEASE")
+			_capture_repair_checkpoint("RELEASE")
 		if (
 			_last_ship_docked
 			and not ship_docked
@@ -430,6 +453,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _key_matches(key_event, KEY_R) and not key_event.pressed:
+		_repair_key_held = false
 	if _journal_view_open:
 		_handle_trade_journal_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -502,6 +527,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if key_event.pressed and not key_event.echo and _can_open_trade_journal():
 			_open_trade_journal()
 			get_viewport().set_input_as_handled()
+		return
+	if _key_matches(key_event, KEY_R):
+		_handle_repair_input(key_event)
+		get_viewport().set_input_as_handled()
 		return
 	if key_event.physical_keycode != KEY_E and key_event.keycode != KEY_E:
 		return
@@ -2507,6 +2536,137 @@ func _update_hull_view() -> void:
 	hull_view.visible = _player_aboard_ship
 
 
+func _update_repair_view() -> void:
+	var repair_state: Dictionary = ship.get_repair_playtest_state()
+	repair_title.text = "DOCKED HULL REPAIR"
+	repair_cost.text = "FIXED COST · %s · NO MONEY" % (
+		repair_state["fixed_cost_text"]
+	)
+	repair_preview.text = "PREVIEW · %s" % repair_state["preview_text"]
+	repair_status.text = String(repair_state["status_text"])
+	repair_result.text = _last_repair_result
+	repair_controls.text = (
+		"[R] CONFIRM REPAIR"
+		if bool(repair_state["available"])
+		else "[R] REPAIR DISABLED"
+	)
+	repair_view.visible = _player_aboard_ship and ship.is_docked
+
+
+func _handle_repair_input(key_event: InputEventKey) -> void:
+	if not key_event.pressed:
+		_repair_key_held = false
+		return
+
+	if key_event.echo or _repair_key_held:
+		_repair_held_input_count += 1
+		_last_repair_action = "HELD_REPAIR_KEY"
+		_last_repair_result = "NO CHANGE · RELEASE R BEFORE ANOTHER REPAIR"
+		var damage_state: Dictionary = ship.get_damage_playtest_state()
+		var repair_state: Dictionary = ship.get_repair_playtest_state()
+		var cargo_snapshot: Array[String] = ship.get_cargo_lots()
+		_last_held_repair_evidence = {
+			"action": _last_repair_action,
+			"result": _last_repair_result,
+			"echo": key_event.echo,
+			"hull_before": damage_state["hull_current"],
+			"hull_after": damage_state["hull_current"],
+			"cargo_before": cargo_snapshot,
+			"cargo_after": cargo_snapshot.duplicate(),
+			"money_before": money,
+			"money_after": money,
+			"repair_attempt_count_before": repair_state["attempt_count"],
+			"repair_attempt_count_after": repair_state["attempt_count"],
+			"repair_success_count_before": repair_state["success_count"],
+			"repair_success_count_after": repair_state["success_count"],
+			"no_state_change": true,
+			"fresh_press_required": true,
+		}
+		_update_repair_view()
+		return
+
+	_repair_key_held = true
+	_attempt_docked_hull_repair()
+
+
+func _attempt_docked_hull_repair() -> void:
+	var money_before := money
+	var evidence: Dictionary = ship.attempt_docked_hull_repair()
+	evidence["money_before"] = money_before
+	evidence["money_after"] = money
+	evidence["money_delta"] = money - money_before
+	evidence["money_unchanged"] = money == money_before
+	evidence["uses_money"] = false
+	_last_repair_action = String(evidence["action"])
+	_last_repair_result = String(evidence["result"])
+	_last_repair_attempt_evidence = evidence.duplicate(true)
+	if bool(evidence["success"]):
+		_successful_repair_evidence = evidence.duplicate(true)
+		_repair_snapshot_ashore = {}
+		_repair_snapshot_return = {}
+		_repair_snapshot_release = {}
+	else:
+		_last_denied_repair_evidence = evidence.duplicate(true)
+	_update_cargo_view()
+	_update_money_view()
+	_update_hull_view()
+	_update_repair_view()
+	if bool(evidence["success"]):
+		_capture_repair_checkpoint("SUCCESS")
+
+
+func _capture_repair_checkpoint(checkpoint: String) -> void:
+	if _successful_repair_evidence.is_empty():
+		return
+	_update_repair_view()
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var repair_state: Dictionary = ship.get_repair_playtest_state()
+	var snapshot := {
+		"checkpoint": checkpoint,
+		"hull_current": damage_state["hull_current"],
+		"damage_owner_count": damage_state["owner_count"],
+		"reef_hit_count": damage_state["hit_count"],
+		"damage_repair_count": damage_state["repair_count"],
+		"repair_success_count": repair_state["success_count"],
+		"repair_consumed_timber_count": repair_state["consumed_timber_count"],
+		"cargo_lots": ship.get_cargo_lots(),
+		"ship_timber_count": ship.timber_lots,
+		"money": money,
+		"ship_is_docked": ship.is_docked,
+		"current_dock_id": ship.current_dock_id,
+		"last_dock_id": ship.last_dock_id,
+		"player_aboard_ship": _player_aboard_ship,
+		"player_shore_id": _player_shore_id,
+		"repair_view_visible": repair_view.visible,
+	}
+	match checkpoint:
+		"SUCCESS":
+			_repair_snapshot_success = snapshot
+		"ASHORE":
+			_repair_snapshot_ashore = snapshot
+		"RETURN":
+			_repair_snapshot_return = snapshot
+		"RELEASE":
+			_repair_snapshot_release = snapshot
+
+
+func _repair_checkpoint_matches_success(checkpoint: Dictionary) -> bool:
+	return (
+		not _repair_snapshot_success.is_empty()
+		and not checkpoint.is_empty()
+		and checkpoint["hull_current"]
+			== _repair_snapshot_success["hull_current"]
+		and checkpoint["damage_owner_count"]
+			== _repair_snapshot_success["damage_owner_count"]
+		and checkpoint["reef_hit_count"]
+			== _repair_snapshot_success["reef_hit_count"]
+		and checkpoint["repair_success_count"]
+			== _repair_snapshot_success["repair_success_count"]
+		and checkpoint["damage_repair_count"]
+			== _repair_snapshot_success["damage_repair_count"]
+	)
+
+
 func _update_damage_hit_checkpoint() -> void:
 	var damage_state: Dictionary = ship.get_damage_playtest_state()
 	var hit_count := int(damage_state["hit_count"])
@@ -2944,6 +3104,7 @@ func _dock_ship() -> void:
 		_trade_persistence_holds = _trade_purchase_state_persists()
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_capture_damage_checkpoint("DOCK")
+	_update_repair_view()
 	_update_interaction_prompt()
 
 
@@ -3152,6 +3313,7 @@ func _go_ashore() -> void:
 	)
 	controls_help.text = WALKING_CONTROLS_TEXT
 	_capture_damage_checkpoint("ASHORE")
+	_capture_repair_checkpoint("ASHORE")
 	_update_interaction_prompt()
 
 
@@ -3195,6 +3357,7 @@ func _return_to_ship() -> void:
 	_last_ship_docked = true
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_capture_damage_checkpoint("RETURN")
+	_capture_repair_checkpoint("RETURN")
 	_update_interaction_prompt()
 
 
@@ -3370,6 +3533,7 @@ func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var food_state: Dictionary = ship.get_food_playtest_state()
 	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var repair_state: Dictionary = ship.get_repair_playtest_state()
 	var sea_state: Dictionary = sea_area.get_playtest_state()
 	var player_state: Dictionary = player.get_playtest_state()
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
@@ -3508,6 +3672,18 @@ func get_playtest_state() -> Dictionary:
 		hull_title.text,
 		hull_status.text,
 	]
+	var repair_view_full_text := "%s\n%s\n%s\n%s\n%s\n%s" % [
+		repair_title.text,
+		repair_cost.text,
+		repair_preview.text,
+		repair_status.text,
+		repair_result.text,
+		repair_controls.text,
+	]
+	var repair_view_rect := repair_view.get_global_rect()
+	var hull_view_rect := hull_view.get_global_rect()
+	var food_view_rect := food_view.get_global_rect()
+	var controls_help_rect := controls_help.get_global_rect()
 	var physical_cargo_total: int = int(
 		ship_state["cargo_used_slots"]
 		+ wreck_state["wreck_salvage_lot_count"]
@@ -3523,6 +3699,7 @@ func get_playtest_state() -> Dictionary:
 		+ construction_state["consumed_lot_count"]
 		+ _trade_sold_lot_count
 		+ food_state["total_units_used"]
+		+ repair_state["consumed_timber_count"]
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total + _trade_bought_lot_count
@@ -3558,11 +3735,13 @@ func get_playtest_state() -> Dictionary:
 		"cargo_deliberately_consumed_lots": (
 			construction_state["consumed_lot_count"]
 			+ food_state["total_units_used"]
+			+ repair_state["consumed_timber_count"]
 		),
 		"cargo_construction_consumed_lots": (
 			construction_state["consumed_lot_count"]
 		),
 		"cargo_food_consumed_lots": food_state["total_units_used"],
+		"cargo_repair_consumed_lots": repair_state["consumed_timber_count"],
 		"cargo_accounted_total_including_consumed": accounted_cargo_total,
 		"cargo_accounted_total_including_consumed_and_sold": accounted_cargo_total,
 		"cargo_initial_total_lots_in_world": initial_physical_cargo_total,
@@ -3738,7 +3917,7 @@ func get_playtest_state() -> Dictionary:
 		"food_spoilage_system_count": 0,
 		"food_fast_travel_cost_system_count": 0,
 		"food_hard_voyage_limit_system_count": 0,
-		"ship_repair_system_count": 0,
+		"ship_repair_system_count": repair_state["system_count"],
 		"ship_hull_damage_system_count": damage_state["owner_count"],
 		"damage_state_owner_count": damage_state["owner_count"],
 		"hull_current": damage_state["hull_current"],
@@ -3847,6 +4026,121 @@ func get_playtest_state() -> Dictionary:
 		"ship_naval_attack_system_count": 0,
 		"ship_defeat_system_count": 0,
 		"ship_recovery_system_count": 0,
+		"repair_system_count": repair_state["system_count"],
+		"repair_available": repair_state["available"],
+		"repair_denial_reasons": repair_state["denial_reasons"],
+		"repair_status_text": repair_state["status_text"],
+		"repair_fixed_amount": repair_state["fixed_repair_amount"],
+		"repair_cost_lot_name": repair_state["cost_lot_name"],
+		"repair_cost_lot_count": repair_state["cost_lot_count"],
+		"repair_fixed_cost_text": repair_state["fixed_cost_text"],
+		"repair_uses_money": repair_state["uses_money"],
+		"repair_hull_before_preview": repair_state["hull_before_preview"],
+		"repair_hull_after_preview": repair_state["hull_after_preview"],
+		"repair_hull_gain_preview": repair_state["hull_gain_preview"],
+		"repair_preview_text": repair_state["preview_text"],
+		"repair_ship_timber_count": repair_state["ship_timber_count"],
+		"repair_requires_captain_aboard": true,
+		"repair_requires_docked_ship": true,
+		"repair_manual_confirmation_required": (
+			repair_state["manual_confirmation_required"]
+		),
+		"repair_confirmation_key": "R",
+		"repair_attempt_count": repair_state["attempt_count"],
+		"repair_success_count": repair_state["success_count"],
+		"repair_denied_attempt_count": repair_state["denied_attempt_count"],
+		"repair_consumed_timber_count": repair_state["consumed_timber_count"],
+		"repair_damage_owner_count": repair_state["damage_owner_count"],
+		"repair_damage_hit_count": repair_state["damage_hit_count"],
+		"repair_damage_repair_count": repair_state["damage_repair_count"],
+		"repair_key_held": _repair_key_held,
+		"repair_held_input_count": _repair_held_input_count,
+		"repair_fresh_press_required": true,
+		"repair_last_action": _last_repair_action,
+		"repair_last_result": _last_repair_result,
+		"repair_last_attempt_evidence": (
+			_last_repair_attempt_evidence.duplicate(true)
+		),
+		"repair_successful_evidence": (
+			_successful_repair_evidence.duplicate(true)
+		),
+		"repair_last_denied_evidence": (
+			_last_denied_repair_evidence.duplicate(true)
+		),
+		"repair_last_held_evidence": (
+			_last_held_repair_evidence.duplicate(true)
+		),
+		"repair_ship_state": repair_state,
+		"repair_view_count": get_tree().get_nodes_in_group(
+			"ship_repair_view"
+		).size(),
+		"repair_view_visible": repair_view.visible,
+		"repair_view_should_be_visible": (
+			_player_aboard_ship and ship.is_docked
+		),
+		"repair_view_visibility_matches_docked_aboard": (
+			repair_view.visible == (_player_aboard_ship and ship.is_docked)
+		),
+		"repair_view_title": repair_title.text,
+		"repair_view_cost": repair_cost.text,
+		"repair_view_preview": repair_preview.text,
+		"repair_view_status": repair_status.text,
+		"repair_view_result": repair_result.text,
+		"repair_view_controls": repair_controls.text,
+		"repair_view_text": (
+			repair_view_full_text if repair_view.visible else ""
+		),
+		"repair_view_text_has_fixed_cost": repair_view_full_text.contains(
+			"FIXED COST · 1 TIMBER LOT · NO MONEY"
+		),
+		"repair_view_text_has_preview": repair_view_full_text.contains(
+			"PREVIEW · %s" % repair_state["preview_text"]
+		),
+		"repair_view_text_has_availability": repair_view_full_text.contains(
+			String(repair_state["status_text"])
+		),
+		"repair_view_rect": repair_view_rect,
+		"repair_view_below_hull_view": (
+			repair_view_rect.position.y
+				>= hull_view_rect.position.y + hull_view_rect.size.y
+		),
+		"repair_view_gap_below_hull": (
+			repair_view_rect.position.y
+				- (hull_view_rect.position.y + hull_view_rect.size.y)
+		),
+		"repair_view_overlaps_hull_view": (
+			repair_view_rect.intersects(hull_view_rect)
+		),
+		"repair_view_overlaps_food_view": (
+			repair_view_rect.intersects(food_view_rect)
+		),
+		"repair_view_overlaps_controls": (
+			repair_view_rect.intersects(controls_help_rect)
+		),
+		"repair_snapshot_success": _repair_snapshot_success.duplicate(true),
+		"repair_snapshot_ashore": _repair_snapshot_ashore.duplicate(true),
+		"repair_snapshot_return": _repair_snapshot_return.duplicate(true),
+		"repair_snapshot_release": _repair_snapshot_release.duplicate(true),
+		"repair_hull_persists_ashore": _repair_checkpoint_matches_success(
+			_repair_snapshot_ashore
+		),
+		"repair_hull_persists_on_return": _repair_checkpoint_matches_success(
+			_repair_snapshot_return
+		),
+		"repair_hull_persists_after_release": _repair_checkpoint_matches_success(
+			_repair_snapshot_release
+		),
+		"repair_persistence_holds": (
+			_repair_checkpoint_matches_success(_repair_snapshot_ashore)
+			and _repair_checkpoint_matches_success(_repair_snapshot_return)
+			and _repair_checkpoint_matches_success(_repair_snapshot_release)
+		),
+		"repair_during_combat_system_count": 0,
+		"repair_price_system_count": 0,
+		"sail_repair_system_count": 0,
+		"repair_workshop_bonus_system_count": 0,
+		"automatic_repair_system_count": repair_state["automatic_repair_count"],
+		"target_inspection_system_count": 0,
 		"cove_storage_place_count": storage_state["place_count"],
 		"cove_storage_position": storage_state["position"],
 		"cove_storage_interaction_range": storage_state["interaction_range"],
@@ -4615,6 +4909,7 @@ func get_playtest_state() -> Dictionary:
 			"physical_cargo": physical_cargo_total,
 			"construction_consumed": construction_state["consumed_lot_count"],
 			"food_consumed": food_state["total_units_used"],
+			"repair_timber_consumed": repair_state["consumed_timber_count"],
 			"sold_trade_lots": _trade_sold_lot_count,
 			"initial_physical_cargo": initial_physical_cargo_total,
 			"initial_storage_lots": (
