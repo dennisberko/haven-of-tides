@@ -2,6 +2,7 @@ extends Node2D
 
 const ShipFoodState := preload("res://scripts/ship_food.gd")
 const ShipDamageState := preload("res://scripts/ship_damage.gd")
+const ShipBroadsideState := preload("res://scripts/ship_broadside.gd")
 
 const ACCELERATION := 140.0
 const COAST_DECELERATION := 90.0
@@ -108,6 +109,7 @@ var _max_used_slots_observed := 0
 var _cargo_limit_never_exceeded := true
 var _food_state = ShipFoodState.new()
 var _damage_state = ShipDamageState.new()
+var _broadside_state = ShipBroadsideState.new()
 var _repair_attempt_count := 0
 var _repair_success_count := 0
 var _repair_denied_attempt_count := 0
@@ -183,6 +185,7 @@ func set_controls_enabled(enabled: bool) -> void:
 	if not controls_enabled:
 		current_speed = 0.0
 		sailing_velocity = Vector2.ZERO
+	queue_redraw()
 
 
 func set_navigation_input_blocked(
@@ -199,6 +202,7 @@ func set_navigation_input_blocked(
 	sailing_velocity = Vector2.ZERO
 	# A chart transition must always require a fresh dock-departure press.
 	_departure_input_armed = false
+	queue_redraw()
 
 
 func set_captain_aboard(aboard: bool) -> void:
@@ -206,6 +210,7 @@ func set_captain_aboard(aboard: bool) -> void:
 	if not captain_aboard:
 		_departure_input_armed = false
 		set_controls_enabled(false)
+	queue_redraw()
 
 
 func can_leave_at_damaged_dock() -> bool:
@@ -225,6 +230,62 @@ func is_at_cove_entrance() -> bool:
 
 func get_forward_direction() -> Vector2:
 	return Vector2.UP.rotated(rotation)
+
+
+func are_broadside_firing_areas_active() -> bool:
+	return (
+		controls_enabled
+		and captain_aboard
+		and not is_docked
+		and not navigation_input_blocked
+		and not navigation_release_pending
+	)
+
+
+func attempt_broadside(side: String) -> Dictionary:
+	var evidence: Dictionary = _broadside_state.attempt_fire(
+		side,
+		are_broadside_firing_areas_active(),
+	)
+	queue_redraw()
+	return evidence
+
+
+func record_broadside_result(evidence: Dictionary) -> Dictionary:
+	var recorded: Dictionary = _broadside_state.record_shot_result(evidence)
+	queue_redraw()
+	return recorded
+
+
+func is_world_point_in_broadside(side: String, world_point: Vector2) -> bool:
+	return _broadside_state.is_local_point_in_area(
+		side,
+		to_local(world_point),
+	)
+
+
+func get_broadside_area_world_corners(side: String) -> PackedVector2Array:
+	var world_corners: PackedVector2Array = PackedVector2Array()
+	for local_corner in _broadside_state.get_local_area_corners(side):
+		world_corners.append(to_global(local_corner))
+	return world_corners
+
+
+func get_broadside_playtest_state() -> Dictionary:
+	var state: Dictionary = _broadside_state.get_playtest_state()
+	state["firing_areas_active"] = are_broadside_firing_areas_active()
+	state["left_world_corners"] = get_broadside_area_world_corners(
+		ShipBroadsideState.SIDE_LEFT
+	)
+	state["right_world_corners"] = get_broadside_area_world_corners(
+		ShipBroadsideState.SIDE_RIGHT
+	)
+	state["left_control"] = "Q"
+	state["right_control"] = "F"
+	state["firing_areas_visible_before_shot"] = (
+		are_broadside_firing_areas_active()
+	)
+	return state
 
 
 func can_accept_salvaged_timber_lot() -> bool:
@@ -744,7 +805,10 @@ func _release_current_dock() -> void:
 func _physics_process(delta: float) -> void:
 	var flash_was_active: bool = _damage_state.is_flash_active()
 	_damage_state.update_timers(delta)
+	var broadside_visual_changed: bool = _broadside_state.update_timers(delta)
 	if flash_was_active or _damage_state.is_flash_active():
+		queue_redraw()
+	if broadside_visual_changed:
 		queue_redraw()
 
 	if navigation_input_blocked:
@@ -1044,6 +1108,7 @@ func get_playtest_state() -> Dictionary:
 	var food_state: Dictionary = get_food_playtest_state()
 	var damage_state: Dictionary = get_damage_playtest_state()
 	var repair_state: Dictionary = get_repair_playtest_state()
+	var broadside_state: Dictionary = get_broadside_playtest_state()
 	var fixed_pose := false
 	if not current_definition.is_empty():
 		fixed_pose = (
@@ -1200,6 +1265,17 @@ func get_playtest_state() -> Dictionary:
 			repair_state["last_denied_repair_evidence"]
 		),
 		"ship_repair": repair_state,
+		"broadside_system_count": broadside_state["system_count"],
+		"broadside_firing_areas_active": (
+			broadside_state["firing_areas_active"]
+		),
+		"broadside_reload_remaining": broadside_state["reload_remaining"],
+		"broadside_shot_count": broadside_state["shot_count"],
+		"broadside_hit_count": broadside_state["hit_count"],
+		"broadside_reload_rejected_count": (
+			broadside_state["reload_rejected_count"]
+		),
+		"ship_broadside": broadside_state,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),
@@ -1211,11 +1287,43 @@ func get_playtest_state() -> Dictionary:
 			"dock_or_ashore": "E",
 			"salvage": "E",
 			"repair": "R",
+			"left_broadside": "Q",
+			"right_broadside": "F",
 		},
 	}
 
 
 func _draw() -> void:
+	if are_broadside_firing_areas_active():
+		_draw_broadside_area(
+			ShipBroadsideState.SIDE_LEFT,
+			Color("#ffd06726"),
+			Color("#ffd067d0"),
+			"Q · LEFT BROADSIDE",
+		)
+		_draw_broadside_area(
+			ShipBroadsideState.SIDE_RIGHT,
+			Color("#79d8e826"),
+			Color("#79d8e8d0"),
+			"F · RIGHT BROADSIDE",
+		)
+		if _broadside_state.shot_flash_remaining > 0.0:
+			var flash_side: String = _broadside_state.last_fired_side
+			var flash_corners: PackedVector2Array = (
+				_broadside_state.get_local_area_corners(flash_side)
+			)
+			draw_colored_polygon(flash_corners, Color("#fff2d06b"))
+			for shot_line_y in [-82.0, 0.0, 82.0]:
+				var shot_direction: float = (
+					-1.0 if flash_side == "LEFT" else 1.0
+				)
+				draw_line(
+					Vector2(shot_direction * 48.0, shot_line_y),
+					Vector2(shot_direction * 295.0, shot_line_y),
+					Color("#fff2d0"),
+					6.0,
+				)
+
 	# The one ship, viewed from above.
 	draw_ellipse(Vector2(5, 8), 48.0, 99.0, Color("#12323c66"))
 	draw_colored_polygon(PackedVector2Array([
@@ -1275,3 +1383,30 @@ func _draw() -> void:
 			Vector2(0, 101), Vector2(-52, 39),
 		]), Color("#fff2d0b8"))
 		draw_arc(Vector2.ZERO, 104.0, 0.0, TAU, 40, Color("#ff4b3ee8"), 9.0)
+
+
+func _draw_broadside_area(
+	side: String,
+	fill_color: Color,
+	outline_color: Color,
+	label: String,
+) -> void:
+	var corners: PackedVector2Array = _broadside_state.get_local_area_corners(
+		side
+	)
+	draw_colored_polygon(corners, fill_color)
+	var outline: PackedVector2Array = corners.duplicate()
+	outline.append(corners[0])
+	draw_polyline(outline, outline_color, 4.0)
+	var label_x: float = (
+		-318.0 if side == ShipBroadsideState.SIDE_LEFT else 66.0
+	)
+	draw_string(
+		ThemeDB.fallback_font,
+		Vector2(label_x, -158.0),
+		label,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		252.0,
+		16,
+		outline_color,
+	)

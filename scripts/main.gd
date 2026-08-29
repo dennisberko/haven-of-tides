@@ -80,6 +80,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var inspection_controls: Label = (
 	$Interface/TargetInspectionView/InspectionControls
 )
+@onready var broadside_view: ColorRect = $Interface/BroadsideView
+@onready var broadside_title: Label = $Interface/BroadsideView/BroadsideTitle
+@onready var broadside_areas: Label = $Interface/BroadsideView/BroadsideAreas
+@onready var broadside_result: Label = $Interface/BroadsideView/BroadsideResult
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -114,7 +118,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · E INSPECT / ACTION · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · Q LEFT BROADSIDE · F RIGHT BROADSIDE · E ACTION · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
@@ -316,6 +320,12 @@ var _last_inspection_view_text := ""
 var _last_inspection_close_reason := "NOT_CLOSED"
 var _last_auto_closed_target_id := ""
 var _last_auto_close_distance := -1.0
+var _broadside_pressed_keys: Dictionary = {}
+var _broadside_held_input_count := 0
+var _last_broadside_result := "NO BROADSIDE ATTEMPT"
+var _last_broadside_attempt_evidence: Dictionary = {}
+var _successful_broadside_evidence: Dictionary = {}
+var _reload_rejected_broadside_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -346,6 +356,7 @@ func _ready() -> void:
 	_update_hull_view()
 	_update_repair_view()
 	_update_target_inspection()
+	_update_broadside_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -362,6 +373,7 @@ func _ready() -> void:
 	hull_view.hide()
 	repair_view.hide()
 	target_inspection_view.hide()
+	broadside_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -400,6 +412,7 @@ func _physics_process(_delta: float) -> void:
 	_update_food_view()
 	_update_hull_view()
 	_update_repair_view()
+	_update_broadside_view()
 	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
@@ -489,6 +502,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var key_event := event as InputEventKey
 	if _key_matches(key_event, KEY_R) and not key_event.pressed:
 		_repair_key_held = false
+	var released_broadside_side: String = _get_broadside_side(key_event)
+	if not key_event.pressed and not released_broadside_side.is_empty():
+		_broadside_pressed_keys.erase(released_broadside_side)
 	if _journal_view_open:
 		_handle_trade_journal_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -572,6 +588,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_open_trade_journal()
 			get_viewport().set_input_as_handled()
 		return
+	if not _get_broadside_side(key_event).is_empty():
+		_handle_broadside_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
 	if _key_matches(key_event, KEY_R):
 		_handle_repair_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -637,6 +657,34 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _get_broadside_side(key_event: InputEventKey) -> String:
+	if _key_matches(key_event, KEY_Q):
+		return "LEFT"
+	if _key_matches(key_event, KEY_F):
+		return "RIGHT"
+	return ""
+
+
+func _handle_broadside_input(key_event: InputEventKey) -> void:
+	var side: String = _get_broadside_side(key_event)
+	if side.is_empty():
+		return
+	if not key_event.pressed:
+		_broadside_pressed_keys.erase(side)
+		return
+	if key_event.echo or bool(_broadside_pressed_keys.get(side, false)):
+		_broadside_held_input_count += 1
+		_last_broadside_result = (
+			"NO SHOT · RELEASE %s BROADSIDE KEY" % (
+				"Q" if side == "LEFT" else "F"
+			)
+		)
+		_update_broadside_view()
+		return
+	_broadside_pressed_keys[side] = true
+	_attempt_broadside_attack(side)
 
 
 func _handle_trade_journal_input(key_event: InputEventKey) -> void:
@@ -2327,7 +2375,7 @@ func _update_target_inspection_view() -> void:
 		+ "ATTACK CHOICE ESTIMATE · %s" % choice_text
 	)
 	inspection_controls.text = (
-		"SAIL OUT OF RANGE TO CLOSE · NO ATTACK ACTION"
+		"SAIL OUT OF RANGE TO CLOSE · [Q] LEFT · [F] RIGHT"
 	)
 	_last_inspection_view_text = "%s\n%s\n%s\n%s" % [
 		inspection_title.text,
@@ -2336,6 +2384,164 @@ func _update_target_inspection_view() -> void:
 		inspection_controls.text,
 	]
 	target_inspection_view.show()
+
+
+func _attempt_broadside_attack(side: String) -> void:
+	var target_hulls_before: Dictionary = _get_target_hull_snapshots()
+	var evidence: Dictionary = ship.attempt_broadside(side)
+	evidence["target_hulls_before"] = target_hulls_before.duplicate(true)
+	evidence["selected_side_world_corners"] = (
+		ship.get_broadside_area_world_corners(side)
+	)
+	evidence["left_side_world_corners"] = (
+		ship.get_broadside_area_world_corners("LEFT")
+	)
+	evidence["right_side_world_corners"] = (
+		ship.get_broadside_area_world_corners("RIGHT")
+	)
+	if not bool(evidence["shot_fired"]):
+		var rejected_hulls_after: Dictionary = _get_target_hull_snapshots()
+		evidence["target_hulls_after"] = rejected_hulls_after.duplicate(true)
+		evidence["target_hulls_unchanged"] = (
+			target_hulls_before == rejected_hulls_after
+		)
+		evidence["target_hit"] = false
+		evidence["target_hull_delta"] = 0
+		evidence["no_shot_no_target_damage"] = (
+			target_hulls_before == rejected_hulls_after
+		)
+		_last_broadside_attempt_evidence = ship.record_broadside_result(
+			evidence
+		)
+		_last_broadside_result = String(
+			_last_broadside_attempt_evidence["result"]
+		)
+		if String(evidence["rejection_reason"]) == "RELOADING":
+			_reload_rejected_broadside_evidence = (
+				_last_broadside_attempt_evidence.duplicate(true)
+			)
+		_update_broadside_view()
+		return
+
+	var target: InspectableTargetShipState = _get_broadside_target(side)
+	if target == null:
+		evidence.merge({
+			"target_hit": false,
+			"target_id": "",
+			"target_name": "NO TARGET",
+			"target_in_selected_side_area": false,
+			"target_hull_before": -1,
+			"target_hull_after": -1,
+			"target_hull_max": InspectableTargetShipState.HULL_MAX,
+			"target_hull_delta": 0,
+			"target_disabled": false,
+			"hit_feedback_started": false,
+		})
+	else:
+		var target_hull_before: Dictionary = target.get_hull_state()
+		var target_local_position: Vector2 = ship.to_local(
+			target.global_position
+		)
+		var hit_evidence: Dictionary = target.apply_broadside_hull_damage(
+			int(evidence["hull_damage"]),
+			side,
+		)
+		evidence.merge({
+			"target_hit": bool(hit_evidence["success"]),
+			"target_id": target.target_id,
+			"target_name": target.display_name,
+			"target_world_position": target.global_position,
+			"target_local_position": target_local_position,
+			"target_in_selected_side_area": ship.is_world_point_in_broadside(
+				side,
+				target.global_position,
+			),
+			"target_hull_before": target_hull_before["hull_current"],
+			"target_hull_after": hit_evidence["hull_after"],
+			"target_hull_max": hit_evidence["hull_max"],
+			"target_hull_delta": hit_evidence["hull_delta"],
+			"target_disabled": hit_evidence["disabled"],
+			"hit_feedback_started": hit_evidence.get(
+				"hit_feedback_started",
+				false,
+			),
+			"target_hit_evidence": hit_evidence.duplicate(true),
+		})
+
+	var target_hulls_after: Dictionary = _get_target_hull_snapshots()
+	var changed_target_ids: Array[String] = []
+	for target_id in target_hulls_before:
+		if target_hulls_before[target_id] != target_hulls_after[target_id]:
+			changed_target_ids.append(String(target_id))
+	evidence["target_hulls_after"] = target_hulls_after.duplicate(true)
+	evidence["changed_target_ids"] = changed_target_ids.duplicate()
+	evidence["only_selected_target_hull_changed"] = (
+		(changed_target_ids.is_empty() and not bool(evidence["target_hit"]))
+		or (
+			changed_target_ids.size() == 1
+			and changed_target_ids[0] == String(evidence["target_id"])
+			and bool(evidence["target_in_selected_side_area"])
+		)
+	)
+	evidence["target_damage_requires_selected_side_area"] = (
+		not bool(evidence["target_hit"])
+		or bool(evidence["target_in_selected_side_area"])
+	)
+	evidence["target_hull_damage_matches_fixed_amount"] = (
+		not bool(evidence["target_hit"])
+		or int(evidence["target_hull_delta"])
+			== -int(evidence["hull_damage"])
+	)
+	_last_broadside_attempt_evidence = ship.record_broadside_result(evidence)
+	_successful_broadside_evidence = (
+		_last_broadside_attempt_evidence.duplicate(true)
+	)
+	_last_broadside_result = String(
+		_last_broadside_attempt_evidence["result"]
+	)
+	_update_broadside_view()
+
+
+func _get_broadside_target(side: String) -> InspectableTargetShipState:
+	var nearest_target: InspectableTargetShipState = null
+	var nearest_distance: float = INF
+	for target in inspection_targets:
+		if not target.can_receive_hull_damage():
+			continue
+		if not ship.is_world_point_in_broadside(side, target.global_position):
+			continue
+		var distance: float = ship.global_position.distance_to(
+			target.global_position
+		)
+		if distance < nearest_distance:
+			nearest_target = target
+			nearest_distance = distance
+	return nearest_target
+
+
+func _get_target_hull_snapshots() -> Dictionary:
+	var snapshots: Dictionary = {}
+	for target in inspection_targets:
+		snapshots[target.target_id] = target.get_hull_state().duplicate(true)
+	return snapshots
+
+
+func _update_broadside_view() -> void:
+	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
+	if bool(broadside_state["ready"]):
+		broadside_title.text = "BROADSIDE · READY"
+	else:
+		broadside_title.text = "BROADSIDE · RELOADING %.1f" % (
+			broadside_state["reload_remaining"]
+		)
+	if bool(broadside_state["firing_areas_active"]):
+		broadside_areas.text = (
+			"FIRING AREAS VISIBLE · [Q] LEFT · [F] RIGHT"
+		)
+	else:
+		broadside_areas.text = "FIRING AREAS INACTIVE WHILE DOCKED OR ASHORE"
+	broadside_result.text = _last_broadside_result
+	broadside_view.visible = _player_aboard_ship
 
 
 func _update_salvage_persistence() -> void:
@@ -3908,9 +4114,21 @@ func get_playtest_state() -> Dictionary:
 	)
 	var target_ship_states: Array[Dictionary] = []
 	var target_ship_ids: Array[String] = []
+	var target_hull_states: Dictionary = {}
+	var disabled_target_ids: Array[String] = []
 	for target in inspection_targets:
 		target_ship_states.append(target.get_playtest_state())
 		target_ship_ids.append(target.target_id)
+		var target_hull_state: Dictionary = target.get_hull_state()
+		target_hull_states[target.target_id] = target_hull_state.duplicate(true)
+		if bool(target_hull_state["disabled"]):
+			disabled_target_ids.append(target.target_id)
+	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
+	var broadside_view_text: String = "%s\n%s\n%s" % [
+		broadside_title.text,
+		broadside_areas.text,
+		broadside_result.text,
+	]
 	var active_inspection_estimate: Dictionary = (
 		_active_inspection_target.get_estimate_state()
 		if _active_inspection_target != null
@@ -4261,7 +4479,87 @@ func get_playtest_state() -> Dictionary:
 		),
 		"ship_sail_damage_system_count": 0,
 		"ship_crew_injury_system_count": 0,
-		"ship_naval_attack_system_count": 0,
+		"ship_naval_attack_system_count": 1,
+		"broadside_system_count": broadside_state["system_count"],
+		"broadside_left_control": broadside_state["left_control"],
+		"broadside_right_control": broadside_state["right_control"],
+		"broadside_valid_sides": broadside_state["valid_sides"],
+		"broadside_firing_areas_active": (
+			broadside_state["firing_areas_active"]
+		),
+		"broadside_firing_areas_visible_before_shot": (
+			broadside_state["firing_areas_visible_before_shot"]
+		),
+		"broadside_left_world_corners": (
+			broadside_state["left_world_corners"]
+		),
+		"broadside_right_world_corners": (
+			broadside_state["right_world_corners"]
+		),
+		"broadside_area_near_x": broadside_state["area_near_x"],
+		"broadside_area_far_x": broadside_state["area_far_x"],
+		"broadside_area_half_length": broadside_state["area_half_length"],
+		"broadside_hull_damage": broadside_state["hull_damage"],
+		"broadside_reload_duration": broadside_state["reload_duration"],
+		"broadside_reload_remaining": broadside_state["reload_remaining"],
+		"broadside_ready": broadside_state["ready"],
+		"broadside_attempt_count": broadside_state["attempt_count"],
+		"broadside_shot_count": broadside_state["shot_count"],
+		"broadside_hit_count": broadside_state["hit_count"],
+		"broadside_miss_count": broadside_state["miss_count"],
+		"broadside_left_shot_count": broadside_state["left_shot_count"],
+		"broadside_right_shot_count": broadside_state["right_shot_count"],
+		"broadside_reload_rejected_count": (
+			broadside_state["reload_rejected_count"]
+		),
+		"broadside_held_input_count": _broadside_held_input_count,
+		"broadside_last_result": _last_broadside_result,
+		"broadside_last_attempt_evidence": (
+			_last_broadside_attempt_evidence.duplicate(true)
+		),
+		"broadside_successful_evidence": (
+			_successful_broadside_evidence.duplicate(true)
+		),
+		"broadside_reload_rejected_evidence": (
+			_reload_rejected_broadside_evidence.duplicate(true)
+		),
+		"broadside_ship_state": broadside_state,
+		"broadside_view_count": get_tree().get_nodes_in_group(
+			"broadside_view"
+		).size(),
+		"broadside_view_visible": broadside_view.visible,
+		"broadside_view_text": (
+			broadside_view_text if broadside_view.visible else ""
+		),
+		"broadside_view_shows_left_and_right": (
+			broadside_view_text.contains("[Q] LEFT")
+			and broadside_view_text.contains("[F] RIGHT")
+		),
+		"broadside_view_shows_reload": (
+			broadside_view_text.contains("BROADSIDE · READY")
+			or broadside_view_text.contains("BROADSIDE · RELOADING")
+		),
+		"target_hull_states": target_hull_states,
+		"target_hull_max": InspectableTargetShipState.HULL_MAX,
+		"disabled_target_ids": disabled_target_ids,
+		"disabled_target_count": disabled_target_ids.size(),
+		"target_hit_feedback_duration": (
+			InspectableTargetShipState.HIT_FEEDBACK_DURATION
+		),
+		"broadside_uses_ammunition": broadside_state["uses_ammunition"],
+		"broadside_ammunition_system_count": 0,
+		"broadside_sail_damage_system_count": (
+			broadside_state["sail_damage_system_count"]
+		),
+		"broadside_boarding_system_count": (
+			broadside_state["boarding_system_count"]
+		),
+		"broadside_prize_action_system_count": (
+			broadside_state["prize_action_system_count"]
+		),
+		"broadside_heat_change_system_count": (
+			broadside_state["heat_change_system_count"]
+		),
 		"ship_defeat_system_count": 0,
 		"ship_recovery_system_count": 0,
 		"repair_system_count": repair_state["system_count"],
@@ -4450,7 +4748,7 @@ func get_playtest_state() -> Dictionary:
 		"target_inspection_changes_heat": false,
 		"target_inspection_estimated_heat_not_applied": true,
 		"active_heat_system_count": 0,
-		"target_inspection_attack_action_count": 0,
+		"target_inspection_attack_action_count": broadside_state["system_count"],
 		"target_inspection_exact_hidden_cargo_shown": false,
 		"target_inspection_hidden_threat_count": 0,
 		"target_inspection_faction_record_count": 0,

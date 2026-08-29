@@ -288,7 +288,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 22 · Target inspection"
+text = "Phase 23 · Naval attack"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -544,7 +544,45 @@ offset_right = 388.0
 offset_bottom = 462.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 14
-text = "SAIL OUT OF RANGE TO CLOSE · NO ATTACK ACTION"
+text = "SAIL OUT OF RANGE TO CLOSE · [Q] LEFT · [F] RIGHT"
+horizontal_alignment = 1
+
+[node name="BroadsideView" type="ColorRect" parent="Interface" groups=["broadside_view"]]
+visible = false
+offset_left = 390.0
+offset_top = 14.0
+offset_right = 762.0
+offset_bottom = 100.0
+color = Color(0.0313726, 0.109804, 0.133333, 0.94)
+
+[node name="BroadsideTitle" type="Label" parent="Interface/BroadsideView"]
+offset_left = 14.0
+offset_top = 7.0
+offset_right = 358.0
+offset_bottom = 29.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 16
+text = "BROADSIDE · READY"
+horizontal_alignment = 1
+
+[node name="BroadsideAreas" type="Label" parent="Interface/BroadsideView"]
+offset_left = 14.0
+offset_top = 32.0
+offset_right = 358.0
+offset_bottom = 53.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 13
+text = "FIRING AREAS VISIBLE · [Q] LEFT · [F] RIGHT"
+horizontal_alignment = 1
+
+[node name="BroadsideResult" type="Label" parent="Interface/BroadsideView"]
+offset_left = 14.0
+offset_top = 58.0
+offset_right = 358.0
+offset_bottom = 79.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "NO BROADSIDE ATTEMPT"
 horizontal_alignment = 1
 
 [node name="CargoChoiceView" type="ColorRect" parent="Interface"]
