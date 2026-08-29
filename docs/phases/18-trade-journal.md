@@ -2,6 +2,26 @@
 
 [← Phase 17: Port conditions](17-port-conditions.md) | [Phase 19: Food use →](19-food-use.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Add one trade journal screen | DONE |
+| Add 2: Record the last price state seen for each good at a visited port | DONE |
+| Add 3: Record the last stock or demand marks seen there | DONE |
+| Add 4: Record the voyage number when the player saw the market | DONE |
+| Add 5: Record a known port condition with the entry | DONE |
+| Add 6: Mark the entry as old after a completed voyage | DONE |
+| Add 7: Update the entry only when the player visits the port again | DONE |
+| Complete when: Keep the last market view without live remote updates | DONE |
+| Test 1: Visit the port and open its market | DONE |
+| Test 2: Open the journal and confirm that its values match | DONE |
+| Test 3: Leave and complete one voyage | DONE |
+| Test 4: Confirm that the entry is marked as old | DONE |
+| Test 5: Return and confirm that the entry updates | DONE |
+
 ## Goal
 
 Let the player keep useful market information without making it live information.

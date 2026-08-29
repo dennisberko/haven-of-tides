@@ -2,6 +2,7 @@ extends Node2D
 
 const TradeContact := preload("res://scripts/trade_contact.gd")
 const PortConditionState := preload("res://scripts/port_condition.gd")
+const TradeJournalState := preload("res://scripts/trade_journal.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -67,13 +68,18 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var trade_details: Label = $Interface/TradeView/TradeDetails
 @onready var trade_result: Label = $Interface/TradeView/TradeResult
 @onready var trade_controls: Label = $Interface/TradeView/TradeControls
+@onready var journal_view: ColorRect = $Interface/TradeJournalView
+@onready var journal_title: Label = $Interface/TradeJournalView/JournalTitle
+@onready var journal_status: Label = $Interface/TradeJournalView/JournalStatus
+@onready var journal_details: Label = $Interface/TradeJournalView/JournalDetails
+@onready var journal_controls: Label = $Interface/TradeJournalView/JournalControls
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
-const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M CHART"
-const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY · M CHART"
+const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M CHART · J JOURNAL"
+const DOCKED_CONTROLS_TEXT := "E GO ASHORE · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
 const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
@@ -85,6 +91,8 @@ const CONSTRUCTION_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, WASD / ARROW KEYS"
 const TRADE_BUY_CONTROLS_TEXT := "E BUY ONE LOT · X CLOSE"
 const TRADE_SELL_CONTROLS_TEXT := "E SELL ONE LOT · X CLOSE"
 const TRADE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, 1-6, WASD / ARROW KEYS"
+const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
+const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const SHORE_RETURN_DISTANCE := 64.0
 const STARTING_MONEY := 25
@@ -220,6 +228,28 @@ var _same_dock_arrival_count := 0
 var _last_completed_voyage_evidence: Dictionary = {}
 var _port_condition = PortConditionState.new()
 var _last_port_condition_update_evidence: Dictionary = {}
+var _trade_journal = TradeJournalState.new()
+var _journal_view_open := false
+var _journal_release_pending := false
+var _journal_pressed_keys: Dictionary = {}
+var _journal_open_count := 0
+var _journal_close_count := 0
+var _journal_held_input_count := 0
+var _journal_blocked_input_count := 0
+var _last_journal_action := "NOT_ATTEMPTED"
+var _journal_remote_raw_snapshot_before_voyage: Dictionary = {}
+var _journal_remote_raw_snapshot_after_voyage: Dictionary = {}
+var _journal_remote_raw_snapshot_unchanged := false
+var _journal_remote_unchanged_voyage_count := 0
+var _journal_remote_last_completed_voyage := -1
+var _journal_before_return_market_snapshot: Dictionary = {}
+var _journal_before_return_market_status := "UNKNOWN"
+var _journal_before_return_market_voyage := -1
+var _journal_before_return_market_unchanged := false
+var _journal_return_market_snapshot_before_refresh: Dictionary = {}
+var _journal_return_market_snapshot_after_refresh: Dictionary = {}
+var _journal_return_market_refresh_count := 0
+var _journal_return_market_refresh_recorded := false
 
 
 func _ready() -> void:
@@ -245,6 +275,7 @@ func _ready() -> void:
 	_update_construction_view()
 	_update_money_view()
 	_update_trade_view()
+	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -254,6 +285,7 @@ func _ready() -> void:
 	storage_view.hide()
 	construction_view.hide()
 	trade_view.hide()
+	journal_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -277,6 +309,7 @@ func _physics_process(_delta: float) -> void:
 	_update_storage_release_pending()
 	_update_construction_release_pending()
 	_update_trade_release_pending()
+	_update_journal_release_pending()
 	waypoint_display.update_positions(
 		ship.global_position,
 		player.global_position,
@@ -287,6 +320,7 @@ func _physics_process(_delta: float) -> void:
 	_update_cargo_view()
 	_update_money_view()
 	_update_trade_view()
+	_update_trade_journal_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
@@ -322,7 +356,11 @@ func _physics_process(_delta: float) -> void:
 			and ship.last_dock_id == "cove"
 		):
 			_construction_released_cove_dock = true
-		if _cargo_choice_open:
+		if _journal_view_open:
+			controls_help.text = JOURNAL_CONTROLS_TEXT
+		elif _journal_release_pending:
+			controls_help.text = JOURNAL_RELEASE_CONTROLS_TEXT
+		elif _cargo_choice_open:
 			controls_help.text = CARGO_CHOICE_CONTROLS_TEXT
 		elif _cargo_choice_release_pending or ship.navigation_release_pending:
 			controls_help.text = RELEASE_CONTROLS_TEXT
@@ -365,6 +403,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _journal_view_open:
+		_handle_trade_journal_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if _journal_release_pending:
+		if not key_event.pressed:
+			var released_key := _get_journal_key(key_event)
+			if released_key != 0:
+				_journal_pressed_keys.erase(released_key)
+			if _key_matches(key_event, KEY_E):
+				_interact_held = false
+		get_viewport().set_input_as_handled()
+		return
 	if _trade_view_open:
 		_handle_trade_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -419,6 +470,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		):
 			_interact_held = false
 		get_viewport().set_input_as_handled()
+		return
+	if _key_matches(key_event, KEY_J):
+		if key_event.pressed and not key_event.echo and _can_open_trade_journal():
+			_open_trade_journal()
+			get_viewport().set_input_as_handled()
 		return
 	if key_event.physical_keycode != KEY_E and key_event.keycode != KEY_E:
 		return
@@ -479,6 +535,240 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _handle_trade_journal_input(key_event: InputEventKey) -> void:
+	var journal_key := _get_journal_key(key_event)
+	if not key_event.pressed:
+		if journal_key != 0:
+			_journal_pressed_keys.erase(journal_key)
+		if _key_matches(key_event, KEY_E):
+			_interact_held = false
+		return
+
+	if journal_key == 0:
+		_journal_blocked_input_count += 1
+		_last_journal_action = "BLOCKED_WHILE_JOURNAL_OPEN"
+		return
+	if key_event.echo or bool(_journal_pressed_keys.get(journal_key, false)):
+		_journal_held_input_count += 1
+		_last_journal_action = "HELD_JOURNAL_CLOSE_KEY"
+		return
+
+	_journal_pressed_keys[journal_key] = true
+	_close_trade_journal()
+
+
+func _get_journal_key(key_event: InputEventKey) -> int:
+	if _key_matches(key_event, KEY_J):
+		return KEY_J
+	if _key_matches(key_event, KEY_X):
+		return KEY_X
+	return 0
+
+
+func _can_open_trade_journal() -> bool:
+	return (
+		not _dialogue_open
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not ship.navigation_release_pending
+	)
+
+
+func _open_trade_journal() -> void:
+	if not _can_open_trade_journal():
+		return
+	_journal_view_open = true
+	_journal_open_count += 1
+	_journal_pressed_keys.clear()
+	# The opening J press must be released before J can close the screen.
+	_journal_pressed_keys[KEY_J] = true
+	_last_journal_action = "OPEN_TRADE_JOURNAL"
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(true)
+	controls_help.text = JOURNAL_CONTROLS_TEXT
+	interaction_prompt.hide()
+	sign_message.hide()
+	_update_cargo_view()
+	_update_trade_journal_view()
+
+
+func _close_trade_journal() -> void:
+	if not _journal_view_open:
+		return
+	_journal_view_open = false
+	_journal_release_pending = true
+	_journal_close_count += 1
+	_last_journal_action = "CLOSE_TRADE_JOURNAL"
+	journal_view.hide()
+	player.movement_enabled = false
+	# Keep navigation blocked until every journal guard key is released.
+	ship.set_navigation_input_blocked(true)
+	_prompt_refresh_after_navigation_release = true
+	controls_help.text = JOURNAL_RELEASE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_cargo_view()
+
+
+func _record_local_port_market_in_journal(source: String) -> void:
+	var condition_state: Dictionary = (
+		_port_condition.get_playtest_state(completed_voyages)
+	)
+	var spice_state: Dictionary = port_trader.get_mark_state(completed_voyages)
+	var goods: Array = _port_condition.get_market_goods()
+	goods.append({
+		"good_name": TradeContact.GOOD_NAME,
+		"cargo_lot_name": TradeContact.GOOD_NAME,
+		"base_price_state": spice_state["base_price_state"],
+		"base_fixed_price": spice_state["base_fixed_price"],
+		"current_price_state": spice_state["current_price_state"],
+		"current_fixed_price": spice_state["current_fixed_price"],
+	})
+	var spice_stock_mark := {
+		"good_name": TradeContact.GOOD_NAME,
+		"mark_kind": spice_state["mark_kind"],
+		"mark_display": spice_state["mark_display"],
+		"marks_available": spice_state["marks_available"],
+		"mark_capacity": spice_state["mark_capacity"],
+		"marks_used": spice_state["marks_used"],
+		"used_marks": spice_state["used_marks"],
+		"return_voyages": spice_state["return_voyages"],
+		"next_return_voyage": spice_state["next_return_voyage"],
+		"voyages_until_next_return": (
+			spice_state["voyages_until_next_return"]
+		),
+		"return_after_completed_voyages": (
+			spice_state["return_after_completed_voyages"]
+		),
+	}
+	var condition_snapshot := {
+		"name": condition_state["name"],
+		"state": condition_state["state"],
+		"active": condition_state["active"],
+		"ended": condition_state["ended"],
+		"effects": (
+			"TIMBER, FOOD, AND MEDICINE ARE VALUABLE"
+			if condition_state["active"]
+			else "EFFECTS ENDED · BASE PRICE STATES RESTORED"
+		),
+		"affected_good_names": condition_state["affected_good_names"],
+		"start_voyage": condition_state["start_voyage"],
+		"end_voyage": condition_state["end_voyage"],
+		"remaining_voyages": condition_state["remaining_voyages"],
+	}
+	var before_record := _trade_journal.get_entry_snapshot()
+	var was_return_refresh := (
+		source == TradeJournalState.LOCAL_MARKET_OPEN_SOURCE
+		and not _journal_return_market_refresh_recorded
+		and not _journal_before_return_market_snapshot.is_empty()
+		and _journal_before_return_market_status == TradeJournalState.OLD_STATUS
+		and before_record == _journal_before_return_market_snapshot
+	)
+	if not _trade_journal.record_local_port_market(
+		goods,
+		spice_stock_mark,
+		condition_snapshot,
+		completed_voyages,
+		source,
+	):
+		return
+	if was_return_refresh:
+		_journal_return_market_snapshot_before_refresh = before_record.duplicate(true)
+		_journal_return_market_snapshot_after_refresh = (
+			_trade_journal.get_entry_snapshot()
+		)
+		_journal_return_market_refresh_count += 1
+		_journal_return_market_refresh_recorded = true
+	_update_trade_journal_view()
+
+
+func _update_trade_journal_view() -> void:
+	var journal_state: Dictionary = (
+		_trade_journal.get_playtest_state(completed_voyages)
+	)
+	journal_title.text = "TRADE JOURNAL"
+	journal_controls.text = "[J] OR [X] CLOSE"
+	if not bool(journal_state["known"]):
+		journal_status.text = "PORT MARKET · UNKNOWN"
+		journal_details.text = (
+			"NO SAVED PORT MARKET VISIT\n\n"
+			+ "PRICES · UNKNOWN\n"
+			+ "SPICE STOCK · UNKNOWN\n"
+			+ "PORT CONDITION · UNKNOWN\n\n"
+			+ "SAVED MARKET VIEW ONLY · NO LIVE DATA"
+		)
+	else:
+		journal_status.text = "PORT MARKET · %s" % journal_state["status"]
+		var lines := PackedStringArray([
+			"SEEN VOYAGE %d · CURRENT VOYAGE %d · AGE %d" % [
+				journal_state["seen_voyage"],
+				journal_state["current_voyage"],
+				journal_state["age"],
+			],
+			"LAST PORT MARKET VIEW · SAVED INFORMATION",
+			"",
+		])
+		for good in journal_state["goods"]:
+			lines.append("%s · %s · %d COINS · BASE %s · %d" % [
+				good["good_name"],
+				good["current_price_state"],
+				good["current_fixed_price"],
+				good["base_price_state"],
+				good["base_fixed_price"],
+			])
+		var stock_mark: Dictionary = journal_state["spice_stock_mark"]
+		lines.append("")
+		lines.append("SPICE STOCK · %s · AVAILABLE %d/%d · USED %d" % [
+			stock_mark["mark_display"],
+			stock_mark["marks_available"],
+			stock_mark["mark_capacity"],
+			stock_mark["marks_used"],
+		])
+		if stock_mark["return_voyages"].is_empty():
+			lines.append(
+				"SPICE RETURN VOYAGES · NONE · ALL MARKS AVAILABLE"
+			)
+		else:
+			var return_strings := PackedStringArray()
+			for return_voyage in stock_mark["return_voyages"]:
+				return_strings.append(str(return_voyage))
+			lines.append(
+				"SPICE RETURN VOYAGES · %s · NEXT %d · SAVED REMAINING %d" % [
+					", ".join(return_strings),
+					stock_mark["next_return_voyage"],
+					stock_mark["voyages_until_next_return"],
+				]
+			)
+		var condition: Dictionary = journal_state["condition"]
+		lines.append("")
+		lines.append("KNOWN CONDITION · %s · %s" % [
+			condition["name"],
+			condition["state"],
+		])
+		lines.append("EFFECTS · %s" % condition["effects"])
+		lines.append("START VOYAGE %d · END VOYAGE %d · SAVED REMAINING %d" % [
+			condition["start_voyage"],
+			condition["end_voyage"],
+			condition["remaining_voyages"],
+		])
+		lines.append("")
+		lines.append("SAVED MARKET VIEW ONLY · NO LIVE DATA · NO TRADE ADVICE")
+		journal_details.text = "\n".join(lines)
+	if _journal_view_open:
+		journal_view.show()
+	else:
+		journal_view.hide()
 
 
 func _handle_trade_input(key_event: InputEventKey) -> void:
@@ -552,6 +842,8 @@ func _can_open_trade_contact() -> bool:
 		and not _construction_release_pending
 		and not _trade_view_open
 		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
 	)
 
 
@@ -562,6 +854,10 @@ func _open_trade_contact() -> void:
 	_active_trade_contact = _get_near_trade_contact()
 	if _active_trade_contact == null:
 		return
+	if _active_trade_contact.is_port_trader():
+		_record_local_port_market_in_journal(
+			TradeJournalState.LOCAL_MARKET_OPEN_SOURCE
+		)
 	_trade_view_open = true
 	_trade_open_count += 1
 	_trade_pressed_keys.clear()
@@ -698,6 +994,9 @@ func _attempt_trade_purchase() -> void:
 		money_preview,
 		true,
 		due_voyage,
+	)
+	_record_local_port_market_in_journal(
+		TradeJournalState.LOCAL_PURCHASE_SOURCE
 	)
 	_successful_purchase_evidence = _last_trade_attempt_evidence.duplicate(true)
 
@@ -973,6 +1272,8 @@ func _can_open_construction_site() -> bool:
 		and not _construction_release_pending
 		and not _trade_view_open
 		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
 	)
 
 
@@ -1168,6 +1469,8 @@ func _can_open_cove_storage() -> bool:
 		and not _construction_release_pending
 		and not _trade_view_open
 		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
 	)
 
 
@@ -1488,6 +1791,8 @@ func _set_chart_visible(visible: bool) -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 	waypoint_display.set_chart_visible(visible)
@@ -1581,6 +1886,24 @@ func _update_trade_release_pending() -> void:
 	_update_interaction_prompt()
 
 
+func _update_journal_release_pending() -> void:
+	if not _journal_release_pending or _journal_view_open:
+		return
+	if _is_any_journal_guard_key_pressed():
+		player.movement_enabled = false
+		return
+
+	_journal_release_pending = false
+	_journal_pressed_keys.clear()
+	ship.set_navigation_input_blocked(
+		false,
+		_player_aboard_ship and not ship.is_docked,
+	)
+	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
+	controls_help.text = _get_context_controls_text()
+	_update_interaction_prompt()
+
+
 func _refresh_prompt_after_navigation_release() -> void:
 	if not _prompt_refresh_after_navigation_release:
 		return
@@ -1595,6 +1918,8 @@ func _refresh_prompt_after_navigation_release() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 		or ship.navigation_input_blocked
 		or ship.navigation_release_pending
 	):
@@ -1669,7 +1994,27 @@ func _is_any_trade_guard_key_pressed() -> bool:
 	)
 
 
+func _is_any_journal_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_J)
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+		or Input.is_key_pressed(KEY_4)
+		or Input.is_key_pressed(KEY_5)
+		or Input.is_key_pressed(KEY_6)
+	)
+
+
 func _get_context_controls_text() -> String:
+	if _journal_view_open:
+		return JOURNAL_CONTROLS_TEXT
+	if _journal_release_pending:
+		return JOURNAL_RELEASE_CONTROLS_TEXT
 	if _trade_view_open:
 		return (
 			TRADE_BUY_CONTROLS_TEXT
@@ -1721,6 +2066,8 @@ func _update_wreck_opportunity() -> void:
 			and not _construction_release_pending
 			and not _trade_view_open
 			and not _trade_release_pending
+			and not _journal_view_open
+			and not _journal_release_pending
 		),
 		(
 			not waypoint_display.chart_visible
@@ -1732,6 +2079,8 @@ func _update_wreck_opportunity() -> void:
 			and not _construction_release_pending
 			and not _trade_view_open
 			and not _trade_release_pending
+			and not _journal_view_open
+			and not _journal_release_pending
 		),
 	)
 
@@ -1810,7 +2159,12 @@ func _get_world_cargo_total() -> int:
 
 
 func _salvage_wreck() -> void:
-	if _trade_view_open or _trade_release_pending:
+	if (
+		_trade_view_open
+		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
+	):
 		return
 	if not wreck_opportunity.is_salvage_eligible():
 		wreck_opportunity.try_collect_timber_lot()
@@ -1957,7 +2311,12 @@ func _update_cargo_view() -> void:
 	else:
 		cargo_lines.append("PENDING  NONE")
 	cargo_details.text = "\n".join(cargo_lines)
-	if _storage_view_open or _construction_view_open or _trade_view_open:
+	if (
+		_storage_view_open
+		or _construction_view_open
+		or _trade_view_open
+		or _journal_view_open
+	):
 		cargo_view.hide()
 	else:
 		cargo_view.show()
@@ -2315,6 +2674,8 @@ func _read_sign() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 	_read_count += 1
@@ -2332,6 +2693,8 @@ func _enter_ship() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 
@@ -2357,6 +2720,8 @@ func _leave_ship_at_damaged_dock() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 
@@ -2382,6 +2747,8 @@ func _dock_ship() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 
@@ -2463,6 +2830,11 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 		}
 		return
 
+	var journal_raw_before_completion := _trade_journal.get_entry_snapshot()
+	var record_remote_journal_evidence := (
+		_trade_journal.is_known()
+		and dock_id != TradeContact.PORT_SHORE_ID
+	)
 	var completed_voyage_before := completed_voyages
 	var port_condition_before: Dictionary = (
 		_port_condition.get_playtest_state(completed_voyage_before)
@@ -2541,6 +2913,35 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 		"cove_marks_after": cove_buyer.get_mark_state(completed_voyages),
 		"cove_marks_returned": cove_marks_returned,
 	}
+	var journal_raw_after_completion := _trade_journal.get_entry_snapshot()
+	if record_remote_journal_evidence:
+		_journal_remote_raw_snapshot_before_voyage = (
+			journal_raw_before_completion.duplicate(true)
+		)
+		_journal_remote_raw_snapshot_after_voyage = (
+			journal_raw_after_completion.duplicate(true)
+		)
+		_journal_remote_raw_snapshot_unchanged = (
+			journal_raw_before_completion == journal_raw_after_completion
+		)
+		if _journal_remote_raw_snapshot_unchanged:
+			_journal_remote_unchanged_voyage_count += 1
+		_journal_remote_last_completed_voyage = completed_voyages
+	if dock_id == TradeContact.PORT_SHORE_ID and _trade_journal.is_known():
+		_journal_before_return_market_snapshot = (
+			journal_raw_after_completion.duplicate(true)
+		)
+		_journal_before_return_market_status = (
+			_trade_journal.get_status(completed_voyages)
+		)
+		_journal_before_return_market_voyage = completed_voyages
+		_journal_before_return_market_unchanged = (
+			journal_raw_before_completion == journal_raw_after_completion
+			and _journal_before_return_market_status
+				== TradeJournalState.OLD_STATUS
+		)
+		_journal_return_market_refresh_recorded = false
+	_update_trade_journal_view()
 
 
 func _go_ashore() -> void:
@@ -2553,6 +2954,8 @@ func _go_ashore() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 
@@ -2601,6 +3004,8 @@ func _return_to_ship() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 	if not ship.is_docked or ship.current_dock_id != _player_shore_id:
@@ -2642,6 +3047,8 @@ func _start_dialogue() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 	):
 		return
 	_dialogue_lines = _get_resident_dialogue()
@@ -2730,6 +3137,8 @@ func _update_interaction_prompt() -> void:
 		or _construction_release_pending
 		or _trade_view_open
 		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
 		or ship.navigation_release_pending
 	):
 		interaction_prompt.hide()
@@ -2816,6 +3225,88 @@ func get_playtest_state() -> Dictionary:
 	var port_condition_state: Dictionary = (
 		_port_condition.get_playtest_state(completed_voyages)
 	)
+	var journal_state: Dictionary = (
+		_trade_journal.get_playtest_state(completed_voyages)
+	)
+	var journal_good_names: Array = []
+	var journal_current_price_states := {}
+	var journal_current_fixed_prices := {}
+	var journal_base_price_states := {}
+	var journal_base_fixed_prices := {}
+	for journal_good in journal_state["goods"]:
+		var journal_good_name := String(journal_good["good_name"])
+		journal_good_names.append(journal_good_name)
+		journal_current_price_states[journal_good_name] = (
+			journal_good["current_price_state"]
+		)
+		journal_current_fixed_prices[journal_good_name] = (
+			journal_good["current_fixed_price"]
+		)
+		journal_base_price_states[journal_good_name] = (
+			journal_good["base_price_state"]
+		)
+		journal_base_fixed_prices[journal_good_name] = (
+			journal_good["base_fixed_price"]
+		)
+	var journal_view_full_text := (
+		"%s\n%s\n%s\n%s" % [
+			journal_title.text,
+			journal_status.text,
+			journal_details.text,
+			journal_controls.text,
+		]
+		if journal_view.visible
+		else ""
+	)
+	var journal_visible_text_matches_saved_goods := (
+		bool(journal_state["known"]) and journal_view.visible
+	)
+	for journal_good in journal_state["goods"]:
+		journal_visible_text_matches_saved_goods = (
+			journal_visible_text_matches_saved_goods
+			and journal_view_full_text.contains(
+				"%s · %s · %d COINS · BASE %s · %d" % [
+					journal_good["good_name"],
+					journal_good["current_price_state"],
+					journal_good["current_fixed_price"],
+					journal_good["base_price_state"],
+					journal_good["base_fixed_price"],
+				]
+			)
+		)
+	var journal_visible_text_matches_saved_mark := false
+	var journal_visible_text_matches_saved_condition := false
+	if bool(journal_state["known"]) and journal_view.visible:
+		var saved_mark: Dictionary = journal_state["spice_stock_mark"]
+		var saved_condition: Dictionary = journal_state["condition"]
+		journal_visible_text_matches_saved_mark = (
+			journal_view_full_text.contains(
+				"SPICE STOCK · %s · AVAILABLE %d/%d · USED %d" % [
+					saved_mark["mark_display"],
+					saved_mark["marks_available"],
+					saved_mark["mark_capacity"],
+					saved_mark["marks_used"],
+				]
+			)
+		)
+		journal_visible_text_matches_saved_condition = (
+			journal_view_full_text.contains(
+				"KNOWN CONDITION · %s · %s" % [
+					saved_condition["name"],
+					saved_condition["state"],
+				]
+			)
+			and journal_view_full_text.contains(
+				"EFFECTS · %s" % saved_condition["effects"]
+			)
+			and journal_view_full_text.contains(
+				"START VOYAGE %d · END VOYAGE %d · SAVED REMAINING %d" % [
+					saved_condition["start_voyage"],
+					saved_condition["end_voyage"],
+					saved_condition["remaining_voyages"],
+				]
+			)
+		)
 	var condition_cargo_lot_names: Array = (
 		port_condition_state["affected_cargo_lot_names"]
 	)
@@ -3172,6 +3663,257 @@ func get_playtest_state() -> Dictionary:
 		"last_completed_voyage_evidence": (
 			_last_completed_voyage_evidence.duplicate(true)
 		),
+		"journal_object_count": journal_state["owner_count"],
+		"journal_screen_count": (
+			get_tree().get_nodes_in_group("trade_journal_screen").size()
+		),
+		"journal_port_entry_count": journal_state["port_entry_count"],
+		"journal_known": journal_state["known"],
+		"journal_unknown": journal_state["unknown"],
+		"journal_status": journal_state["status"],
+		"journal_fresh": journal_state["fresh"],
+		"journal_old": journal_state["old"],
+		"journal_seen_voyage": journal_state["seen_voyage"],
+		"journal_current_voyage": journal_state["current_voyage"],
+		"journal_age": journal_state["age"],
+		"journal_entry_raw_snapshot": journal_state["raw_entry"],
+		"journal_recorded_goods": journal_state["goods"],
+		"journal_recorded_good_count": journal_state["good_count"],
+		"journal_recorded_good_names": journal_good_names,
+		"journal_expected_good_names": (
+			TradeJournalState.RECORDED_GOOD_NAMES.duplicate()
+		),
+		"journal_has_exact_four_goods": (
+			int(journal_state["good_count"]) == 4
+			and journal_good_names
+				== TradeJournalState.RECORDED_GOOD_NAMES
+		),
+		"journal_current_price_states": journal_current_price_states,
+		"journal_current_fixed_prices": journal_current_fixed_prices,
+		"journal_base_price_states": journal_base_price_states,
+		"journal_base_fixed_prices": journal_base_fixed_prices,
+		"journal_spice_stock_mark_snapshot": (
+			journal_state["spice_stock_mark"]
+		),
+		"journal_condition_snapshot": journal_state["condition"],
+		"journal_record_count": journal_state["record_count"],
+		"journal_market_open_record_count": (
+			journal_state["market_open_record_count"]
+		),
+		"journal_successful_purchase_refresh_count": (
+			journal_state["purchase_refresh_count"]
+		),
+		"journal_last_record_source": journal_state["last_record_source"],
+		"journal_record_source_counts": journal_state["record_source_counts"],
+		"journal_allowed_record_sources": (
+			journal_state["allowed_record_sources"]
+		),
+		"journal_dock_arrival_record_count": 0,
+		"journal_voyage_completion_record_count": 0,
+		"journal_cove_market_record_count": 0,
+		"journal_screen_open_record_count": 0,
+		"journal_remote_record_count": 0,
+		"journal_remote_raw_snapshot_before_voyage": (
+			_journal_remote_raw_snapshot_before_voyage.duplicate(true)
+		),
+		"journal_remote_raw_snapshot_after_voyage": (
+			_journal_remote_raw_snapshot_after_voyage.duplicate(true)
+		),
+		"journal_remote_raw_snapshot_unchanged": (
+			_journal_remote_raw_snapshot_unchanged
+		),
+		"journal_remote_saved_goods_unchanged": (
+			not _journal_remote_raw_snapshot_before_voyage.is_empty()
+			and _journal_remote_raw_snapshot_before_voyage.get("goods", [])
+				== _journal_remote_raw_snapshot_after_voyage.get("goods", [])
+		),
+		"journal_remote_saved_spice_mark_unchanged": (
+			not _journal_remote_raw_snapshot_before_voyage.is_empty()
+			and _journal_remote_raw_snapshot_before_voyage.get(
+				"spice_stock_mark",
+				{},
+			) == _journal_remote_raw_snapshot_after_voyage.get(
+				"spice_stock_mark",
+				{},
+			)
+		),
+		"journal_remote_saved_condition_unchanged": (
+			not _journal_remote_raw_snapshot_before_voyage.is_empty()
+			and _journal_remote_raw_snapshot_before_voyage.get("condition", {})
+				== _journal_remote_raw_snapshot_after_voyage.get("condition", {})
+		),
+		"journal_remote_seen_voyage_unchanged": (
+			not _journal_remote_raw_snapshot_before_voyage.is_empty()
+			and _journal_remote_raw_snapshot_before_voyage.get("seen_voyage", -1)
+				== _journal_remote_raw_snapshot_after_voyage.get(
+					"seen_voyage",
+					-2,
+				)
+		),
+		"journal_remote_live_countdown_did_not_leak": (
+			_journal_remote_raw_snapshot_unchanged
+			and _journal_remote_last_completed_voyage
+				> int(_journal_remote_raw_snapshot_after_voyage.get(
+					"seen_voyage",
+					-1,
+				))
+		),
+		"journal_remote_unchanged_voyage_count": (
+			_journal_remote_unchanged_voyage_count
+		),
+		"journal_remote_last_completed_voyage": (
+			_journal_remote_last_completed_voyage
+		),
+		"journal_before_return_market_snapshot": (
+			_journal_before_return_market_snapshot.duplicate(true)
+		),
+		"journal_before_return_market_status": (
+			_journal_before_return_market_status
+		),
+		"journal_before_return_market_voyage": (
+			_journal_before_return_market_voyage
+		),
+		"journal_before_return_market_is_old": (
+			_journal_before_return_market_status
+				== TradeJournalState.OLD_STATUS
+		),
+		"journal_before_return_market_unchanged": (
+			_journal_before_return_market_unchanged
+		),
+		"journal_return_market_snapshot_before_refresh": (
+			_journal_return_market_snapshot_before_refresh.duplicate(true)
+		),
+		"journal_return_market_snapshot_after_refresh": (
+			_journal_return_market_snapshot_after_refresh.duplicate(true)
+		),
+		"journal_return_market_refresh_count": (
+			_journal_return_market_refresh_count
+		),
+		"journal_return_market_is_fresh": (
+			_journal_return_market_refresh_count > 0
+			and bool(journal_state["fresh"])
+		),
+		"journal_return_market_seen_current_voyage": (
+			_journal_return_market_refresh_count > 0
+			and int(journal_state["seen_voyage"]) == completed_voyages
+		),
+		"journal_return_market_condition_is_saved_ended_state": (
+			_journal_return_market_refresh_count > 0
+			and (journal_state["condition"] as Dictionary).get("state", "")
+				== "ENDED"
+		),
+		"journal_return_market_spice_stock_is_saved_restored_state": (
+			_journal_return_market_refresh_count > 0
+			and int((journal_state["spice_stock_mark"] as Dictionary).get(
+				"marks_available",
+				-1,
+			)) == int((journal_state["spice_stock_mark"] as Dictionary).get(
+				"mark_capacity",
+				-2,
+			))
+		),
+		"journal_view_open": _journal_view_open,
+		"journal_view_visible": journal_view.visible,
+		"journal_release_pending": _journal_release_pending,
+		"journal_input_blocked": (
+			(_journal_view_open or _journal_release_pending)
+			and not player_state["movement_enabled"]
+		),
+		"journal_open_count": _journal_open_count,
+		"journal_close_count": _journal_close_count,
+		"journal_held_input_count": _journal_held_input_count,
+		"journal_blocked_input_count": _journal_blocked_input_count,
+		"journal_pressed_key_count": _journal_pressed_keys.size(),
+		"journal_last_action": _last_journal_action,
+		"journal_can_open_now": _can_open_trade_journal(),
+		"journal_open_blocked_by_modes": {
+			"chart": waypoint_state["chart_visible"] and not _journal_view_open,
+			"chart_release": _chart_release_pending and not _journal_view_open,
+			"cargo_choice": _cargo_choice_open and not _journal_view_open,
+			"cargo_release": (
+				_cargo_choice_release_pending and not _journal_view_open
+			),
+			"storage": _storage_view_open and not _journal_view_open,
+			"storage_release": _storage_release_pending and not _journal_view_open,
+			"construction": _construction_view_open and not _journal_view_open,
+			"construction_release": (
+				_construction_release_pending and not _journal_view_open
+			),
+			"trade": _trade_view_open and not _journal_view_open,
+			"trade_release": _trade_release_pending and not _journal_view_open,
+			"dialogue": _dialogue_open and not _journal_view_open,
+		},
+		"journal_release_guard_keys": (
+			"J_X_E_M_1_TO_6_WASD_AND_ARROW_KEYS"
+		),
+		"journal_view_title": journal_title.text,
+		"journal_view_status": journal_status.text,
+		"journal_view_details": journal_details.text,
+		"journal_view_controls": journal_controls.text,
+		"journal_view_text": journal_view_full_text,
+		"journal_visible_text_has_port_market": (
+			journal_view_full_text.contains("PORT MARKET")
+		),
+		"journal_visible_text_has_status": (
+			journal_view_full_text.contains(String(journal_state["status"]))
+		),
+		"journal_visible_text_has_exact_saved_goods": (
+			journal_view_full_text.contains("TIMBER")
+			and journal_view_full_text.contains("FOOD")
+			and journal_view_full_text.contains("MEDICINE")
+			and journal_view_full_text.contains("SPICE LOT")
+		),
+		"journal_visible_text_has_saved_spice_marks": (
+			not bool(journal_state["known"])
+			or journal_view_full_text.contains("SPICE STOCK")
+		),
+		"journal_visible_text_has_saved_condition": (
+			not bool(journal_state["known"])
+			or (
+				journal_view_full_text.contains("STORM DAMAGE")
+				and journal_view_full_text.contains("SAVED REMAINING")
+			)
+		),
+		"journal_visible_text_matches_saved_goods": (
+			journal_visible_text_matches_saved_goods
+		),
+		"journal_visible_text_matches_saved_spice_mark": (
+			journal_visible_text_matches_saved_mark
+		),
+		"journal_visible_text_matches_saved_condition": (
+			journal_visible_text_matches_saved_condition
+		),
+		"journal_modal_blocks": {
+			"walking": _journal_view_open and not player_state["movement_enabled"],
+			"sailing": (
+				_journal_view_open and ship_state["navigation_input_blocked"]
+			),
+			"chart": _journal_view_open and not waypoint_state["chart_visible"],
+			"trade": _journal_view_open and not _trade_view_open,
+			"storage": _journal_view_open and not _storage_view_open,
+			"construction": (
+				_journal_view_open and not _construction_view_open
+			),
+			"cargo_choice": _journal_view_open and not _cargo_choice_open,
+			"salvage": _journal_view_open,
+			"docking": _journal_view_open,
+			"shore_transitions": _journal_view_open,
+			"dialogue": _journal_view_open and not _dialogue_open,
+			"slot_keys": _journal_view_open,
+			"other_interactions": _journal_view_open,
+		},
+		"journal_rumor_system_count": 0,
+		"journal_upgrade_system_count": 0,
+		"journal_advice_system_count": 0,
+		"journal_live_market_update_system_count": 0,
+		"journal_walking_control_help": WALKING_CONTROLS_TEXT,
+		"journal_sailing_control_help": SAILING_CONTROLS_TEXT,
+		"journal_docked_control_help": DOCKED_CONTROLS_TEXT,
+		"journal_normal_control_help_has_journal": (
+			WALKING_CONTROLS_TEXT.contains("J JOURNAL")
+			and SAILING_CONTROLS_TEXT.contains("J JOURNAL")
+			and DOCKED_CONTROLS_TEXT.contains("J JOURNAL")
+		),
 		"condition_count": port_condition_state["condition_count"],
 		"active_condition_count": (
 			port_condition_state["active_condition_count"]
@@ -3468,6 +4210,7 @@ func get_playtest_state() -> Dictionary:
 			or _storage_release_pending
 			or _construction_release_pending
 			or _trade_release_pending
+			or _journal_release_pending
 		),
 		"camera_position": travel_camera.global_position,
 		"camera_target": camera_target,
