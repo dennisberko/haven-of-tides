@@ -184,6 +184,7 @@ collision_layer = 0
 collision_mask = 1
 script = ExtResource("13_trade")
 contact_kind = 1
+mark_capacity = 1
 
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/CoveBuyer"]
 shape = SubResource("CircleShape2D_trade_contact")
@@ -194,6 +195,7 @@ position = Vector2(2760, 480)
 collision_layer = 0
 collision_mask = 1
 script = ExtResource("13_trade")
+mark_capacity = 1
 
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/PortTrader"]
 shape = SubResource("CircleShape2D_trade_contact")
@@ -243,7 +245,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 15 · Price states"
+text = "Phase 16 · Stock and demand"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -468,12 +470,12 @@ horizontal_alignment = 1
 
 [node name="TradeDetails" type="Label" parent="Interface/TradeView"]
 offset_left = 38.0
-offset_top = 82.0
+offset_top = 72.0
 offset_right = 722.0
-offset_bottom = 258.0
+offset_bottom = 270.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
-theme_override_constants/line_spacing = 8
-theme_override_font_sizes/font_size = 21
+theme_override_constants/line_spacing = 4
+theme_override_font_sizes/font_size = 18
 text = "ONE GOOD · PRICE STATE · FIXED PRICE"
 horizontal_alignment = 1
 
@@ -481,7 +483,7 @@ horizontal_alignment = 1
 offset_left = 38.0
 offset_top = 278.0
 offset_right = 722.0
-offset_bottom = 340.0
+offset_bottom = 352.0
 theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
 theme_override_font_sizes/font_size = 20
 text = "READY"

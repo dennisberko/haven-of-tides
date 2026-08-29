@@ -12,6 +12,11 @@ enum PriceState {
 	VALUABLE,
 }
 
+enum MarkKind {
+	STOCK,
+	DEMAND,
+}
+
 const GOOD_NAME := "SPICE LOT"
 const CHEAP_PRICE := 20
 const NORMAL_PRICE := 25
@@ -27,10 +32,19 @@ const CONTACT_PRICE_STATES := {
 }
 const PORT_SHORE_ID := "port"
 const COVE_SHORE_ID := "cove"
+const MARK_RETURN_VOYAGES := 2
+const FILLED_MARK := "●"
+const EMPTY_MARK := "○"
 
 @export_enum("PORT TRADER", "COVE BUYER") var contact_kind: int = (
 	ContactKind.PORT_TRADER
 )
+@export_range(1, 3, 1) var mark_capacity := 1
+
+var _used_mark_return_voyages: Array[int] = []
+var _mark_use_count := 0
+var _mark_return_count := 0
+var _mark_rollback_count := 0
 
 
 func is_port_trader() -> bool:
@@ -49,8 +63,38 @@ func get_shore_id() -> String:
 	return PORT_SHORE_ID if is_port_trader() else COVE_SHORE_ID
 
 
-func get_price_state() -> int:
+func get_mark_kind() -> int:
+	return MarkKind.STOCK if is_port_trader() else MarkKind.DEMAND
+
+
+func get_mark_kind_name() -> String:
+	return String(MarkKind.keys()[get_mark_kind()])
+
+
+func get_available_mark_count() -> int:
+	return mark_capacity - _used_mark_return_voyages.size()
+
+
+func get_used_mark_count() -> int:
+	return _used_mark_return_voyages.size()
+
+
+func is_trade_available() -> bool:
+	return get_available_mark_count() > 0
+
+
+func get_base_price_state() -> int:
 	return int(CONTACT_PRICE_STATES[contact_kind])
+
+
+func get_base_price_state_name() -> String:
+	return String(PriceState.keys()[get_base_price_state()])
+
+
+func get_price_state() -> int:
+	if is_cove_buyer() and not is_trade_available():
+		return PriceState.NORMAL
+	return get_base_price_state()
 
 
 func get_price_state_name() -> String:
@@ -76,6 +120,87 @@ func get_money_preview(money_before: int) -> Dictionary:
 	}
 
 
+func use_one_mark(completed_voyage: int) -> int:
+	if not is_trade_available():
+		return -1
+	var due_voyage: int = completed_voyage + MARK_RETURN_VOYAGES
+	_used_mark_return_voyages.append(due_voyage)
+	_used_mark_return_voyages.sort()
+	_mark_use_count += 1
+	return due_voyage
+
+
+func rollback_mark_use(due_voyage: int) -> bool:
+	for index in range(_used_mark_return_voyages.size() - 1, -1, -1):
+		if _used_mark_return_voyages[index] != due_voyage:
+			continue
+		_used_mark_return_voyages.remove_at(index)
+		_mark_use_count -= 1
+		_mark_rollback_count += 1
+		return true
+	return false
+
+
+func restore_due_marks(completed_voyage: int) -> int:
+	var restored_count := 0
+	for index in range(_used_mark_return_voyages.size() - 1, -1, -1):
+		if _used_mark_return_voyages[index] > completed_voyage:
+			continue
+		_used_mark_return_voyages.remove_at(index)
+		restored_count += 1
+	_mark_return_count += restored_count
+	return restored_count
+
+
+func get_mark_display() -> String:
+	var marks := PackedStringArray()
+	for index in range(mark_capacity):
+		marks.append(
+			FILLED_MARK if index < get_available_mark_count() else EMPTY_MARK
+		)
+	return " ".join(marks)
+
+
+func get_mark_state(completed_voyage: int) -> Dictionary:
+	var used_marks: Array[Dictionary] = []
+	for due_voyage in _used_mark_return_voyages:
+		used_marks.append({
+			"due_voyage": due_voyage,
+			"voyages_remaining": maxi(0, due_voyage - completed_voyage),
+		})
+	var next_return_voyage := -1
+	var voyages_until_next_return := 0
+	if not _used_mark_return_voyages.is_empty():
+		next_return_voyage = _used_mark_return_voyages[0]
+		voyages_until_next_return = maxi(
+			0,
+			next_return_voyage - completed_voyage,
+		)
+	return {
+		"mark_kind": get_mark_kind_name(),
+		"mark_capacity": mark_capacity,
+		"marks_available": get_available_mark_count(),
+		"marks_used": get_used_mark_count(),
+		"mark_display": get_mark_display(),
+		"used_marks": used_marks,
+		"return_voyages": _used_mark_return_voyages.duplicate(),
+		"next_return_voyage": next_return_voyage,
+		"due_voyage": next_return_voyage,
+		"voyages_until_next_return": voyages_until_next_return,
+		"voyages_remaining": voyages_until_next_return,
+		"completed_voyage": completed_voyage,
+		"return_after_completed_voyages": MARK_RETURN_VOYAGES,
+		"base_price_state": get_base_price_state_name(),
+		"current_price_state": get_price_state_name(),
+		"base_fixed_price": int(FIXED_PRICES[get_base_price_state()]),
+		"current_fixed_price": get_fixed_price(),
+		"trade_available": is_trade_available(),
+		"mark_use_count": _mark_use_count,
+		"mark_return_count": _mark_return_count,
+		"mark_rollback_count": _mark_rollback_count,
+	}
+
+
 static func get_fixed_price_map() -> Dictionary:
 	return {
 		"CHEAP": CHEAP_PRICE,
@@ -84,7 +209,7 @@ static func get_fixed_price_map() -> Dictionary:
 	}
 
 
-func get_playtest_state() -> Dictionary:
+func get_playtest_state(completed_voyage: int = 0) -> Dictionary:
 	var interaction_range := 0.0
 	var interaction_region_count := 0
 	for child in get_children():
@@ -95,7 +220,7 @@ func get_playtest_state() -> Dictionary:
 				interaction_range = (
 					collision_shape.shape as CircleShape2D
 				).radius
-	return {
+	var state := {
 		"contact_kind": ContactKind.keys()[contact_kind],
 		"display_name": get_display_name(),
 		"shore_id": get_shore_id(),
@@ -106,14 +231,19 @@ func get_playtest_state() -> Dictionary:
 		"good_name": GOOD_NAME,
 		"shown_good_count": 1,
 		"shown_good_state_count": 1,
+		"base_price_state": get_base_price_state_name(),
 		"price_state": get_price_state_name(),
+		"current_price_state": get_price_state_name(),
 		"price_state_index": get_price_state(),
 		"fixed_price": get_fixed_price(),
+		"current_fixed_price": get_fixed_price(),
 		"fixed_price_map": get_fixed_price_map(),
-		"state_fixed_for_contact_kind": true,
+		"state_fixed_for_contact_kind": is_port_trader() or is_trade_available(),
 		"buy_price": CHEAP_PRICE,
 		"sell_price": VALUABLE_PRICE,
 	}
+	state.merge(get_mark_state(completed_voyage), true)
+	return state
 
 
 func _draw() -> void:

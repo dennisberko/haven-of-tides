@@ -212,6 +212,11 @@ var _trade_sailed_from_port := false
 var _trade_cove_docked := false
 var _trade_cove_ashore := false
 var _trade_persistence_holds := false
+var completed_voyages := 0
+var _voyage_departure_dock_id := ""
+var _voyage_departure_count := 0
+var _same_dock_arrival_count := 0
+var _last_completed_voyage_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -290,6 +295,8 @@ func _physics_process(_delta: float) -> void:
 		var available_dock_id: String = ship.get_available_dock_id()
 		var ship_docked: bool = ship.is_docked
 		var salvage_eligible := wreck_opportunity.is_salvage_eligible()
+		if _last_ship_docked and not ship_docked:
+			_record_voyage_departure(String(ship.last_dock_id))
 		if (
 			_last_ship_docked
 			and not ship_docked
@@ -559,9 +566,13 @@ func _open_trade_contact() -> void:
 	_trade_pressed_keys[KEY_E] = true
 	_last_trade_action = "OPEN_%s" % _active_trade_contact.get_display_name().replace(" ", "_")
 	_last_trade_result = (
-		"READY · BUY ONE LOT"
-		if _active_trade_contact.is_port_trader()
-		else "READY · SELL ONE LOT"
+		"READY · %s ONE LOT" % (
+			"BUY" if _active_trade_contact.is_port_trader() else "SELL"
+		)
+		if _active_trade_contact.is_trade_available()
+		else "UNAVAILABLE · NO %s MARKS" % (
+			_active_trade_contact.get_mark_kind_name()
+		)
 	)
 	player.movement_enabled = false
 	ship.set_navigation_input_blocked(true)
@@ -608,11 +619,16 @@ func _attempt_trade_purchase() -> void:
 	_last_trade_action = "BUY_ONE_%s" % TradeContact.GOOD_NAME.replace(" ", "_")
 	var money_before := money
 	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var mark_state_before: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
 	var fixed_price: int = _active_trade_contact.get_fixed_price()
 	var money_preview: Dictionary = _active_trade_contact.get_money_preview(
 		money_before
 	)
 	var denial_reasons := PackedStringArray()
+	if not _active_trade_contact.is_trade_available():
+		denial_reasons.append("NO STOCK MARKS")
 	if money < fixed_price:
 		denial_reasons.append("NEED %d COINS" % fixed_price)
 	if not ship.can_keep_cargo_lot():
@@ -620,13 +636,47 @@ func _attempt_trade_purchase() -> void:
 	if not denial_reasons.is_empty():
 		_trade_denied_purchase_count += 1
 		_last_trade_result = "PURCHASE DENIED · %s" % " · ".join(denial_reasons)
-		_record_trade_attempt(money_before, cargo_before, money_preview, false)
+		_record_trade_attempt(
+			money_before,
+			cargo_before,
+			mark_state_before,
+			money_preview,
+			false,
+		)
+		return
+
+	var due_voyage: int = _active_trade_contact.use_one_mark(completed_voyages)
+	if due_voyage < 0:
+		_trade_denied_purchase_count += 1
+		_last_trade_result = "PURCHASE DENIED · STOCK MARK DID NOT CHANGE"
+		_record_trade_attempt(
+			money_before,
+			cargo_before,
+			mark_state_before,
+			money_preview,
+			false,
+		)
 		return
 
 	if not ship.keep_cargo_lot(TradeContact.GOOD_NAME):
+		var rollback_succeeded: bool = (
+			_active_trade_contact.rollback_mark_use(due_voyage)
+		)
 		_trade_denied_purchase_count += 1
-		_last_trade_result = "PURCHASE DENIED · SHIP CARGO DID NOT CHANGE"
-		_record_trade_attempt(money_before, cargo_before, money_preview, false)
+		_last_trade_result = (
+			"PURCHASE DENIED · CARGO FAILED · STOCK MARK ROLLED BACK"
+			if rollback_succeeded
+			else "PURCHASE ERROR · STOCK MARK ROLLBACK FAILED"
+		)
+		_record_trade_attempt(
+			money_before,
+			cargo_before,
+			mark_state_before,
+			money_preview,
+			false,
+			due_voyage,
+			rollback_succeeded,
+		)
 		return
 
 	money -= fixed_price
@@ -638,7 +688,14 @@ func _attempt_trade_purchase() -> void:
 		TradeContact.GOOD_NAME,
 		fixed_price,
 	]
-	_record_trade_attempt(money_before, cargo_before, money_preview, true)
+	_record_trade_attempt(
+		money_before,
+		cargo_before,
+		mark_state_before,
+		money_preview,
+		true,
+		due_voyage,
+	)
 	_successful_purchase_evidence = _last_trade_attempt_evidence.duplicate(true)
 
 
@@ -654,20 +711,63 @@ func _attempt_trade_sale() -> void:
 	_last_trade_action = "SELL_ONE_%s" % TradeContact.GOOD_NAME.replace(" ", "_")
 	var money_before := money
 	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var mark_state_before: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	# Capture the active Valuable price before the demand mark changes the state.
 	var fixed_price: int = _active_trade_contact.get_fixed_price()
 	var money_preview: Dictionary = _active_trade_contact.get_money_preview(
 		money_before
 	)
+	var denial_reasons := PackedStringArray()
+	if not _active_trade_contact.is_trade_available():
+		denial_reasons.append("NO DEMAND MARKS")
 	if not cargo_before.has(TradeContact.GOOD_NAME):
+		denial_reasons.append("NO %s IN SHIP CARGO" % TradeContact.GOOD_NAME)
+	if not denial_reasons.is_empty():
 		_trade_denied_sale_count += 1
-		_last_trade_result = "SALE DENIED · NO %s IN SHIP CARGO" % TradeContact.GOOD_NAME
-		_record_trade_attempt(money_before, cargo_before, money_preview, false)
+		_last_trade_result = "SALE DENIED · %s" % " · ".join(denial_reasons)
+		_record_trade_attempt(
+			money_before,
+			cargo_before,
+			mark_state_before,
+			money_preview,
+			false,
+		)
+		return
+
+	var due_voyage: int = _active_trade_contact.use_one_mark(completed_voyages)
+	if due_voyage < 0:
+		_trade_denied_sale_count += 1
+		_last_trade_result = "SALE DENIED · DEMAND MARK DID NOT CHANGE"
+		_record_trade_attempt(
+			money_before,
+			cargo_before,
+			mark_state_before,
+			money_preview,
+			false,
+		)
 		return
 
 	if not ship.remove_cargo_lot(TradeContact.GOOD_NAME):
+		var rollback_succeeded: bool = (
+			_active_trade_contact.rollback_mark_use(due_voyage)
+		)
 		_trade_denied_sale_count += 1
-		_last_trade_result = "SALE DENIED · SHIP CARGO DID NOT CHANGE"
-		_record_trade_attempt(money_before, cargo_before, money_preview, false)
+		_last_trade_result = (
+			"SALE DENIED · CARGO FAILED · DEMAND MARK ROLLED BACK"
+			if rollback_succeeded
+			else "SALE ERROR · DEMAND MARK ROLLBACK FAILED"
+		)
+		_record_trade_attempt(
+			money_before,
+			cargo_before,
+			mark_state_before,
+			money_preview,
+			false,
+			due_voyage,
+			rollback_succeeded,
+		)
 		return
 
 	money += fixed_price
@@ -676,20 +776,50 @@ func _attempt_trade_sale() -> void:
 		TradeContact.GOOD_NAME,
 		fixed_price,
 	]
-	_record_trade_attempt(money_before, cargo_before, money_preview, true)
+	_record_trade_attempt(
+		money_before,
+		cargo_before,
+		mark_state_before,
+		money_preview,
+		true,
+		due_voyage,
+	)
 	_successful_sale_evidence = _last_trade_attempt_evidence.duplicate(true)
 
 
 func _record_trade_attempt(
 	money_before: int,
 	cargo_before: Array[String],
+	mark_state_before: Dictionary,
 	money_preview: Dictionary,
 	success: bool,
+	consumed_due_voyage: int = -1,
+	rollback_succeeded: bool = false,
 ) -> void:
 	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var mark_state_after: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
 	var preview_matches_actual := (
 		money == int(money_preview["money_after"])
 		and money - money_before == int(money_preview["money_delta"])
+	)
+	var money_unchanged := money == money_before
+	var cargo_unchanged := cargo_after == cargo_before
+	var marks_unchanged := _trade_mark_resources_equal(
+		mark_state_before,
+		mark_state_after,
+	)
+	var expected_cargo_delta := (
+		1 if _active_trade_contact.is_port_trader() else -1
+	)
+	var successful_changes_hold := (
+		money - money_before == int(money_preview["money_delta"])
+		and cargo_after.size() - cargo_before.size() == expected_cargo_delta
+		and int(mark_state_after["marks_available"])
+			== int(mark_state_before["marks_available"]) - 1
+		and int(mark_state_after["marks_used"])
+			== int(mark_state_before["marks_used"]) + 1
 	)
 	_last_trade_attempt_evidence = {
 		"action": _last_trade_action,
@@ -697,7 +827,11 @@ func _record_trade_attempt(
 		"success": success,
 		"good_name": TradeContact.GOOD_NAME,
 		"price_state": money_preview["price_state"],
+		"price_state_before": money_preview["price_state"],
+		"price_state_after": mark_state_after["current_price_state"],
 		"fixed_price": money_preview["fixed_price"],
+		"fixed_price_before": money_preview["fixed_price"],
+		"fixed_price_after": mark_state_after["current_fixed_price"],
 		"fixed_price_map": TradeContact.get_fixed_price_map(),
 		"buy_price": TradeContact.get_fixed_price_map()["CHEAP"],
 		"sell_price": TradeContact.get_fixed_price_map()["VALUABLE"],
@@ -710,13 +844,48 @@ func _record_trade_attempt(
 		"cargo_after": cargo_after,
 		"money_delta": money - money_before,
 		"cargo_delta": cargo_after.size() - cargo_before.size(),
+		"completed_voyage": completed_voyages,
+		"mark_kind": mark_state_before["mark_kind"],
+		"mark_capacity": mark_state_before["mark_capacity"],
+		"marks_available_before": mark_state_before["marks_available"],
+		"marks_available_after": mark_state_after["marks_available"],
+		"marks_used_before": mark_state_before["marks_used"],
+		"marks_used_after": mark_state_after["marks_used"],
+		"mark_return_voyages_before": mark_state_before["return_voyages"],
+		"mark_return_voyages_after": mark_state_after["return_voyages"],
+		"due_voyage": consumed_due_voyage,
+		"expected_due_voyage": (
+			completed_voyages + TradeContact.MARK_RETURN_VOYAGES
+			if success
+			else -1
+		),
+		"due_voyage_is_use_voyage_plus_two": (
+			not success
+			or consumed_due_voyage
+				== completed_voyages + TradeContact.MARK_RETURN_VOYAGES
+		),
+		"matching_mark_consumed": (
+			not success
+			or (
+				int(mark_state_after["marks_available"])
+					== int(mark_state_before["marks_available"]) - 1
+				and int(mark_state_after["marks_used"])
+					== int(mark_state_before["marks_used"]) + 1
+			)
+		),
+		"rollback_succeeded": rollback_succeeded,
 		"preview_matches_actual": success and preview_matches_actual,
 		"successful_preview_requirement_holds": (
 			not success or preview_matches_actual
 		),
-		"no_state_change": money == money_before and cargo_after == cargo_before,
+		"no_state_change": money_unchanged and cargo_unchanged and marks_unchanged,
 		"denied_no_state_change": (
-			not success and money == money_before and cargo_after == cargo_before
+			not success and money_unchanged and cargo_unchanged and marks_unchanged
+		),
+		"transaction_atomic": (
+			successful_changes_hold
+			if success
+			else money_unchanged and cargo_unchanged and marks_unchanged
 		),
 		"money_not_negative": money >= 0,
 		"cargo_limit_not_exceeded": cargo_after.size() <= ship.get_cargo_limit(),
@@ -724,6 +893,18 @@ func _record_trade_attempt(
 	_update_cargo_view()
 	_update_money_view()
 	_update_trade_view()
+
+
+func _trade_mark_resources_equal(before: Dictionary, after: Dictionary) -> bool:
+	return (
+		before["mark_kind"] == after["mark_kind"]
+		and before["mark_capacity"] == after["mark_capacity"]
+		and before["marks_available"] == after["marks_available"]
+		and before["marks_used"] == after["marks_used"]
+		and before["return_voyages"] == after["return_voyages"]
+		and before["current_price_state"] == after["current_price_state"]
+		and before["current_fixed_price"] == after["current_fixed_price"]
+	)
 
 
 func _handle_construction_input(key_event: InputEventKey) -> void:
@@ -1874,51 +2055,89 @@ func _update_trade_view() -> void:
 		var cargo_lots: Array[String] = ship.get_cargo_lots()
 		var used_slots := cargo_lots.size()
 		var free_slots: int = ship.get_cargo_limit() - used_slots
-		var price_state: String = _active_trade_contact.get_price_state_name()
-		var fixed_price: int = _active_trade_contact.get_fixed_price()
+		var contact_state: Dictionary = (
+			_active_trade_contact.get_mark_state(completed_voyages)
+		)
+		var price_state: String = String(contact_state["current_price_state"])
+		var fixed_price: int = int(contact_state["current_fixed_price"])
 		var money_preview: Dictionary = _active_trade_contact.get_money_preview(money)
 		var money_delta: int = int(money_preview["money_delta"])
 		var money_delta_text := (
 			"+%d" % money_delta if money_delta > 0 else "%d" % money_delta
 		)
+		var mark_return_text := "ALL MARKS AVAILABLE"
+		if int(contact_state["marks_used"]) > 0:
+			mark_return_text = "VOYAGE %d · %d VOYAGES REMAIN" % [
+				contact_state["next_return_voyage"],
+				contact_state["voyages_until_next_return"],
+			]
+		var preview_text := "%d -> %d (%s)" % [
+			money_preview["money_before"],
+			money_preview["money_after"],
+			money_delta_text,
+		]
+		if not bool(contact_state["trade_available"]):
+			preview_text = "UNAVAILABLE · NO %s MARKS" % contact_state["mark_kind"]
 		trade_title.text = _active_trade_contact.get_display_name()
 		if _active_trade_contact.is_port_trader():
 			trade_details.text = (
-				"GOOD · %s · %s\nFIXED PRICE · %d COINS\n"
-				+ "MONEY CHANGE · %d -> %d (%s)\n"
-				+ "SHIP CARGO · USED %d/%d · FREE %d"
+				"%s · %s · %d COINS\n"
+				+ "STOCK MARKS · %s · %d/%d\n"
+				+ "MARK RETURN · %s\n"
+				+ "VOYAGES COMPLETE · %d\n"
+				+ "BUY PREVIEW · %s\n"
+				+ "SHIP CARGO · %d/%d · FREE %d\n"
+				+ "TRADE · %s"
 			) % [
 				TradeContact.GOOD_NAME,
 				price_state,
 				fixed_price,
-				money_preview["money_before"],
-				money_preview["money_after"],
-				money_delta_text,
+				contact_state["mark_display"],
+				contact_state["marks_available"],
+				contact_state["mark_capacity"],
+				mark_return_text,
+				completed_voyages,
+				preview_text,
 				used_slots,
 				ship.get_cargo_limit(),
 				free_slots,
+				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE",
 			]
-			trade_controls.text = "[E] BUY ONE LOT · [X] CLOSE"
+			trade_controls.text = (
+				"[E] BUY ONE LOT · [X] CLOSE"
+				if contact_state["trade_available"]
+				else "[E] BUY UNAVAILABLE · [X] CLOSE"
+			)
 		else:
 			trade_details.text = (
-				"GOOD · %s · %s\nFIXED PRICE · %d COINS\n"
-				+ "MONEY CHANGE · %d -> %d (%s)\n"
-				+ "SHIP CARGO · USED %d/%d · FREE %d\n"
-				+ "%s AVAILABLE · %d LOT"
+				"%s · %s · %d COINS\n"
+				+ "DEMAND MARKS · %s · %d/%d\n"
+				+ "MARK RETURN · %s\n"
+				+ "VOYAGES COMPLETE · %d\n"
+				+ "SELL PREVIEW · %s\n"
+				+ "SHIP CARGO · %d/%d · %s %d LOT\n"
+				+ "TRADE · %s"
 			) % [
 				TradeContact.GOOD_NAME,
 				price_state,
 				fixed_price,
-				money_preview["money_before"],
-				money_preview["money_after"],
-				money_delta_text,
+				contact_state["mark_display"],
+				contact_state["marks_available"],
+				contact_state["mark_capacity"],
+				mark_return_text,
+				completed_voyages,
+				preview_text,
 				used_slots,
 				ship.get_cargo_limit(),
-				free_slots,
 				TradeContact.GOOD_NAME,
 				cargo_lots.count(TradeContact.GOOD_NAME),
+				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE",
 			]
-			trade_controls.text = "[E] SELL ONE LOT · [X] CLOSE"
+			trade_controls.text = (
+				"[E] SELL ONE LOT · [X] CLOSE"
+				if contact_state["trade_available"]
+				else "[E] SELL UNAVAILABLE · [X] CLOSE"
+			)
 		trade_result.text = _last_trade_result
 	if _trade_view_open:
 		trade_view.show()
@@ -2139,6 +2358,7 @@ func _dock_ship() -> void:
 	_available_dock_id = ""
 	_last_leave_allowed = false
 	_last_ship_docked = true
+	_complete_voyage_on_arrival(dock_id)
 	if dock_id == "cove" and ship.timber_lots == 1:
 		_cove_docked_after_salvage = true
 		_timber_lots_at_cove_dock = ship.timber_lots
@@ -2161,6 +2381,59 @@ func _dock_ship() -> void:
 		)
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_update_interaction_prompt()
+
+
+func _record_voyage_departure(dock_id: String) -> void:
+	if dock_id.is_empty():
+		return
+	_voyage_departure_dock_id = dock_id
+	_voyage_departure_count += 1
+
+
+func _complete_voyage_on_arrival(dock_id: String) -> void:
+	var origin_dock_id := _voyage_departure_dock_id
+	_voyage_departure_dock_id = ""
+	if origin_dock_id.is_empty():
+		return
+	if origin_dock_id == dock_id:
+		_same_dock_arrival_count += 1
+		_last_completed_voyage_evidence = {
+			"counted": false,
+			"origin_dock_id": origin_dock_id,
+			"destination_dock_id": dock_id,
+			"completed_voyage_before": completed_voyages,
+			"completed_voyage_after": completed_voyages,
+			"reason": "SAME_DOCK_ARRIVAL",
+		}
+		return
+
+	var completed_voyage_before := completed_voyages
+	completed_voyages += 1
+	var port_marks_before: Dictionary = (
+		port_trader.get_mark_state(completed_voyage_before)
+	)
+	var cove_marks_before: Dictionary = (
+		cove_buyer.get_mark_state(completed_voyage_before)
+	)
+	var port_marks_returned: int = (
+		port_trader.restore_due_marks(completed_voyages)
+	)
+	var cove_marks_returned: int = (
+		cove_buyer.restore_due_marks(completed_voyages)
+	)
+	_last_completed_voyage_evidence = {
+		"counted": true,
+		"origin_dock_id": origin_dock_id,
+		"destination_dock_id": dock_id,
+		"completed_voyage_before": completed_voyage_before,
+		"completed_voyage_after": completed_voyages,
+		"port_marks_before": port_marks_before,
+		"port_marks_after": port_trader.get_mark_state(completed_voyages),
+		"port_marks_returned": port_marks_returned,
+		"cove_marks_before": cove_marks_before,
+		"cove_marks_after": cove_buyer.get_mark_state(completed_voyages),
+		"cove_marks_returned": cove_marks_returned,
+	}
 
 
 func _go_ashore() -> void:
@@ -2427,8 +2700,12 @@ func get_playtest_state() -> Dictionary:
 	var construction_state: Dictionary = construction_site.get_playtest_state(
 		cove_storage
 	)
-	var port_trader_state: Dictionary = port_trader.get_playtest_state()
-	var cove_buyer_state: Dictionary = cove_buyer.get_playtest_state()
+	var port_trader_state: Dictionary = (
+		port_trader.get_playtest_state(completed_voyages)
+	)
+	var cove_buyer_state: Dictionary = (
+		cove_buyer.get_playtest_state(completed_voyages)
+	)
 	var active_trade_preview := {}
 	if _active_trade_contact != null:
 		active_trade_preview = _active_trade_contact.get_money_preview(money)
@@ -2750,6 +3027,17 @@ func get_playtest_state() -> Dictionary:
 		),
 		"player_near_port_trader": _player_near_port_trader,
 		"player_near_cove_buyer": _player_near_cove_buyer,
+		"completed_voyages": completed_voyages,
+		"completed_voyage": completed_voyages,
+		"voyage_departure_dock_id": _voyage_departure_dock_id,
+		"voyage_departure_count": _voyage_departure_count,
+		"same_dock_arrival_count": _same_dock_arrival_count,
+		"last_completed_voyage_evidence": (
+			_last_completed_voyage_evidence.duplicate(true)
+		),
+		"mark_return_after_completed_voyages": (
+			TradeContact.MARK_RETURN_VOYAGES
+		),
 		"trade_good_name": TradeContact.GOOD_NAME,
 		"trade_fixed_price_map": TradeContact.get_fixed_price_map(),
 		"trade_price_state_count": TradeContact.PriceState.size(),
@@ -2763,13 +3051,30 @@ func get_playtest_state() -> Dictionary:
 		"cove_trade_price_state": cove_buyer_state["price_state"],
 		"cove_trade_fixed_price": cove_buyer_state["fixed_price"],
 		"trade_price_states_fixed": (
-			port_trader_state["price_state"] == "CHEAP"
-			and int(port_trader_state["fixed_price"]) == 20
-			and cove_buyer_state["price_state"] == "VALUABLE"
-			and int(cove_buyer_state["fixed_price"]) == 30
+			port_trader_state["base_price_state"] == "CHEAP"
+			and int(port_trader_state["base_fixed_price"]) == 20
+			and cove_buyer_state["base_price_state"] == "VALUABLE"
+			and int(cove_buyer_state["base_fixed_price"]) == 30
 		),
-		"trade_buy_price": port_trader_state["fixed_price"],
-		"trade_sell_price": cove_buyer_state["fixed_price"],
+		"trade_base_price_states_fixed": (
+			port_trader_state["base_price_state"] == "CHEAP"
+			and cove_buyer_state["base_price_state"] == "VALUABLE"
+		),
+		"trade_current_states_match_marks": (
+			port_trader_state["current_price_state"] == "CHEAP"
+			and (
+				(
+					int(cove_buyer_state["marks_available"]) > 0
+					and cove_buyer_state["current_price_state"] == "VALUABLE"
+				)
+				or (
+					int(cove_buyer_state["marks_available"]) == 0
+					and cove_buyer_state["current_price_state"] == "NORMAL"
+				)
+			)
+		),
+		"trade_buy_price": port_trader_state["base_fixed_price"],
+		"trade_sell_price": cove_buyer_state["base_fixed_price"],
 		"starting_money": STARTING_MONEY,
 		"money": money,
 		"money_not_negative": money >= 0,
@@ -2810,6 +3115,11 @@ func get_playtest_state() -> Dictionary:
 			else 0
 		),
 		"active_trade_money_preview": active_trade_preview.duplicate(true),
+		"active_trade_mark_state": (
+			_active_trade_contact.get_mark_state(completed_voyages)
+			if _active_trade_contact != null
+			else {}
+		),
 		"last_trade_action": _last_trade_action,
 		"last_trade_result": _last_trade_result,
 		"last_trade_attempt_evidence": _last_trade_attempt_evidence.duplicate(true),

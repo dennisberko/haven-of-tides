@@ -2,6 +2,27 @@
 
 [← Phase 15: Price states](15-price-states.md) | [Phase 17: Port conditions →](17-port-conditions.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Show one to three stock marks on each Cheap good | DONE |
+| Add 2: Remove one stock mark when the player buys one cargo lot | DONE |
+| Add 3: Do not sell the good when it has no stock marks | DONE |
+| Add 4: Show one to three demand marks on each Valuable good | DONE |
+| Add 5: Remove one demand mark when the player sells one cargo lot | DONE |
+| Add 6: Change the good to Normal when it has no demand marks | DONE |
+| Add 7: Return each used mark after two completed voyages and show the return voyage | DONE |
+| Complete when: Use all stock or demand at one port and see when it will return | DONE |
+| Test 1: Dock at the port | DONE |
+| Test 2: Buy all marks of one Cheap good | DONE |
+| Test 3: Confirm that the port cannot sell more of that good | DONE |
+| Test 4: Sell to all marks of one Valuable good | DONE |
+| Test 5: Confirm that the good becomes Normal | DONE |
+| Test 6: Complete two voyages and confirm that the used marks return | DONE |
+
 ## Goal
 
 Make the amount that a port can buy or sell clear and limited.
