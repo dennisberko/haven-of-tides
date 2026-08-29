@@ -6,9 +6,25 @@ enum ContactKind {
 	COVE_BUYER,
 }
 
+enum PriceState {
+	CHEAP,
+	NORMAL,
+	VALUABLE,
+}
+
 const GOOD_NAME := "SPICE LOT"
-const BUY_PRICE := 20
-const SELL_PRICE := 30
+const CHEAP_PRICE := 20
+const NORMAL_PRICE := 25
+const VALUABLE_PRICE := 30
+const FIXED_PRICES := {
+	PriceState.CHEAP: CHEAP_PRICE,
+	PriceState.NORMAL: NORMAL_PRICE,
+	PriceState.VALUABLE: VALUABLE_PRICE,
+}
+const CONTACT_PRICE_STATES := {
+	ContactKind.PORT_TRADER: PriceState.CHEAP,
+	ContactKind.COVE_BUYER: PriceState.VALUABLE,
+}
 const PORT_SHORE_ID := "port"
 const COVE_SHORE_ID := "cove"
 
@@ -33,6 +49,41 @@ func get_shore_id() -> String:
 	return PORT_SHORE_ID if is_port_trader() else COVE_SHORE_ID
 
 
+func get_price_state() -> int:
+	return int(CONTACT_PRICE_STATES[contact_kind])
+
+
+func get_price_state_name() -> String:
+	return String(PriceState.keys()[get_price_state()])
+
+
+func get_fixed_price() -> int:
+	return int(FIXED_PRICES[get_price_state()])
+
+
+func get_money_delta() -> int:
+	return -get_fixed_price() if is_port_trader() else get_fixed_price()
+
+
+func get_money_preview(money_before: int) -> Dictionary:
+	var money_delta := get_money_delta()
+	return {
+		"money_before": money_before,
+		"money_after": money_before + money_delta,
+		"money_delta": money_delta,
+		"price_state": get_price_state_name(),
+		"fixed_price": get_fixed_price(),
+	}
+
+
+static func get_fixed_price_map() -> Dictionary:
+	return {
+		"CHEAP": CHEAP_PRICE,
+		"NORMAL": NORMAL_PRICE,
+		"VALUABLE": VALUABLE_PRICE,
+	}
+
+
 func get_playtest_state() -> Dictionary:
 	var interaction_range := 0.0
 	var interaction_region_count := 0
@@ -53,8 +104,15 @@ func get_playtest_state() -> Dictionary:
 		"interaction_region_count": interaction_region_count,
 		"interaction_range": interaction_range,
 		"good_name": GOOD_NAME,
-		"buy_price": BUY_PRICE,
-		"sell_price": SELL_PRICE,
+		"shown_good_count": 1,
+		"shown_good_state_count": 1,
+		"price_state": get_price_state_name(),
+		"price_state_index": get_price_state(),
+		"fixed_price": get_fixed_price(),
+		"fixed_price_map": get_fixed_price_map(),
+		"state_fixed_for_contact_kind": true,
+		"buy_price": CHEAP_PRICE,
+		"sell_price": VALUABLE_PRICE,
 	}
 
 

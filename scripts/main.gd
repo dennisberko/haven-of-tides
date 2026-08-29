@@ -608,33 +608,37 @@ func _attempt_trade_purchase() -> void:
 	_last_trade_action = "BUY_ONE_%s" % TradeContact.GOOD_NAME.replace(" ", "_")
 	var money_before := money
 	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var fixed_price: int = _active_trade_contact.get_fixed_price()
+	var money_preview: Dictionary = _active_trade_contact.get_money_preview(
+		money_before
+	)
 	var denial_reasons := PackedStringArray()
-	if money < TradeContact.BUY_PRICE:
-		denial_reasons.append("NEED %d COINS" % TradeContact.BUY_PRICE)
+	if money < fixed_price:
+		denial_reasons.append("NEED %d COINS" % fixed_price)
 	if not ship.can_keep_cargo_lot():
 		denial_reasons.append("NO FREE SHIP CARGO SLOT")
 	if not denial_reasons.is_empty():
 		_trade_denied_purchase_count += 1
 		_last_trade_result = "PURCHASE DENIED · %s" % " · ".join(denial_reasons)
-		_record_trade_attempt(money_before, cargo_before, false)
+		_record_trade_attempt(money_before, cargo_before, money_preview, false)
 		return
 
 	if not ship.keep_cargo_lot(TradeContact.GOOD_NAME):
 		_trade_denied_purchase_count += 1
 		_last_trade_result = "PURCHASE DENIED · SHIP CARGO DID NOT CHANGE"
-		_record_trade_attempt(money_before, cargo_before, false)
+		_record_trade_attempt(money_before, cargo_before, money_preview, false)
 		return
 
-	money -= TradeContact.BUY_PRICE
+	money -= fixed_price
 	_trade_bought_lot_count += 1
 	_trade_purchase_money_snapshot = money
 	_trade_purchase_cargo_snapshot = ship.get_cargo_lots()
 	_trade_persistence_holds = true
 	_last_trade_result = "BOUGHT 1 %s · PAID %d COINS" % [
 		TradeContact.GOOD_NAME,
-		TradeContact.BUY_PRICE,
+		fixed_price,
 	]
-	_record_trade_attempt(money_before, cargo_before, true)
+	_record_trade_attempt(money_before, cargo_before, money_preview, true)
 	_successful_purchase_evidence = _last_trade_attempt_evidence.duplicate(true)
 
 
@@ -650,48 +654,70 @@ func _attempt_trade_sale() -> void:
 	_last_trade_action = "SELL_ONE_%s" % TradeContact.GOOD_NAME.replace(" ", "_")
 	var money_before := money
 	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var fixed_price: int = _active_trade_contact.get_fixed_price()
+	var money_preview: Dictionary = _active_trade_contact.get_money_preview(
+		money_before
+	)
 	if not cargo_before.has(TradeContact.GOOD_NAME):
 		_trade_denied_sale_count += 1
 		_last_trade_result = "SALE DENIED · NO %s IN SHIP CARGO" % TradeContact.GOOD_NAME
-		_record_trade_attempt(money_before, cargo_before, false)
+		_record_trade_attempt(money_before, cargo_before, money_preview, false)
 		return
 
 	if not ship.remove_cargo_lot(TradeContact.GOOD_NAME):
 		_trade_denied_sale_count += 1
 		_last_trade_result = "SALE DENIED · SHIP CARGO DID NOT CHANGE"
-		_record_trade_attempt(money_before, cargo_before, false)
+		_record_trade_attempt(money_before, cargo_before, money_preview, false)
 		return
 
-	money += TradeContact.SELL_PRICE
+	money += fixed_price
 	_trade_sold_lot_count += 1
 	_last_trade_result = "SOLD 1 %s · RECEIVED %d COINS" % [
 		TradeContact.GOOD_NAME,
-		TradeContact.SELL_PRICE,
+		fixed_price,
 	]
-	_record_trade_attempt(money_before, cargo_before, true)
+	_record_trade_attempt(money_before, cargo_before, money_preview, true)
 	_successful_sale_evidence = _last_trade_attempt_evidence.duplicate(true)
 
 
 func _record_trade_attempt(
 	money_before: int,
 	cargo_before: Array[String],
+	money_preview: Dictionary,
 	success: bool,
 ) -> void:
 	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var preview_matches_actual := (
+		money == int(money_preview["money_after"])
+		and money - money_before == int(money_preview["money_delta"])
+	)
 	_last_trade_attempt_evidence = {
 		"action": _last_trade_action,
 		"result": _last_trade_result,
 		"success": success,
 		"good_name": TradeContact.GOOD_NAME,
-		"buy_price": TradeContact.BUY_PRICE,
-		"sell_price": TradeContact.SELL_PRICE,
+		"price_state": money_preview["price_state"],
+		"fixed_price": money_preview["fixed_price"],
+		"fixed_price_map": TradeContact.get_fixed_price_map(),
+		"buy_price": TradeContact.get_fixed_price_map()["CHEAP"],
+		"sell_price": TradeContact.get_fixed_price_map()["VALUABLE"],
+		"money_preview_before": money_preview["money_before"],
+		"money_preview_after": money_preview["money_after"],
+		"money_preview_delta": money_preview["money_delta"],
 		"money_before": money_before,
 		"money_after": money,
 		"cargo_before": cargo_before,
 		"cargo_after": cargo_after,
 		"money_delta": money - money_before,
 		"cargo_delta": cargo_after.size() - cargo_before.size(),
+		"preview_matches_actual": success and preview_matches_actual,
+		"successful_preview_requirement_holds": (
+			not success or preview_matches_actual
+		),
 		"no_state_change": money == money_before and cargo_after == cargo_before,
+		"denied_no_state_change": (
+			not success and money == money_before and cargo_after == cargo_before
+		),
 		"money_not_negative": money >= 0,
 		"cargo_limit_not_exceeded": cargo_after.size() <= ship.get_cargo_limit(),
 	}
@@ -1848,15 +1874,26 @@ func _update_trade_view() -> void:
 		var cargo_lots: Array[String] = ship.get_cargo_lots()
 		var used_slots := cargo_lots.size()
 		var free_slots: int = ship.get_cargo_limit() - used_slots
+		var price_state: String = _active_trade_contact.get_price_state_name()
+		var fixed_price: int = _active_trade_contact.get_fixed_price()
+		var money_preview: Dictionary = _active_trade_contact.get_money_preview(money)
+		var money_delta: int = int(money_preview["money_delta"])
+		var money_delta_text := (
+			"+%d" % money_delta if money_delta > 0 else "%d" % money_delta
+		)
 		trade_title.text = _active_trade_contact.get_display_name()
 		if _active_trade_contact.is_port_trader():
 			trade_details.text = (
-				"GOOD · %s\nFIXED BUY PRICE · %d COINS\n"
-				+ "MONEY · %d COINS\nSHIP CARGO · USED %d/%d · FREE %d"
+				"GOOD · %s · %s\nFIXED PRICE · %d COINS\n"
+				+ "MONEY CHANGE · %d -> %d (%s)\n"
+				+ "SHIP CARGO · USED %d/%d · FREE %d"
 			) % [
 				TradeContact.GOOD_NAME,
-				TradeContact.BUY_PRICE,
-				money,
+				price_state,
+				fixed_price,
+				money_preview["money_before"],
+				money_preview["money_after"],
+				money_delta_text,
 				used_slots,
 				ship.get_cargo_limit(),
 				free_slots,
@@ -1864,13 +1901,17 @@ func _update_trade_view() -> void:
 			trade_controls.text = "[E] BUY ONE LOT · [X] CLOSE"
 		else:
 			trade_details.text = (
-				"GOOD · %s\nFIXED SELL PRICE · %d COINS\n"
-				+ "MONEY · %d COINS\nSHIP CARGO · USED %d/%d · FREE %d\n"
+				"GOOD · %s · %s\nFIXED PRICE · %d COINS\n"
+				+ "MONEY CHANGE · %d -> %d (%s)\n"
+				+ "SHIP CARGO · USED %d/%d · FREE %d\n"
 				+ "%s AVAILABLE · %d LOT"
 			) % [
 				TradeContact.GOOD_NAME,
-				TradeContact.SELL_PRICE,
-				money,
+				price_state,
+				fixed_price,
+				money_preview["money_before"],
+				money_preview["money_after"],
+				money_delta_text,
 				used_slots,
 				ship.get_cargo_limit(),
 				free_slots,
@@ -2388,6 +2429,9 @@ func get_playtest_state() -> Dictionary:
 	)
 	var port_trader_state: Dictionary = port_trader.get_playtest_state()
 	var cove_buyer_state: Dictionary = cove_buyer.get_playtest_state()
+	var active_trade_preview := {}
+	if _active_trade_contact != null:
+		active_trade_preview = _active_trade_contact.get_money_preview(money)
 	var physical_cargo_total: int = int(
 		ship_state["cargo_used_slots"]
 		+ wreck_state["wreck_salvage_lot_count"]
@@ -2707,8 +2751,25 @@ func get_playtest_state() -> Dictionary:
 		"player_near_port_trader": _player_near_port_trader,
 		"player_near_cove_buyer": _player_near_cove_buyer,
 		"trade_good_name": TradeContact.GOOD_NAME,
-		"trade_buy_price": TradeContact.BUY_PRICE,
-		"trade_sell_price": TradeContact.SELL_PRICE,
+		"trade_fixed_price_map": TradeContact.get_fixed_price_map(),
+		"trade_price_state_count": TradeContact.PriceState.size(),
+		"trade_shown_good_count_per_contact": 1,
+		"trade_each_shown_good_has_exactly_one_state": (
+			int(port_trader_state["shown_good_state_count"]) == 1
+			and int(cove_buyer_state["shown_good_state_count"]) == 1
+		),
+		"port_trade_price_state": port_trader_state["price_state"],
+		"port_trade_fixed_price": port_trader_state["fixed_price"],
+		"cove_trade_price_state": cove_buyer_state["price_state"],
+		"cove_trade_fixed_price": cove_buyer_state["fixed_price"],
+		"trade_price_states_fixed": (
+			port_trader_state["price_state"] == "CHEAP"
+			and int(port_trader_state["fixed_price"]) == 20
+			and cove_buyer_state["price_state"] == "VALUABLE"
+			and int(cove_buyer_state["fixed_price"]) == 30
+		),
+		"trade_buy_price": port_trader_state["fixed_price"],
+		"trade_sell_price": cove_buyer_state["fixed_price"],
 		"starting_money": STARTING_MONEY,
 		"money": money,
 		"money_not_negative": money >= 0,
@@ -2738,6 +2799,17 @@ func get_playtest_state() -> Dictionary:
 			if _active_trade_contact != null
 			else ""
 		),
+		"active_trade_price_state": (
+			_active_trade_contact.get_price_state_name()
+			if _active_trade_contact != null
+			else ""
+		),
+		"active_trade_fixed_price": (
+			_active_trade_contact.get_fixed_price()
+			if _active_trade_contact != null
+			else 0
+		),
+		"active_trade_money_preview": active_trade_preview.duplicate(true),
 		"last_trade_action": _last_trade_action,
 		"last_trade_result": _last_trade_result,
 		"last_trade_attempt_evidence": _last_trade_attempt_evidence.duplicate(true),
