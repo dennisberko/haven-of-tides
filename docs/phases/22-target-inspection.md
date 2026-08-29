@@ -2,6 +2,27 @@
 
 [← Phase 21: Repairs](21-repairs.md) | [Phase 23: Naval attack →](23-naval-attack.md)
 
+## Work status
+
+**Phase status: COMPLETE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Add an Inspect action for one nearby ship | DONE |
+| Add 2: Show its owner or flag | DONE |
+| Add 3: Show its ship class and likely speed | DONE |
+| Add 4: Show its general cargo type | DONE |
+| Add 5: Show a Low, Medium, or High threat estimate | DONE |
+| Add 6: Show whether it is peaceful | DONE |
+| Add 7: Show an estimated heat cost without changing heat | DONE |
+| Add 8: Label all values as estimates | DONE |
+| Complete when: Inspect a nearby ship and make a clear attack choice | DONE |
+| Test 1: Sail near a merchant ship | DONE |
+| Test 2: Use Inspect | DONE |
+| Test 3: Confirm that all estimate fields are visible | DONE |
+| Test 4: Sail out of range and confirm that the view closes | DONE |
+| Test 5: Inspect a different ship and confirm different values | DONE |
+
 ## Goal
 
 Give the player enough information to choose whether to attack a ship.

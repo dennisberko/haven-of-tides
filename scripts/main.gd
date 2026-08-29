@@ -4,6 +4,9 @@ const TradeContact := preload("res://scripts/trade_contact.gd")
 const PortConditionState := preload("res://scripts/port_condition.gd")
 const TradeJournalState := preload("res://scripts/trade_journal.gd")
 const ShipFoodState := preload("res://scripts/ship_food.gd")
+const InspectableTargetShipState := preload(
+	"res://scripts/inspectable_target_ship.gd"
+)
 
 enum RequestState {
 	AVAILABLE,
@@ -27,6 +30,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var cove_buyer = $InteractiveObjects/CoveBuyer
 @onready var sea_area = $SeaArea
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
+@onready var inspection_targets: Array[InspectableTargetShipState] = [
+	$InspectableShips/CoastalMerchant,
+	$InspectableShips/NavalCourier,
+]
 @onready var ship = $Ship
 @onready var ship_entry: Area2D = $ShipAccess/EntryPoint
 @onready var ship_standing_position: Marker2D = $Ship/StandingPosition
@@ -60,6 +67,19 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var repair_status: Label = $Interface/RepairView/RepairStatus
 @onready var repair_result: Label = $Interface/RepairView/RepairResult
 @onready var repair_controls: Label = $Interface/RepairView/RepairControls
+@onready var target_inspection_view: ColorRect = $Interface/TargetInspectionView
+@onready var inspection_title: Label = (
+	$Interface/TargetInspectionView/InspectionTitle
+)
+@onready var inspection_target_name: Label = (
+	$Interface/TargetInspectionView/InspectionTarget
+)
+@onready var inspection_details: Label = (
+	$Interface/TargetInspectionView/InspectionDetails
+)
+@onready var inspection_controls: Label = (
+	$Interface/TargetInspectionView/InspectionControls
+)
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -94,7 +114,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · E INSPECT / ACTION · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
@@ -285,6 +305,17 @@ var _repair_snapshot_success: Dictionary = {}
 var _repair_snapshot_ashore: Dictionary = {}
 var _repair_snapshot_return: Dictionary = {}
 var _repair_snapshot_release: Dictionary = {}
+var _near_inspection_target: InspectableTargetShipState
+var _active_inspection_target: InspectableTargetShipState
+var _target_inspection_view_open := false
+var _target_inspection_open_count := 0
+var _target_inspection_auto_close_count := 0
+var _inspected_target_ids: Array[String] = []
+var _last_inspection_estimate: Dictionary = {}
+var _last_inspection_view_text := ""
+var _last_inspection_close_reason := "NOT_CLOSED"
+var _last_auto_closed_target_id := ""
+var _last_auto_close_distance := -1.0
 
 
 func _ready() -> void:
@@ -314,6 +345,7 @@ func _ready() -> void:
 	_update_food_view()
 	_update_hull_view()
 	_update_repair_view()
+	_update_target_inspection()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -329,6 +361,7 @@ func _ready() -> void:
 	food_view.hide()
 	hull_view.hide()
 	repair_view.hide()
+	target_inspection_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -360,6 +393,7 @@ func _physics_process(_delta: float) -> void:
 		_player_aboard_ship,
 	)
 	_update_wreck_opportunity()
+	_update_target_inspection()
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_money_view()
@@ -512,6 +546,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_interact_held = false
 		get_viewport().set_input_as_handled()
 		return
+	if (
+		_target_inspection_view_open
+		and _key_matches(key_event, KEY_E)
+	):
+		# Inspection stays open until range closes it. E cannot trigger another
+		# world action while the inspection prompt is hidden.
+		if not key_event.pressed:
+			_interact_held = false
+		get_viewport().set_input_as_handled()
+		return
 	if _handle_chart_input(key_event):
 		get_viewport().set_input_as_handled()
 		return
@@ -551,6 +595,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_go_ashore()
 		elif not ship.get_available_dock_id().is_empty():
 			_dock_ship()
+		elif _can_inspect_nearby_target():
+			_open_target_inspection()
 		elif wreck_opportunity.can_receive_salvage_press():
 			_salvage_wreck()
 		elif ship.can_leave_at_damaged_dock():
@@ -2142,6 +2188,156 @@ func _update_wreck_opportunity() -> void:
 	)
 
 
+func _update_target_inspection() -> void:
+	var inspection_context_available: bool = (
+		_player_aboard_ship
+		and not ship.is_docked
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+	)
+	var previous_near_target: InspectableTargetShipState = (
+		_near_inspection_target
+	)
+	_near_inspection_target = null
+	var nearest_distance: float = INF
+	for target in inspection_targets:
+		target.update_player_ship_state(
+			ship.global_position,
+			_player_aboard_ship and not ship.is_docked,
+			inspection_context_available,
+		)
+		if (
+			target.is_inspection_available()
+			and target.get_distance_to_player_ship() < nearest_distance
+		):
+			_near_inspection_target = target
+			nearest_distance = target.get_distance_to_player_ship()
+
+	if _target_inspection_view_open:
+		if _active_inspection_target == null:
+			_close_target_inspection("TARGET_UNAVAILABLE")
+		elif (
+			_active_inspection_target.get_distance_to_player_ship()
+			> InspectableTargetShipState.INSPECTION_RANGE
+		):
+			_close_target_inspection("SAILED_OUT_OF_RANGE")
+		elif not _active_inspection_target.is_inspection_available():
+			_close_target_inspection("INSPECTION_CONTEXT_CLOSED")
+		else:
+			_update_target_inspection_view()
+
+	if previous_near_target != _near_inspection_target:
+		_update_interaction_prompt()
+
+
+func _can_inspect_nearby_target() -> bool:
+	return (
+		_near_inspection_target != null
+		and not _target_inspection_view_open
+		and _player_aboard_ship
+		and not ship.is_docked
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+	)
+
+
+func _open_target_inspection() -> void:
+	if not _can_inspect_nearby_target():
+		return
+	_active_inspection_target = _near_inspection_target
+	_target_inspection_view_open = true
+	_target_inspection_open_count += 1
+	_last_inspection_close_reason = "OPEN"
+	var target_id: String = _active_inspection_target.target_id
+	if not _inspected_target_ids.has(target_id):
+		_inspected_target_ids.append(target_id)
+	_last_inspection_estimate = (
+		_active_inspection_target.get_estimate_state().duplicate(true)
+	)
+	interaction_prompt.hide()
+	_update_target_inspection_view()
+
+
+func _close_target_inspection(reason: String) -> void:
+	if not _target_inspection_view_open:
+		return
+	if _active_inspection_target != null:
+		_last_auto_closed_target_id = _active_inspection_target.target_id
+		_last_auto_close_distance = (
+			_active_inspection_target.get_distance_to_player_ship()
+		)
+	_target_inspection_view_open = false
+	_last_inspection_close_reason = reason
+	if reason == "SAILED_OUT_OF_RANGE":
+		_target_inspection_auto_close_count += 1
+	_active_inspection_target = null
+	target_inspection_view.hide()
+	_update_interaction_prompt()
+
+
+func _update_target_inspection_view() -> void:
+	if not _target_inspection_view_open or _active_inspection_target == null:
+		target_inspection_view.hide()
+		return
+	var estimate: Dictionary = _active_inspection_target.get_estimate_state()
+	_last_inspection_estimate = estimate.duplicate(true)
+	var peaceful_text := "YES" if bool(estimate["peaceful_estimate"]) else "NO"
+	var heat_cost := int(estimate["estimated_heat_cost"])
+	var heat_text := "+%d" % heat_cost
+	var choice_text := "%s RISK · %s" % [
+		estimate["threat_estimate"],
+		(
+			"PEACEFUL · HEAT EXPECTED"
+			if bool(estimate["peaceful_estimate"])
+			else "NOT PEACEFUL · NO HEAT EXPECTED"
+		),
+	]
+	inspection_title.text = "TARGET INSPECTION · ALL VALUES ESTIMATED"
+	inspection_target_name.text = "TARGET ESTIMATE · %s" % (
+		estimate["display_name"]
+	)
+	inspection_details.text = (
+		"ALL VALUES BELOW ARE ESTIMATES\n"
+		+ "OWNER ESTIMATE · %s\n" % estimate["owner_estimate"]
+		+ "FLAG ESTIMATE · %s\n" % estimate["flag_estimate"]
+		+ "SHIP CLASS ESTIMATE · %s\n" % estimate["ship_class_estimate"]
+		+ "LIKELY SPEED ESTIMATE · %s\n" % estimate["likely_speed_estimate"]
+		+ "GENERAL CARGO TYPE ESTIMATE · %s\n" % (
+			estimate["general_cargo_type_estimate"]
+		)
+		+ "THREAT ESTIMATE · %s\n" % estimate["threat_estimate"]
+		+ "PEACEFUL ESTIMATE · %s\n" % peaceful_text
+		+ "HEAT COST ESTIMATE · %s · NOT APPLIED\n" % heat_text
+		+ "ATTACK CHOICE ESTIMATE · %s" % choice_text
+	)
+	inspection_controls.text = (
+		"SAIL OUT OF RANGE TO CLOSE · NO ATTACK ACTION"
+	)
+	_last_inspection_view_text = "%s\n%s\n%s\n%s" % [
+		inspection_title.text,
+		inspection_target_name.text,
+		inspection_details.text,
+		inspection_controls.text,
+	]
+	target_inspection_view.show()
+
+
 func _update_salvage_persistence() -> void:
 	if ship.timber_lots != 1 or _salvage_collection_position == Vector2.ZERO:
 		return
@@ -3461,6 +3657,7 @@ func _update_interaction_prompt() -> void:
 		or _trade_release_pending
 		or _journal_view_open
 		or _journal_release_pending
+		or _target_inspection_view_open
 		or ship.navigation_release_pending
 	):
 		interaction_prompt.hide()
@@ -3474,6 +3671,11 @@ func _update_interaction_prompt() -> void:
 		elif not _available_dock_id.is_empty():
 			var available_definition: Dictionary = ship.get_dock_definition(_available_dock_id)
 			interaction_prompt.text = "[E] DOCK AT %s" % available_definition["name"]
+			interaction_prompt.show()
+		elif _can_inspect_nearby_target():
+			interaction_prompt.text = "[E] INSPECT %s" % (
+				_near_inspection_target.display_name
+			)
 			interaction_prompt.show()
 		elif wreck_opportunity.is_salvage_eligible():
 			var next_salvage_lot := wreck_opportunity.get_next_salvage_lot()
@@ -3704,6 +3906,42 @@ func get_playtest_state() -> Dictionary:
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total + _trade_bought_lot_count
 	)
+	var target_ship_states: Array[Dictionary] = []
+	var target_ship_ids: Array[String] = []
+	for target in inspection_targets:
+		target_ship_states.append(target.get_playtest_state())
+		target_ship_ids.append(target.target_id)
+	var active_inspection_estimate: Dictionary = (
+		_active_inspection_target.get_estimate_state()
+		if _active_inspection_target != null
+		else _last_inspection_estimate.duplicate(true)
+	)
+	var target_inspection_view_text := ""
+	if target_inspection_view.visible:
+		target_inspection_view_text = "%s\n%s\n%s\n%s" % [
+			inspection_title.text,
+			inspection_target_name.text,
+			inspection_details.text,
+			inspection_controls.text,
+		]
+	var estimate_labels_visible := target_inspection_view.visible
+	for required_label in [
+		"ALL VALUES BELOW ARE ESTIMATES",
+		"TARGET ESTIMATE",
+		"OWNER ESTIMATE",
+		"FLAG ESTIMATE",
+		"SHIP CLASS ESTIMATE",
+		"LIKELY SPEED ESTIMATE",
+		"GENERAL CARGO TYPE ESTIMATE",
+		"THREAT ESTIMATE",
+		"PEACEFUL ESTIMATE",
+		"HEAT COST ESTIMATE",
+		"ATTACK CHOICE ESTIMATE",
+	]:
+		estimate_labels_visible = (
+			estimate_labels_visible
+			and target_inspection_view_text.contains(required_label)
+		)
 	var camera_target := "COVE"
 	if _player_aboard_ship:
 		camera_target = "SHIP"
@@ -4140,7 +4378,82 @@ func get_playtest_state() -> Dictionary:
 		"sail_repair_system_count": 0,
 		"repair_workshop_bonus_system_count": 0,
 		"automatic_repair_system_count": repair_state["automatic_repair_count"],
-		"target_inspection_system_count": 0,
+		"target_inspection_system_count": 1,
+		"target_ship_count": inspection_targets.size(),
+		"target_ship_ids": target_ship_ids,
+		"target_ship_states": target_ship_states,
+		"target_ship_estimates_are_distinct": (
+			inspection_targets.size() >= 2
+			and inspection_targets[0].get_estimate_state()
+				!= inspection_targets[1].get_estimate_state()
+		),
+		"target_inspection_range": InspectableTargetShipState.INSPECTION_RANGE,
+		"target_visibility_range": InspectableTargetShipState.VISIBILITY_RANGE,
+		"near_inspection_target_id": (
+			_near_inspection_target.target_id
+			if _near_inspection_target != null
+			else ""
+		),
+		"target_inspection_available": _can_inspect_nearby_target(),
+		"target_inspection_prompt_visible": (
+			interaction_prompt.visible
+			and interaction_prompt.text.begins_with("[E] INSPECT")
+		),
+		"target_inspection_prompt_text": (
+			interaction_prompt.text
+			if interaction_prompt.visible
+			and interaction_prompt.text.begins_with("[E] INSPECT")
+			else ""
+		),
+		"target_inspection_view_open": _target_inspection_view_open,
+		"target_inspection_view_visible": target_inspection_view.visible,
+		"target_inspection_view_count": get_tree().get_nodes_in_group(
+			"target_inspection_view"
+		).size(),
+		"target_inspection_view_text": target_inspection_view_text,
+		"target_inspection_last_view_text": _last_inspection_view_text,
+		"target_inspection_active_target_id": (
+			_active_inspection_target.target_id
+			if _active_inspection_target != null
+			else ""
+		),
+		"target_inspection_active_estimate": active_inspection_estimate,
+		"target_inspection_all_estimate_labels_visible": (
+			estimate_labels_visible
+		),
+		"target_inspection_open_count": _target_inspection_open_count,
+		"target_inspection_auto_close_count": (
+			_target_inspection_auto_close_count
+		),
+		"target_inspection_last_close_reason": _last_inspection_close_reason,
+		"target_inspection_last_auto_closed_target_id": (
+			_last_auto_closed_target_id
+		),
+		"target_inspection_last_auto_close_distance": (
+			_last_auto_close_distance
+		),
+		"target_inspection_auto_close_was_out_of_range": (
+			_last_inspection_close_reason == "SAILED_OUT_OF_RANGE"
+			and _last_auto_close_distance
+				> InspectableTargetShipState.INSPECTION_RANGE
+		),
+		"target_inspection_inspected_target_ids": (
+			_inspected_target_ids.duplicate()
+		),
+		"target_inspection_distinct_targets_inspected": (
+			_inspected_target_ids.size() >= 2
+		),
+		"target_inspection_navigation_remains_enabled": (
+			not _target_inspection_view_open
+			or not ship.navigation_input_blocked
+		),
+		"target_inspection_changes_heat": false,
+		"target_inspection_estimated_heat_not_applied": true,
+		"active_heat_system_count": 0,
+		"target_inspection_attack_action_count": 0,
+		"target_inspection_exact_hidden_cargo_shown": false,
+		"target_inspection_hidden_threat_count": 0,
+		"target_inspection_faction_record_count": 0,
 		"cove_storage_place_count": storage_state["place_count"],
 		"cove_storage_position": storage_state["position"],
 		"cove_storage_interaction_range": storage_state["interaction_range"],
