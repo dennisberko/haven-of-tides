@@ -1,4 +1,4 @@
-[gd_scene load_steps=37 format=3]
+[gd_scene load_steps=38 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -24,6 +24,7 @@
 [ext_resource type="Script" path="res://scripts/monster_hunt.gd" id="21_monster_hunt"]
 [ext_resource type="Script" path="res://scripts/ship_module_loadout.gd" id="22_ship_module"]
 [ext_resource type="Script" path="res://scripts/day_night_cycle.gd" id="23_day_night"]
+[ext_resource type="Script" path="res://scripts/fast_travel.gd" id="24_fast_travel"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -73,6 +74,9 @@ script = ExtResource("1_cove")
 
 [node name="DayNightCycle" type="Node" parent="."]
 script = ExtResource("23_day_night")
+
+[node name="FastTravel" type="Node" parent="."]
+script = ExtResource("24_fast_travel")
 
 [node name="WreckOpportunity" type="Node2D" parent="."]
 z_index = 1

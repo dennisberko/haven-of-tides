@@ -17,6 +17,7 @@ var _story_content_sync_count := 0
 var _story_same_location_sync_count := 0
 var _story_selection_preserved_count := 0
 var _last_story_content_sync_evidence: Dictionary = {}
+var _fast_travel_state: Dictionary = {}
 var _ship_position := Vector2.ZERO
 var _player_position := Vector2.ZERO
 var _player_aboard_ship := false
@@ -45,6 +46,13 @@ func configure(sea_bounds: Rect2, dock_definitions: Array) -> void:
 
 func set_chart_visible(visible: bool) -> void:
 	chart_visible = visible
+	queue_redraw()
+
+
+func set_fast_travel_state(state: Dictionary) -> void:
+	if state == _fast_travel_state:
+		return
+	_fast_travel_state = state.duplicate(true)
 	queue_redraw()
 
 
@@ -223,6 +231,22 @@ func get_playtest_state() -> Dictionary:
 		"last_story_content_sync_evidence": (
 			_last_story_content_sync_evidence.duplicate(true)
 		),
+		"fast_travel_state": _fast_travel_state.duplicate(true),
+		"fast_travel_preview_visible": bool(
+			_fast_travel_state.get("preview_visible", false)
+		),
+		"fast_travel_port_unlocked": bool(
+			_fast_travel_state.get("port_unlocked", false)
+		),
+		"fast_travel_available": bool(
+			_fast_travel_state.get("available", false)
+		),
+		"fast_travel_cost_text": String(
+			_fast_travel_state.get("cost_text", "")
+		),
+		"fast_travel_status_text": String(
+			_fast_travel_state.get("status_text", "")
+		),
 	}
 
 
@@ -273,7 +297,10 @@ func _draw_chart() -> void:
 			Color("#fff1c5"),
 		)
 
-	_draw_story_clue_list(font)
+	if selected_location_id == "port":
+		_draw_fast_travel_panel(font)
+	else:
+		_draw_story_clue_list(font)
 
 	if not selected_location_id.is_empty() and _known_locations.has(selected_location_id):
 		var selected_position := _world_to_chart(get_target_position())
@@ -327,11 +354,11 @@ func _draw_chart() -> void:
 		Color("#173f4b"),
 	)
 	var chart_controls := (
-		"[1] COVE  [2] ISLAND  [3] PORT  [X] CLEAR  [M] CLOSE"
+		"[1] COVE  [2] ISLAND  [3] PORT  [F] FAST TRAVEL  [X] CLEAR  [M] CLOSE"
 	)
 	if not _story_location_id.is_empty():
 		chart_controls = (
-			"[1] COVE  [2] ISLAND  [3] PORT  [4] CLUE  [X] CLEAR  [M] CLOSE"
+			"[1] COVE  [2] ISLAND  [3] PORT  [4] CLUE  [F] FAST TRAVEL  [X] CLEAR  [M] CLOSE"
 		)
 	draw_string(
 		font,
@@ -339,7 +366,7 @@ func _draw_chart() -> void:
 		chart_controls,
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1.0,
-		15,
+		13,
 		Color("#173f4b"),
 	)
 
@@ -439,4 +466,52 @@ func _draw_story_clue_list(font: Font) -> void:
 		clue_panel.size.x - 24.0,
 		13,
 		Color("#d8eee8"),
+	)
+
+
+func _draw_fast_travel_panel(font: Font) -> void:
+	var panel := Rect2(
+		Vector2(CHART_WORLD.position.x + 14.0, CHART_WORLD.end.y - 112.0),
+		Vector2(CHART_WORLD.size.x - 28.0, 100.0),
+	)
+	draw_rect(panel, Color("#071a23e8"))
+	var unlocked := bool(_fast_travel_state.get("port_unlocked", false))
+	var available := bool(_fast_travel_state.get("available", false))
+	var title := (
+		"FAST TRAVEL · TEST PORT · UNLOCKED"
+		if unlocked
+		else "FAST TRAVEL · TEST PORT · LOCKED"
+	)
+	draw_string(
+		font,
+		panel.position + Vector2(14.0, 23.0),
+		title,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		panel.size.x - 28.0,
+		17,
+		Color("#ef6b35" if unlocked else "#fff1c5"),
+	)
+	draw_string(
+		font,
+		panel.position + Vector2(14.0, 49.0),
+		String(_fast_travel_state.get(
+			"cost_text",
+			"COST · 1 FOOD · 1 TIME STEP",
+		)),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		panel.size.x - 28.0,
+		15,
+		Color("#d8eee8"),
+	)
+	draw_string(
+		font,
+		panel.position + Vector2(14.0, 76.0),
+		String(_fast_travel_state.get(
+			"status_text",
+			"UNAVAILABLE · DOCK AT TEST PORT ONCE",
+		)),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		panel.size.x - 28.0,
+		14,
+		Color("#67d6a3" if available else "#ffb36b"),
 	)

@@ -1421,6 +1421,14 @@ func _get_non_timber_lots(cargo: Array[String]) -> Array[String]:
 	return other_lots
 
 
+func _get_non_food_lots(cargo: Array[String]) -> Array[String]:
+	var other_lots: Array[String] = []
+	for lot_name in cargo:
+		if lot_name != FOOD_LOT_NAME:
+			other_lots.append(lot_name)
+	return other_lots
+
+
 func _get_cargo_slot_lot_counts() -> PackedInt32Array:
 	var lot_counts := PackedInt32Array()
 	lot_counts.resize(cargo_lots.size())
@@ -1575,6 +1583,167 @@ func dock_at_available() -> String:
 		_last_crew_restoration_evidence = restoration_evidence.duplicate(true)
 	queue_redraw()
 	return dock_id
+
+
+func fast_travel_to_dock(dock_id: String, food_cost: int) -> Dictionary:
+	var cargo_before: Array[String] = get_cargo_lots()
+	var food_units_before := get_food_units()
+	var position_before := global_position
+	var rotation_before := rotation
+	var docked_before := is_docked
+	var current_dock_before := current_dock_id
+	var denial_reasons := PackedStringArray()
+	if not DOCK_DEFINITIONS.has(dock_id):
+		denial_reasons.append("UNKNOWN DESTINATION")
+	if not captain_aboard:
+		denial_reasons.append("CAPTAIN MUST BE ABOARD")
+	if is_docked:
+		denial_reasons.append("SHIP MUST BE AT SEA")
+	if not navigation_input_blocked:
+		denial_reasons.append("SEA CHART MUST BE OPEN")
+	if food_cost <= 0:
+		denial_reasons.append("FOOD COST MUST BE POSITIVE")
+	if food_units_before < food_cost:
+		denial_reasons.append("INSUFFICIENT FOOD")
+	if not denial_reasons.is_empty():
+		return {
+			"success": false,
+			"result": "FAST TRAVEL SHIP MOVE DENIED · %s" % (
+				" · ".join(denial_reasons)
+			),
+			"denial_reasons": denial_reasons,
+			"dock_id": dock_id,
+			"food_cost": food_cost,
+			"cargo_before": cargo_before,
+			"cargo_after": get_cargo_lots(),
+			"cargo_unchanged": cargo_before == get_cargo_lots(),
+			"position_before": position_before,
+			"position_after": global_position,
+			"position_unchanged": position_before.is_equal_approx(global_position),
+			"rotation_before": rotation_before,
+			"rotation_after": rotation,
+			"dock_state_unchanged": (
+				docked_before == is_docked
+				and current_dock_before == current_dock_id
+			),
+			"no_state_change": true,
+		}
+
+	var expected_cargo_after: Array[String] = cargo_before.duplicate()
+	for cost_index in range(food_cost):
+		expected_cargo_after.erase(FOOD_LOT_NAME)
+	for cost_index in range(food_cost):
+		if not remove_cargo_lot(FOOD_LOT_NAME):
+			cargo_lots = cargo_before.duplicate()
+			_sync_cargo_state()
+			return {
+				"success": false,
+				"result": "FAST TRAVEL FOOD USE FAILED · CARGO RESTORED",
+				"denial_reasons": PackedStringArray(["FOOD USE FAILED"]),
+				"dock_id": dock_id,
+				"food_cost": food_cost,
+				"cargo_before": cargo_before,
+				"cargo_after": get_cargo_lots(),
+				"cargo_unchanged": cargo_before == get_cargo_lots(),
+				"rollback_succeeded": cargo_before == get_cargo_lots(),
+				"no_state_change": cargo_before == get_cargo_lots(),
+			}
+	var cargo_after_cost: Array[String] = get_cargo_lots()
+	var food_evidence: Dictionary = _food_state.record_fast_travel_food_use(
+		cargo_before,
+		cargo_after_cost,
+		food_cost,
+	)
+	if not bool(food_evidence.get("success", false)):
+		cargo_lots = cargo_before.duplicate()
+		_sync_cargo_state()
+		return {
+			"success": false,
+			"result": "FAST TRAVEL FOOD EVIDENCE FAILED · CARGO RESTORED",
+			"denial_reasons": PackedStringArray(["FOOD COST MISMATCH"]),
+			"dock_id": dock_id,
+			"food_cost": food_cost,
+			"cargo_before": cargo_before,
+			"cargo_after": get_cargo_lots(),
+			"cargo_unchanged": cargo_before == get_cargo_lots(),
+			"rollback_succeeded": cargo_before == get_cargo_lots(),
+			"food_evidence": food_evidence,
+			"no_state_change": cargo_before == get_cargo_lots(),
+		}
+
+	var definition: Dictionary = DOCK_DEFINITIONS[dock_id]
+	global_position = definition["snap_position"]
+	rotation = definition["snap_rotation"]
+	current_speed = 0.0
+	sailing_velocity = Vector2.ZERO
+	controls_enabled = false
+	is_docked = true
+	current_dock_id = dock_id
+	last_dock_id = dock_id
+	at_damaged_dock = dock_id == "cove"
+	_dock_exit_cleared = dock_id != "cove"
+	_departure_input_armed = false
+	_restore_controls_after_navigation_release = false
+	last_collision_response = "FAST_TRAVEL_DOCKED_%s" % dock_id.to_upper()
+	var crew_restoration_evidence: Dictionary = (
+		_crew_condition_state.restore_at_dock(dock_id, TOP_SPEED)
+	)
+	_last_crew_dock_evidence = crew_restoration_evidence.duplicate(true)
+	if bool(crew_restoration_evidence.get("restored", false)):
+		_last_crew_restoration_evidence = crew_restoration_evidence.duplicate(true)
+	var cargo_after: Array[String] = get_cargo_lots()
+	var food_units_after := get_food_units()
+	var other_cargo_before := _get_non_food_lots(cargo_before)
+	var other_cargo_after := _get_non_food_lots(cargo_after)
+	var evidence := {
+		"success": true,
+		"result": "FAST TRAVEL SHIP ARRIVED · %s" % definition["name"],
+		"dock_id": dock_id,
+		"dock_name": definition["name"],
+		"food_cost": food_cost,
+		"food_units_before": food_units_before,
+		"food_units_after": food_units_after,
+		"food_units_used": food_units_before - food_units_after,
+		"used_exact_food_cost": (
+			food_units_before - food_units_after == food_cost
+		),
+		"food_evidence": food_evidence.duplicate(true),
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"expected_cargo_after": expected_cargo_after,
+		"cargo_matches_exact_cost": cargo_after == expected_cargo_after,
+		"other_cargo_before": other_cargo_before,
+		"other_cargo_after": other_cargo_after,
+		"other_cargo_unchanged": other_cargo_before == other_cargo_after,
+		"random_cargo_loss": false,
+		"position_before": position_before,
+		"position_after": global_position,
+		"expected_position": definition["snap_position"],
+		"fixed_destination_position": global_position.is_equal_approx(
+			definition["snap_position"]
+		),
+		"rotation_before": rotation_before,
+		"rotation_after": rotation,
+		"expected_rotation": definition["snap_rotation"],
+		"fixed_destination_rotation": is_equal_approx(
+			rotation,
+			float(definition["snap_rotation"]),
+		),
+		"ship_is_docked": is_docked,
+		"current_dock_id": current_dock_id,
+		"captain_aboard": captain_aboard,
+		"crew_restoration_evidence": crew_restoration_evidence.duplicate(true),
+		"transaction_atomic": (
+			cargo_after == expected_cargo_after
+			and other_cargo_before == other_cargo_after
+			and food_units_before - food_units_after == food_cost
+			and global_position.is_equal_approx(definition["snap_position"])
+			and is_docked
+			and current_dock_id == dock_id
+		),
+	}
+	queue_redraw()
+	return evidence
 
 
 func get_current_dock_definition() -> Dictionary:

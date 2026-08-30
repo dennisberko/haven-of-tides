@@ -22,6 +22,7 @@ const StoryClueState := preload("res://scripts/story_clue.gd")
 const MonsterHuntState := preload("res://scripts/monster_hunt.gd")
 const ShipModuleLoadoutState := preload("res://scripts/ship_module_loadout.gd")
 const DayNightCycleState := preload("res://scripts/day_night_cycle.gd")
+const FastTravelState := preload("res://scripts/fast_travel.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -46,6 +47,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var sea_area = $SeaArea
 @onready var cove = $Cove
 @onready var day_night_cycle: DayNightCycleState = $DayNightCycle
+@onready var fast_travel: FastTravelState = $FastTravel
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var fishing_area: FishingAreaState = $FishingArea
 @onready var weather_area: WeatherAreaState = $WeatherArea
@@ -229,9 +231,11 @@ const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
 const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · P PURSUIT · V HARPOON · E ACTION · T WEATHER · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
-const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
+const CHART_CONTROLS_TEXT := (
+	"M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · F FAST TRAVEL · X CLEAR"
+)
 const CHART_STORY_CONTROLS_TEXT := (
-	"M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · 4 CLUE · X CLEAR"
+	"M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · 4 CLUE · F FAST TRAVEL · X CLEAR"
 )
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 / 4 REPLACE CARGO SLOT"
 const FISHING_CARGO_CHOICE_CONTROLS_TEXT := (
@@ -315,6 +319,7 @@ var _player_shore_id := ""
 var _player_near_ship_return := false
 var _last_ship_docked := false
 var _chart_release_pending := false
+var _fast_travel_confirm_held := false
 var _weather_toggle_held := false
 var _last_salvage_eligible := false
 var _last_fishing_prompt := ""
@@ -640,6 +645,7 @@ func _ready() -> void:
 	_update_crew_view()
 	_update_repair_view()
 	_update_target_inspection()
+	_update_fast_travel_preview()
 	_update_boarding_deck_state()
 	_update_broadside_view()
 	_update_ammunition_view()
@@ -722,6 +728,7 @@ func _physics_process(delta: float) -> void:
 	_update_monster_hunt(delta)
 	_update_pirate_hunter(delta)
 	_update_target_inspection()
+	_update_fast_travel_preview()
 	_update_boarding_deck_state(delta)
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
@@ -855,6 +862,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_harpoon_pressed = false
 	if _key_matches(key_event, KEY_P) and not key_event.pressed:
 		_pursuit_pressed = false
+	if _key_matches(key_event, KEY_F) and not key_event.pressed:
+		_fast_travel_confirm_held = false
 	if _defeat_recovery.is_result_open():
 		_handle_defeat_result_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -1003,11 +1012,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if _chart_release_pending:
-		if (
-			not key_event.pressed
-			and (key_event.physical_keycode == KEY_E or key_event.keycode == KEY_E)
-		):
+		if not key_event.pressed and _key_matches(key_event, KEY_E):
 			_interact_held = false
+		if not key_event.pressed and _key_matches(key_event, KEY_F):
+			_fast_travel_confirm_held = false
 		get_viewport().set_input_as_handled()
 		return
 	if _key_matches(key_event, KEY_J):
@@ -3887,7 +3895,16 @@ func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
 
 
 func _handle_chart_input(key_event: InputEventKey) -> bool:
-	if not key_event.pressed or key_event.echo:
+	if not key_event.pressed:
+		if _key_matches(key_event, KEY_F) and _fast_travel_confirm_held:
+			_fast_travel_confirm_held = false
+			return waypoint_display.chart_visible or _chart_release_pending
+		return false
+	if key_event.echo:
+		if waypoint_display.chart_visible and _key_matches(key_event, KEY_F):
+			fast_travel.record_held_confirm(ship.get_cargo_lots())
+			_update_fast_travel_preview()
+			return true
 		return false
 
 	if _key_matches(key_event, KEY_M):
@@ -3907,10 +3924,19 @@ func _handle_chart_input(key_event: InputEventKey) -> bool:
 		waypoint_display.select_location("port")
 	elif _key_matches(key_event, KEY_4):
 		waypoint_display.select_story_location()
+	elif _key_matches(key_event, KEY_F):
+		if _fast_travel_confirm_held:
+			fast_travel.record_held_confirm(ship.get_cargo_lots())
+			_update_fast_travel_preview()
+			return true
+		_fast_travel_confirm_held = true
+		_attempt_fast_travel()
+		return true
 	elif _key_matches(key_event, KEY_X):
 		waypoint_display.clear_location()
 	else:
 		return true
+	_update_fast_travel_preview()
 	return true
 
 
@@ -3922,6 +3948,168 @@ func _get_chart_controls_text() -> String:
 	if story_clue.is_story_location_unlocked():
 		return CHART_STORY_CONTROLS_TEXT
 	return CHART_CONTROLS_TEXT
+
+
+func _update_fast_travel_preview() -> void:
+	var preview: Dictionary = fast_travel.update_preview(
+		_get_fast_travel_preview_context()
+	)
+	waypoint_display.set_fast_travel_state(preview)
+
+
+func _get_fast_travel_preview_context() -> Dictionary:
+	var hunter_state: Dictionary = pirate_hunter.get_hunter_playtest_state()
+	var major_threat: Dictionary = _get_nearby_major_threat()
+	return {
+		"chart_visible": waypoint_display.chart_visible,
+		"selected_location_id": waypoint_display.selected_location_id,
+		"captain_aboard": _player_aboard_ship and ship.captain_aboard,
+		"ship_is_docked": ship.is_docked,
+		"food_units": ship.get_food_units(),
+		"time_before": day_night_cycle.get_time_state(),
+		"time_after": day_night_cycle.get_state_after_steps(
+			FastTravelState.TIME_COST
+		),
+		"combat_active": _is_fast_travel_combat_active(),
+		"chase_active": bool(hunter_state.get("encounter_active", false)),
+		"nearby_major_threat": bool(major_threat.get("active", false)),
+		"major_threat_id": String(major_threat.get("threat_id", "")),
+		"major_threat_distance": float(major_threat.get("distance", -1.0)),
+	}
+
+
+func _is_fast_travel_combat_active() -> bool:
+	if _player_on_target_deck:
+		return true
+	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
+	if float(broadside_state.get("reload_remaining", 0.0)) > 0.0:
+		return true
+	for target in inspection_targets:
+		var hull_state: Dictionary = target.get_hull_state()
+		if (
+			int(hull_state.get("total_hit_count", 0)) > 0
+			and not bool(hull_state.get("disabled", false))
+			and not target.is_boarding_victory_resolved()
+			and ship.global_position.distance_to(target.global_position)
+				<= InspectableTargetShipState.VISIBILITY_RANGE
+		):
+			return true
+	return false
+
+
+func _get_nearby_major_threat() -> Dictionary:
+	var nearest_id := ""
+	var nearest_distance := INF
+	var source := "NONE"
+	var monster_state: Dictionary = monster_hunt.get_playtest_state(
+		ship.get_cargo_lots(),
+		cove_storage.get_cargo_lots(),
+	)
+	if bool(monster_state.get("encounter_active", false)):
+		nearest_id = String(monster_state.get("monster_id", "blackwake_leviathan"))
+		nearest_distance = float(monster_state.get("ship_distance", 0.0))
+		source = "MONSTER_ENCOUNTER"
+	for target in inspection_targets:
+		var estimate: Dictionary = target.get_estimate_state()
+		var hull_state: Dictionary = target.get_hull_state()
+		if (
+			String(estimate.get("threat_estimate", "")) != "HIGH"
+			or bool(hull_state.get("disabled", false))
+			or target.is_boarding_victory_resolved()
+		):
+			continue
+		var target_distance: float = ship.global_position.distance_to(
+			target.global_position
+		)
+		if (
+			target_distance <= FastTravelState.MAJOR_THREAT_RANGE
+			and target_distance < nearest_distance
+		):
+			nearest_id = target.target_id
+			nearest_distance = target_distance
+			source = "HIGH_THREAT_SHIP"
+	return {
+		"active": not nearest_id.is_empty(),
+		"threat_id": nearest_id,
+		"distance": nearest_distance if not nearest_id.is_empty() else -1.0,
+		"source": source,
+		"range": FastTravelState.MAJOR_THREAT_RANGE,
+	}
+
+
+func _attempt_fast_travel() -> void:
+	var preview: Dictionary = fast_travel.update_preview(
+		_get_fast_travel_preview_context()
+	)
+	waypoint_display.set_fast_travel_state(preview)
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var time_before := day_night_cycle.get_time_state()
+	if not bool(preview.get("available", false)):
+		fast_travel.record_denied_confirm(preview, cargo_before, time_before)
+		_update_fast_travel_preview()
+		return
+
+	var completed_voyages_before := completed_voyages
+	var ship_evidence: Dictionary = ship.fast_travel_to_dock(
+		FastTravelState.PORT_ID,
+		int(preview["food_cost"]),
+	)
+	if not bool(ship_evidence.get("success", false)):
+		var failed_preview := preview.duplicate(true)
+		failed_preview["available"] = false
+		failed_preview["denial_reasons"] = ship_evidence.get(
+			"denial_reasons",
+			PackedStringArray(["SHIP MOVE FAILED"]),
+		)
+		fast_travel.record_denied_confirm(
+			failed_preview,
+			ship.get_cargo_lots(),
+			time_before,
+		)
+		_update_fast_travel_preview()
+		return
+
+	var time_evidence: Dictionary = day_night_cycle.advance_for_fast_travel(
+		int(preview["time_cost"])
+	)
+	var time_state := day_night_cycle.get_time_state()
+	cove.set_time_state(time_state)
+	var resident_time_evidence: Dictionary = resident.record_day_night_state(
+		time_state,
+		time_evidence,
+	)
+	time_evidence["cove_palette_time_state"] = cove.get_playtest_state()[
+		"time_state"
+	]
+	time_evidence["resident_time_evidence"] = (
+		resident_time_evidence.duplicate(true)
+	)
+	fast_travel.record_successful_confirm(
+		preview,
+		ship_evidence,
+		time_evidence,
+		completed_voyages_before,
+		completed_voyages,
+	)
+	_voyage_departure_dock_id = ""
+	_available_dock_id = ""
+	_last_leave_allowed = false
+	_last_ship_docked = true
+	var crew_restoration: Dictionary = ship_evidence.get(
+		"crew_restoration_evidence",
+		{},
+	)
+	_last_crew_dock_context_evidence = crew_restoration.duplicate(true)
+	if bool(crew_restoration.get("restored", false)):
+		_last_crew_restoration_context_evidence = crew_restoration.duplicate(true)
+	_set_chart_visible(false)
+	_update_day_night_view()
+	_update_food_view()
+	_update_cargo_view()
+	_update_crew_view()
+	_update_repair_view()
+	_update_interaction_prompt()
+	_update_fast_travel_preview()
 
 
 func _set_chart_visible(visible: bool) -> void:
@@ -3952,10 +4140,7 @@ func _set_chart_visible(visible: bool) -> void:
 		_chart_release_pending = true
 		_prompt_refresh_after_navigation_release = true
 		player.movement_enabled = false
-		ship.set_navigation_input_blocked(
-			false,
-			_player_aboard_ship and not ship.is_docked,
-		)
+		ship.set_navigation_input_blocked(true)
 		controls_help.text = RELEASE_CONTROLS_TEXT
 		_update_interaction_prompt()
 
@@ -3963,11 +4148,17 @@ func _set_chart_visible(visible: bool) -> void:
 func _update_chart_release_pending() -> void:
 	if not _chart_release_pending or waypoint_display.chart_visible:
 		return
-	if _is_any_movement_key_pressed():
+	if _is_any_chart_guard_key_pressed():
 		player.movement_enabled = false
+		if not ship.navigation_input_blocked:
+			ship.set_navigation_input_blocked(true)
 		return
 
 	_chart_release_pending = false
+	ship.set_navigation_input_blocked(
+		false,
+		_player_aboard_ship and not ship.is_docked,
+	)
 	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
 	controls_help.text = _get_context_controls_text()
 	_update_interaction_prompt()
@@ -4087,6 +4278,19 @@ func _is_any_movement_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_LEFT)
 		or Input.is_key_pressed(KEY_DOWN)
 		or Input.is_key_pressed(KEY_RIGHT)
+	)
+
+
+func _is_any_chart_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_F)
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+		or Input.is_key_pressed(KEY_4)
 	)
 
 
@@ -7336,6 +7540,12 @@ func _dock_ship() -> void:
 	var crew_dock_evidence: Dictionary = (
 		(crew_after["last_dock_evidence"] as Dictionary).duplicate(true)
 	)
+	if dock_id == FastTravelState.PORT_ID:
+		var dock_definition: Dictionary = ship.get_dock_definition(dock_id)
+		fast_travel.record_dock_visit(
+			dock_id,
+			String(dock_definition.get("name", FastTravelState.PORT_NAME)),
+		)
 	crew_dock_evidence.merge({
 		"world_heat_before": heat_before,
 		"world_heat_after": heat_after,
@@ -7398,6 +7608,7 @@ func _dock_ship() -> void:
 	_capture_damage_checkpoint("DOCK")
 	_update_crew_view()
 	_update_repair_view()
+	_update_fast_travel_preview()
 	_update_interaction_prompt()
 
 
@@ -9319,6 +9530,7 @@ func _capture_non_heat_persistence_state() -> Dictionary:
 
 
 func get_playtest_state() -> Dictionary:
+	_update_fast_travel_preview()
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var food_state: Dictionary = ship.get_food_playtest_state()
 	var damage_state: Dictionary = ship.get_damage_playtest_state()
@@ -9338,6 +9550,7 @@ func get_playtest_state() -> Dictionary:
 	)
 	var resident_state: Dictionary = resident.get_playtest_state()
 	var day_night_state: Dictionary = day_night_cycle.get_playtest_state()
+	var fast_travel_state: Dictionary = fast_travel.get_playtest_state()
 	var cove_state: Dictionary = cove.get_playtest_state()
 	var cove_time_view_text := "%s\n%s" % [
 		cove_time_title.text,
@@ -10642,7 +10855,11 @@ func get_playtest_state() -> Dictionary:
 		"food_crew_hunger_system_count": 0,
 		"food_crew_injury_system_count": 0,
 		"food_spoilage_system_count": 0,
-		"food_fast_travel_cost_system_count": 0,
+		"food_fast_travel_cost_system_count": 1,
+		"food_fast_travel_units_used": food_state["fast_travel_units_used"],
+		"food_last_fast_travel_use_evidence": (
+			food_state["last_fast_travel_use_evidence"]
+		),
 		"food_hard_voyage_limit_system_count": 0,
 		"ship_repair_system_count": repair_state["system_count"],
 		"ship_hull_damage_system_count": damage_state["owner_count"],
@@ -13282,6 +13499,14 @@ func get_playtest_state() -> Dictionary:
 			and ship_state["navigation_input_blocked"]
 			and not player_state["movement_enabled"]
 		),
+		"chart_release_ship_guard_holds": (
+			not _chart_release_pending
+			or (
+				ship_state["navigation_input_blocked"]
+				and not ship_state["controls_enabled"]
+				and is_zero_approx(float(ship_state["current_speed"]))
+			)
+		),
 		"input_release_pending": (
 			ship_state["navigation_release_pending"]
 			or defeat_state["release_guard_pending"]
@@ -13618,6 +13843,15 @@ func get_playtest_state() -> Dictionary:
 			day_night_state["eligible_cove_return_count"]
 		),
 		"day_night_advance_count": day_night_state["advance_count"],
+		"day_night_fast_travel_advance_count": (
+			day_night_state["fast_travel_advance_count"]
+		),
+		"day_night_fast_travel_time_step_count": (
+			day_night_state["fast_travel_time_step_count"]
+		),
+		"day_night_last_fast_travel_evidence": (
+			day_night_state["last_fast_travel_evidence"]
+		),
 		"day_night_advances_at_most_once": (
 			day_night_state["advances_at_most_once"]
 		),
@@ -13777,6 +14011,128 @@ func get_playtest_state() -> Dictionary:
 			waypoint_state["chart_visible"]
 			and ship_state["navigation_input_blocked"]
 		),
+		"fast_travel_system_count": fast_travel_state["system_count"],
+		"fast_travel_owner_count": fast_travel_state["owner_count"],
+		"fast_travel_action_count": fast_travel_state["travel_action_count"],
+		"fast_travel_chart_action_count": (
+			fast_travel_state["chart_action_count"]
+		),
+		"fast_travel_confirm_key": fast_travel_state["confirm_key"],
+		"fast_travel_destination_count": (
+			fast_travel_state["destination_count"]
+		),
+		"fast_travel_destination_id": fast_travel_state["destination_id"],
+		"fast_travel_destination_name": (
+			fast_travel_state["destination_name"]
+		),
+		"fast_travel_port_unlocked": fast_travel_state["port_unlocked"],
+		"fast_travel_visited_port_count": (
+			fast_travel_state["visited_port_count"]
+		),
+		"fast_travel_visited_port_ids": fast_travel_state["visited_port_ids"],
+		"fast_travel_port_dock_visit_count": (
+			fast_travel_state["port_dock_visit_count"]
+		),
+		"fast_travel_port_unlock_count": (
+			fast_travel_state["port_unlock_count"]
+		),
+		"fast_travel_unlocks_on_first_dock": (
+			fast_travel_state["unlocks_on_first_dock"]
+		),
+		"fast_travel_unlocks_at_most_once": (
+			fast_travel_state["unlocks_at_most_once"]
+		),
+		"fast_travel_food_cost": fast_travel_state["food_cost"],
+		"fast_travel_time_cost": fast_travel_state["time_cost"],
+		"fast_travel_major_threat_range": (
+			fast_travel_state["major_threat_range"]
+		),
+		"fast_travel_preview": fast_travel_state["current_preview"],
+		"fast_travel_preview_visible": (
+			waypoint_state["fast_travel_preview_visible"]
+		),
+		"fast_travel_preview_available": (
+			waypoint_state["fast_travel_available"]
+		),
+		"fast_travel_preview_cost_text": (
+			waypoint_state["fast_travel_cost_text"]
+		),
+		"fast_travel_preview_status_text": (
+			waypoint_state["fast_travel_status_text"]
+		),
+		"fast_travel_preview_shows_exact_cost": (
+			not bool(waypoint_state["fast_travel_preview_visible"])
+			or (
+				String(waypoint_state["fast_travel_cost_text"]).contains(
+					"%d FOOD" % int(fast_travel_state["food_cost"])
+				)
+				and String(waypoint_state["fast_travel_cost_text"]).contains(
+					"%d TIME STEP" % int(fast_travel_state["time_cost"])
+				)
+			)
+		),
+		"fast_travel_unvisited_preview_count": (
+			fast_travel_state["unvisited_preview_count"]
+		),
+		"fast_travel_confirm_attempt_count": (
+			fast_travel_state["confirm_attempt_count"]
+		),
+		"fast_travel_success_count": fast_travel_state["success_count"],
+		"fast_travel_denied_count": fast_travel_state["denied_count"],
+		"fast_travel_held_confirm_count": (
+			fast_travel_state["held_confirm_count"]
+		),
+		"fast_travel_unvisited_denied_count": (
+			fast_travel_state["unvisited_denied_count"]
+		),
+		"fast_travel_food_denied_count": (
+			fast_travel_state["food_denied_count"]
+		),
+		"fast_travel_combat_block_count": (
+			fast_travel_state["combat_block_count"]
+		),
+		"fast_travel_chase_block_count": (
+			fast_travel_state["chase_block_count"]
+		),
+		"fast_travel_major_threat_block_count": (
+			fast_travel_state["major_threat_block_count"]
+		),
+		"fast_travel_total_food_used": fast_travel_state["total_food_used"],
+		"fast_travel_total_time_steps_advanced": (
+			fast_travel_state["total_time_steps_advanced"]
+		),
+		"fast_travel_cargo_safe_after_all_travel": (
+			fast_travel_state["cargo_safe_after_all_travel"]
+		),
+		"fast_travel_last_port_visit_evidence": (
+			fast_travel_state["last_port_visit_evidence"]
+		),
+		"fast_travel_last_confirm_evidence": (
+			fast_travel_state["last_confirm_evidence"]
+		),
+		"fast_travel_successful_evidence": (
+			fast_travel_state["successful_travel_evidence"]
+		),
+		"fast_travel_last_denied_evidence": (
+			fast_travel_state["last_denied_evidence"]
+		),
+		"fast_travel_last_held_evidence": (
+			fast_travel_state["last_held_evidence"]
+		),
+		"fast_travel_release_pending": _chart_release_pending,
+		"fast_travel_confirm_held": _fast_travel_confirm_held,
+		"fast_travel_excluded_features": {
+			"unvisited_travel": fast_travel_state["unvisited_travel_count"],
+			"random_cargo_loss": fast_travel_state["random_cargo_loss_count"],
+			"random_encounters": (
+				fast_travel_state["random_fast_travel_encounter_count"]
+			),
+			"free_travel": fast_travel_state["free_travel_count"],
+			"travel_during_combat": (
+				fast_travel_state["travel_during_combat_count"]
+			),
+			"new_world_map": fast_travel_state["new_world_map_count"],
+		},
 		"weather_system_count": weather_state["system_count"],
 		"weather_state_owner_count": weather_state["owner_count"],
 		"weather_state_count": weather_state["weather_state_count"],

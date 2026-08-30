@@ -13,8 +13,11 @@ var _uncounted_arrival_count := 0
 var _same_dock_arrival_count := 0
 var _non_cove_arrival_count := 0
 var _already_night_arrival_count := 0
+var _fast_travel_advance_count := 0
+var _fast_travel_time_step_count := 0
 var _last_arrival_evidence: Dictionary = {}
 var _successful_advance_evidence: Dictionary = {}
+var _last_fast_travel_evidence: Dictionary = {}
 
 
 func record_voyage_arrival(voyage_evidence: Dictionary) -> Dictionary:
@@ -47,13 +50,15 @@ func record_voyage_arrival(voyage_evidence: Dictionary) -> Dictionary:
 	var advanced := false
 	if eligible:
 		_eligible_cove_return_count += 1
-		if _time_state == DAY:
+		if _time_state == NIGHT:
+			_already_night_arrival_count += 1
+			reason = "COVE RETURN ALREADY AT NIGHT"
+		elif _advance_count == 0:
 			_time_state = NIGHT
 			_advance_count += 1
 			advanced = true
 		else:
-			_already_night_arrival_count += 1
-			reason = "COVE RETURN ALREADY AT NIGHT"
+			reason = "COVE RETURN VOYAGE TIME ADVANCE ALREADY USED"
 
 	_last_arrival_evidence = {
 		"success": advanced,
@@ -95,6 +100,48 @@ func get_time_state() -> String:
 	return _time_state
 
 
+func get_state_after_steps(time_steps: int) -> String:
+	var result := _time_state
+	for step_index in range(maxi(time_steps, 0)):
+		result = NIGHT if result == DAY else DAY
+	return result
+
+
+func advance_for_fast_travel(time_steps: int) -> Dictionary:
+	var state_before := _time_state
+	if time_steps <= 0:
+		_last_fast_travel_evidence = {
+			"success": false,
+			"result": "FAST TRAVEL TIME NOT ADVANCED",
+			"reason": "TIME COST MUST BE POSITIVE",
+			"time_steps_advanced": 0,
+			"state_before": state_before,
+			"state_after": _time_state,
+			"no_state_change": true,
+		}
+		return _last_fast_travel_evidence.duplicate(true)
+	for step_index in range(time_steps):
+		_time_state = NIGHT if _time_state == DAY else DAY
+	_fast_travel_advance_count += 1
+	_fast_travel_time_step_count += time_steps
+	_last_fast_travel_evidence = {
+		"success": state_before != _time_state,
+		"result": "FAST TRAVEL TIME · %s -> %s" % [
+			state_before,
+			_time_state,
+		],
+		"source": "FAST_TRAVEL",
+		"time_steps_advanced": time_steps,
+		"state_before": state_before,
+		"state_after": _time_state,
+		"state_changed": state_before != _time_state,
+		"fast_travel_advance_count": _fast_travel_advance_count,
+		"fast_travel_time_step_count": _fast_travel_time_step_count,
+		"eligible_counted_cove_return": false,
+	}
+	return _last_fast_travel_evidence.duplicate(true)
+
+
 func is_day() -> bool:
 	return _time_state == DAY
 
@@ -121,6 +168,14 @@ func get_playtest_state() -> Dictionary:
 		"same_dock_arrival_count": _same_dock_arrival_count,
 		"non_cove_arrival_count": _non_cove_arrival_count,
 		"already_night_arrival_count": _already_night_arrival_count,
+		"fast_travel_advance_count": _fast_travel_advance_count,
+		"fast_travel_time_step_count": _fast_travel_time_step_count,
+		"last_fast_travel_evidence": (
+			_last_fast_travel_evidence.duplicate(true)
+		),
+		"total_time_advance_count": (
+			_advance_count + _fast_travel_advance_count
+		),
 		"advance_rule": "COUNTED DIFFERENT-DOCK VOYAGE RETURN TO COVE",
 		"last_arrival_evidence": _last_arrival_evidence.duplicate(true),
 		"successful_advance_evidence": (
@@ -132,9 +187,9 @@ func get_playtest_state() -> Dictionary:
 		"timed_request_failure_system_count": 0,
 		"sleep_need_system_count": 0,
 		"real_time_wait_system_count": 0,
-		"port_unlock_system_count": 0,
-		"fast_travel_action_count": 0,
-		"fast_travel_food_cost_count": 0,
-		"fast_travel_chart_action_count": 0,
-		"fast_travel_combat_block_count": 0,
+		"port_unlock_system_count": 1,
+		"fast_travel_action_count": 1,
+		"fast_travel_food_cost_count": 1,
+		"fast_travel_chart_action_count": 1,
+		"fast_travel_combat_block_count": 1,
 	}

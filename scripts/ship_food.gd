@@ -8,11 +8,13 @@ var _progress_distance := 0.0
 var _total_sailing_distance := 0.0
 var _zero_food_sailing_distance := 0.0
 var _total_units_used := 0
+var _fast_travel_units_used := 0
 var _failed_use_count := 0
 var _last_movement_distance := 0.0
 var _last_due_use_count := 0
 var _last_use_evidence: Dictionary = {}
 var _last_zero_food_movement_evidence: Dictionary = {}
+var _last_fast_travel_use_evidence: Dictionary = {}
 
 
 func sync_food_units(food_units: int) -> void:
@@ -98,6 +100,49 @@ func record_failed_food_use(cargo_snapshot: Array[String]) -> void:
 	}
 
 
+func record_fast_travel_food_use(
+	cargo_before: Array[String],
+	cargo_after: Array[String],
+	food_cost: int,
+) -> Dictionary:
+	var food_units_before := cargo_before.count(FOOD_LOT_NAME)
+	var food_units_after := cargo_after.count(FOOD_LOT_NAME)
+	var other_cargo_before := _get_other_cargo(cargo_before)
+	var other_cargo_after := _get_other_cargo(cargo_after)
+	var actual_food_used := food_units_before - food_units_after
+	var success := (
+		food_cost > 0
+		and actual_food_used == food_cost
+		and cargo_before.size() - cargo_after.size() == food_cost
+		and other_cargo_before == other_cargo_after
+	)
+	if success:
+		_total_units_used += actual_food_used
+		_fast_travel_units_used += actual_food_used
+	_last_fast_travel_use_evidence = {
+		"success": success,
+		"result": (
+			"FAST TRAVEL FOOD USED · %d" % actual_food_used
+			if success
+			else "FAST TRAVEL FOOD USE INVALID"
+		),
+		"food_lot_name": FOOD_LOT_NAME,
+		"food_cost": food_cost,
+		"food_units_before": food_units_before,
+		"food_units_after": food_units_after,
+		"actual_food_used": actual_food_used,
+		"cargo_before": cargo_before.duplicate(),
+		"cargo_after": cargo_after.duplicate(),
+		"other_cargo_before": other_cargo_before,
+		"other_cargo_after": other_cargo_after,
+		"other_cargo_unchanged": other_cargo_before == other_cargo_after,
+		"used_exact_shown_cost": actual_food_used == food_cost,
+		"total_units_used_after": _total_units_used,
+		"fast_travel_units_used_after": _fast_travel_units_used,
+	}
+	return _last_fast_travel_use_evidence.duplicate(true)
+
+
 func record_zero_food_movement(
 	actual_distance: float,
 	cargo_before: Array[String],
@@ -147,12 +192,16 @@ func get_playtest_state(food_units: int) -> Dictionary:
 		"total_sailing_distance": _total_sailing_distance,
 		"zero_food_sailing_distance": _zero_food_sailing_distance,
 		"total_units_used": _total_units_used,
+		"fast_travel_units_used": _fast_travel_units_used,
 		"failed_use_count": _failed_use_count,
 		"last_movement_distance": _last_movement_distance,
 		"last_due_use_count": _last_due_use_count,
 		"last_use_evidence": _last_use_evidence.duplicate(true),
 		"last_zero_food_movement_evidence": (
 			_last_zero_food_movement_evidence.duplicate(true)
+		),
+		"last_fast_travel_use_evidence": (
+			_last_fast_travel_use_evidence.duplicate(true)
 		),
 		"status": status,
 		"low_food_warning": food_units == 1,

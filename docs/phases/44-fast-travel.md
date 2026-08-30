@@ -2,6 +2,27 @@
 
 [Previous: Phase 43 - Day and night](43-day-and-night.md) | [Next: Game design ideas](../game-design-ideas.md)
 
+## Work status
+
+**Phase status: COMPLETE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Unlock a port after the player docks there once | DONE |
+| Add 2: Add a fast travel action to the sea chart | DONE |
+| Add 3: Show the food and time cost before travel | DONE |
+| Add 4: Use the food and advance time when the player confirms | DONE |
+| Add 5: Block fast travel during combat, a chase, or a nearby major threat | DONE |
+| Add 6: Keep all cargo safe during fast travel | DONE |
+| Complete when: Fast travel uses the shown cost and follows all limits | DONE |
+| Test 1: Open the chart before the first port visit | DONE |
+| Test 2: Confirm that the unvisited port is not available | DONE |
+| Test 3: Sail to the port and dock there | DONE |
+| Test 4: Leave, open the chart, and select the port | DONE |
+| Test 5: Confirm the shown food and time cost | DONE |
+| Test 6: Travel and confirm food, time, and cargo | DONE |
+| Test 7: Start a chase and confirm that travel is blocked | DONE |
+
 ## Goal
 
 Let the player travel to a visited port at a clear cost.
