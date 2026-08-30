@@ -17,6 +17,7 @@ const PirateHunterShipState := preload("res://scripts/pirate_hunter_ship.gd")
 const DefeatRecoveryState := preload("res://scripts/defeat_recovery.gd")
 const FishingAreaState := preload("res://scripts/fishing_area.gd")
 const WeatherAreaState := preload("res://scripts/weather_area.gd")
+const RuinExplorationState := preload("res://scripts/ruin_exploration.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -42,6 +43,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var fishing_area: FishingAreaState = $FishingArea
 @onready var weather_area: WeatherAreaState = $WeatherArea
+@onready var ruin_exploration: RuinExplorationState = $RuinExploration
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
@@ -198,6 +200,9 @@ const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO
 const FISHING_CARGO_CHOICE_CONTROLS_TEXT := (
 	"X DISCARD CAUGHT FISH · 1 / 2 / 3 REPLACE CARGO SLOT"
 )
+const RUIN_CARGO_CHOICE_CONTROLS_TEXT := (
+	"X LEAVE TREASURE IN RUIN · 1 / 2 / 3 REPLACE CARGO SLOT"
+)
 const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
 const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 1-6, M, WASD / ARROW KEYS"
 const CONSTRUCTION_READY_CONTROLS_TEXT := "E BUILD STORAGE SHED · X CLOSE"
@@ -206,11 +211,11 @@ const CONSTRUCTION_COMPLETE_CONTROLS_TEXT := "X CLOSE · E CANNOT BUILD AGAIN"
 const CONSTRUCTION_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, WASD / ARROW KEYS"
 const TRADE_BUY_CONTROLS_TEXT := (
 	"E BUY SPICE · B BUY WEAPONS AND GUNPOWDER · "
-	+ "L LOAD AMMUNITION · C SELL CANNONS · X CLOSE"
+	+ "L LOAD AMMUNITION · C SELL CANNONS · G SELL TREASURE · X CLOSE"
 )
 const TRADE_SELL_CONTROLS_TEXT := "E SELL SPICE · F SELL FISH · X CLOSE"
 const TRADE_RELEASE_CONTROLS_TEXT := (
-	"RELEASE E, B, L, C, F, X, M, 1-6, WASD / ARROW KEYS"
+	"RELEASE E, B, L, C, F, G, X, M, 1-6, WASD / ARROW KEYS"
 )
 const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
@@ -230,6 +235,7 @@ const STARTING_MONEY := 25
 const PRIZE_CANNON_CARGO_SALE_PRICE := 15
 const CARGO_SOURCE_WRECK := "WRECK"
 const CARGO_SOURCE_FISHING := "FISHING"
+const CARGO_SOURCE_RUIN := "RUIN"
 const HEAT_PERSISTENCE_PATH := "user://haven_of_tides_phase30_heat.cfg"
 const HEAT_PERSISTENCE_SECTION := "phase30_heat"
 const HEAT_PERSISTENCE_KEY := "payload"
@@ -353,6 +359,10 @@ var _fish_sale_attempt_count := 0
 var _fish_sold_lot_count := 0
 var _fish_sale_denied_count := 0
 var _fish_money_earned := 0
+var _treasure_sale_attempt_count := 0
+var _treasure_sold_lot_count := 0
+var _treasure_sale_denied_count := 0
+var _treasure_money_earned := 0
 var _trade_denied_purchase_count := 0
 var _trade_denied_sale_count := 0
 var _trade_held_input_count := 0
@@ -372,6 +382,9 @@ var _successful_purchase_evidence: Dictionary = {}
 var _successful_sale_evidence: Dictionary = {}
 var _last_fish_sale_evidence: Dictionary = {}
 var _successful_fish_sale_evidence: Dictionary = {}
+var _last_treasure_sale_evidence: Dictionary = {}
+var _successful_treasure_sale_evidence: Dictionary = {}
+var _last_held_treasure_trade_evidence: Dictionary = {}
 var _trade_purchase_money_snapshot := 0
 var _trade_purchase_cargo_snapshot: Array[String] = []
 var _trade_returned_to_ship_at_port := false
@@ -543,6 +556,7 @@ func _ready() -> void:
 	_update_wreck_opportunity()
 	_update_weather_area()
 	_update_fishing_area()
+	_update_ruin_exploration()
 	_update_cargo_view()
 	_update_storage_view()
 	_update_construction_view()
@@ -619,6 +633,7 @@ func _physics_process(delta: float) -> void:
 	_update_wreck_opportunity()
 	_update_weather_area()
 	_update_fishing_area()
+	_update_ruin_exploration()
 	_update_pirate_hunter(delta)
 	_update_target_inspection()
 	_update_boarding_deck_state(delta)
@@ -722,13 +737,15 @@ func _physics_process(delta: float) -> void:
 		travel_camera.global_position = player.global_position
 		var dock_definition: Dictionary = ship.get_current_dock_definition()
 		var near_return := false
-		if not dock_definition.is_empty():
+		if not dock_definition.is_empty() and not ruin_exploration.is_inside():
 			near_return = player.global_position.distance_to(
 				dock_definition["shore_position"]
 			) <= SHORE_RETURN_DISTANCE
 		if near_return != _player_near_ship_return:
 			_player_near_ship_return = near_return
 			_update_interaction_prompt()
+		if ruin_exploration.is_inside():
+			controls_help.text = "WASD / ARROWS TO WALK · E TAKE TREASURE OR EXIT"
 	else:
 		travel_camera.global_position = COVE_CAMERA_POSITION
 
@@ -825,6 +842,22 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if (
+		ruin_exploration.is_transition_release_pending()
+		and _key_matches(key_event, KEY_E)
+	):
+		if not key_event.pressed:
+			_interact_held = false
+			ruin_exploration.release_transition_guard()
+			_update_ruin_exploration()
+			_update_interaction_prompt()
+		elif not key_event.echo:
+			ruin_exploration.record_held_or_guarded_interaction(
+				"TRANSITION_RELEASE_GUARD",
+				ship.get_cargo_lots(),
+			)
+		get_viewport().set_input_as_handled()
+		return
+	if (
 		_target_inspection_view_open
 		and _key_matches(key_event, KEY_E)
 	):
@@ -904,6 +937,19 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 	if not _player_shore_id.is_empty() and _player_near_ship_return:
 		_return_to_ship()
+		get_viewport().set_input_as_handled()
+		return
+
+	if ruin_exploration.is_inside():
+		if ruin_exploration.can_take_treasure():
+			_take_ruin_treasure()
+		elif ruin_exploration.can_exit():
+			_exit_ruin()
+		get_viewport().set_input_as_handled()
+		return
+
+	if _can_enter_ruin():
+		_enter_ruin()
 		get_viewport().set_input_as_handled()
 		return
 
@@ -1677,6 +1723,7 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 			or trade_key == KEY_L
 			or trade_key == KEY_C
 			or trade_key == KEY_F
+			or trade_key == KEY_G
 		):
 			var held_cargo: Array[String] = ship.get_cargo_lots()
 			var held_ammunition: int = ship.get_ammunition_units()
@@ -1700,6 +1747,10 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 				"no_state_change": true,
 				"fresh_press_required": true,
 			}
+			if trade_key == KEY_G:
+				_last_held_treasure_trade_evidence = (
+					_last_held_ammunition_trade_evidence.duplicate(true)
+				)
 		_update_trade_view()
 		return
 
@@ -1743,6 +1794,15 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 			_last_trade_result = "FISH SALES AVAILABLE AT COVE ONLY"
 			_update_trade_view()
 		return
+	if trade_key == KEY_G:
+		if _active_trade_contact != null and _active_trade_contact.is_port_trader():
+			_attempt_treasure_sale()
+		else:
+			_trade_blocked_input_count += 1
+			_last_trade_action = "SELL_RUIN_TREASURE_BLOCKED_AT_COVE"
+			_last_trade_result = "RUIN TREASURE SALES AVAILABLE AT PORT ONLY"
+			_update_trade_view()
+		return
 	if _active_trade_contact != null and _active_trade_contact.is_port_trader():
 		_attempt_trade_purchase()
 	else:
@@ -1762,6 +1822,8 @@ func _get_trade_key(key_event: InputEventKey) -> int:
 		return KEY_C
 	if _key_matches(key_event, KEY_F):
 		return KEY_F
+	if _key_matches(key_event, KEY_G):
+		return KEY_G
 	return 0
 
 
@@ -1777,6 +1839,8 @@ func _get_trade_key_name(trade_key: int) -> String:
 			return "C"
 		KEY_F:
 			return "F"
+		KEY_G:
+			return "G"
 		KEY_X:
 			return "X"
 	return "UNKNOWN"
@@ -2358,6 +2422,159 @@ func _get_fish_money_preview(money_before: int) -> Dictionary:
 		),
 		"fixed_price": TradeContact.NORMAL_PRICE,
 	}
+
+
+func _get_treasure_money_preview(money_before: int) -> Dictionary:
+	return {
+		"money_before": money_before,
+		"money_after": money_before + TradeContact.NORMAL_PRICE,
+		"money_delta": TradeContact.NORMAL_PRICE,
+		"price_state": String(
+			TradeContact.PriceState.keys()[TradeContact.PriceState.NORMAL]
+		),
+		"fixed_price": TradeContact.NORMAL_PRICE,
+	}
+
+
+func _attempt_treasure_sale() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_port_trader()
+	):
+		return
+
+	_trade_sale_attempt_count += 1
+	_treasure_sale_attempt_count += 1
+	_last_trade_action = "SELL_ONE_%s" % (
+		RuinExplorationState.TREASURE_LOT_NAME.replace(" ", "_")
+	)
+	var money_before := money
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var port_mark_before: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var cove_mark_before: Dictionary = (
+		cove_buyer.get_mark_state(completed_voyages)
+	)
+	var money_preview := _get_treasure_money_preview(money_before)
+	var success := cargo_before.has(RuinExplorationState.TREASURE_LOT_NAME)
+	if success:
+		success = ship.remove_cargo_lot(
+			RuinExplorationState.TREASURE_LOT_NAME
+		)
+	if success:
+		money += int(money_preview["money_delta"])
+		_treasure_sold_lot_count += 1
+		_treasure_money_earned += int(money_preview["money_delta"])
+		_last_trade_result = (
+			"SOLD 1 RUIN TREASURE LOT · NORMAL · RECEIVED %d COINS"
+			% money_preview["fixed_price"]
+		)
+	else:
+		_treasure_sale_denied_count += 1
+		_last_trade_result = (
+			"TREASURE SALE DENIED · NO RUIN TREASURE LOT IN SHIP CARGO"
+		)
+
+	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var port_mark_after: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var cove_mark_after: Dictionary = (
+		cove_buyer.get_mark_state(completed_voyages)
+	)
+	_last_treasure_sale_evidence = {
+		"success": success,
+		"action": _last_trade_action,
+		"result": _last_trade_result,
+		"treasure_lot_name": RuinExplorationState.TREASURE_LOT_NAME,
+		"price_state": money_preview["price_state"],
+		"fixed_sale_price": money_preview["fixed_price"],
+		"canonical_normal_price": TradeContact.NORMAL_PRICE,
+		"fixed_price_map": TradeContact.get_fixed_price_map(),
+		"uses_canonical_normal_fixed_price": (
+			RuinExplorationState.TREASURE_PRICE_STATE
+				== money_preview["price_state"]
+			and int(money_preview["fixed_price"]) == TradeContact.NORMAL_PRICE
+			and int(TradeContact.get_fixed_price_map()["NORMAL"])
+				== TradeContact.NORMAL_PRICE
+		),
+		"money_preview_before": money_preview["money_before"],
+		"money_preview_after": money_preview["money_after"],
+		"money_preview_delta": money_preview["money_delta"],
+		"money_before": money_before,
+		"money_after": money,
+		"money_delta": money - money_before,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_delta": cargo_after.size() - cargo_before.size(),
+		"treasure_count_delta": (
+			cargo_after.count(RuinExplorationState.TREASURE_LOT_NAME)
+			- cargo_before.count(RuinExplorationState.TREASURE_LOT_NAME)
+		),
+		"port_spice_mark_before": port_mark_before,
+		"port_spice_mark_after": port_mark_after,
+		"port_spice_mark_unchanged": _trade_mark_resources_equal(
+			port_mark_before,
+			port_mark_after,
+		),
+		"cove_spice_mark_before": cove_mark_before,
+		"cove_spice_mark_after": cove_mark_after,
+		"cove_spice_mark_unchanged": _trade_mark_resources_equal(
+			cove_mark_before,
+			cove_mark_after,
+		),
+		"fresh_press_required": true,
+		"preview_matches_actual": (
+			(not success)
+			or (
+				money == int(money_preview["money_after"])
+				and money - money_before == int(money_preview["money_delta"])
+			)
+		),
+		"transaction_atomic": (
+			(
+				success
+				and money - money_before == TradeContact.NORMAL_PRICE
+				and cargo_after.size() == cargo_before.size() - 1
+				and cargo_after.count(
+					RuinExplorationState.TREASURE_LOT_NAME
+				) == cargo_before.count(
+					RuinExplorationState.TREASURE_LOT_NAME
+				) - 1
+				and _trade_mark_resources_equal(
+					port_mark_before,
+					port_mark_after,
+				)
+				and _trade_mark_resources_equal(
+					cove_mark_before,
+					cove_mark_after,
+				)
+			)
+			or (
+				not success
+				and money == money_before
+				and cargo_after == cargo_before
+				and _trade_mark_resources_equal(
+					port_mark_before,
+					port_mark_after,
+				)
+				and _trade_mark_resources_equal(
+					cove_mark_before,
+					cove_mark_after,
+				)
+			)
+		),
+	}
+	if success:
+		_successful_treasure_sale_evidence = (
+			_last_treasure_sale_evidence.duplicate(true)
+		)
+	ruin_exploration.record_sale(_last_treasure_sale_evidence)
+	_update_cargo_view()
+	_update_money_view()
+	_update_trade_view()
 
 
 func _attempt_fish_sale() -> void:
@@ -3124,6 +3341,13 @@ func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
 		if _key_matches(key_event, KEY_E):
 			_interact_held = false
 		return
+	if _key_matches(key_event, KEY_E):
+		if _pending_cargo_source == CARGO_SOURCE_RUIN:
+			ruin_exploration.record_held_or_guarded_interaction(
+				"TREASURE_CHOICE_HELD_E",
+				ship.get_cargo_lots(),
+			)
+		return
 	if key_event.echo:
 		return
 	if _key_matches(key_event, KEY_X):
@@ -3375,6 +3599,7 @@ func _is_any_trade_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_L)
 		or Input.is_key_pressed(KEY_C)
 		or Input.is_key_pressed(KEY_F)
+		or Input.is_key_pressed(KEY_G)
 		or Input.is_key_pressed(KEY_M)
 		or Input.is_key_pressed(KEY_X)
 		or Input.is_key_pressed(KEY_1)
@@ -3463,6 +3688,8 @@ func _get_context_controls_text() -> String:
 		return _get_cargo_choice_controls_text()
 	if _cargo_choice_release_pending or ship.navigation_release_pending:
 		return RELEASE_CONTROLS_TEXT
+	if ruin_exploration.is_inside():
+		return "WASD / ARROWS TO WALK · E TAKE TREASURE OR EXIT"
 	if _player_aboard_ship:
 		if ship.is_docked:
 			return DOCKED_CONTROLS_TEXT
@@ -3546,6 +3773,17 @@ func _update_fishing_area() -> void:
 		world_input_available,
 		weather_area.is_fishing_blocked(),
 	)
+
+
+func _update_ruin_exploration() -> void:
+	var prompt_before := ruin_exploration.get_interaction_prompt()
+	ruin_exploration.update_state(
+		player.global_position,
+		_player_shore_id,
+		player.movement_enabled,
+	)
+	if ruin_exploration.get_interaction_prompt() != prompt_before:
+		_update_interaction_prompt()
 
 
 func _update_weather_area() -> void:
@@ -4885,6 +5123,90 @@ func _get_world_cargo_total() -> int:
 	)
 
 
+func _can_enter_ruin() -> bool:
+	return (
+		not _player_aboard_ship
+		and _player_shore_id == "island"
+		and not _dialogue_open
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and ruin_exploration.can_enter()
+	)
+
+
+func _enter_ruin() -> void:
+	if not _can_enter_ruin():
+		return
+	if not ruin_exploration.try_enter(ship.get_cargo_lots()):
+		return
+	_player_near_ship_return = false
+	player.go_ashore(
+		RuinExplorationState.RUIN_ENTRY_POSITION,
+		"ruin",
+		ruin_exploration.get_walking_region(),
+	)
+	controls_help.text = "WASD / ARROWS TO WALK · E TAKE TREASURE OR EXIT"
+	_update_ruin_exploration()
+	_update_interaction_prompt()
+
+
+func _exit_ruin() -> void:
+	if not ruin_exploration.is_inside():
+		return
+	if not ruin_exploration.try_exit(ship.get_cargo_lots()):
+		return
+	var island_definition: Dictionary = ship.get_dock_definition("island")
+	player.go_ashore(
+		RuinExplorationState.ISLAND_RETURN_POSITION,
+		"island",
+		island_definition["shore_region"],
+	)
+	_player_near_ship_return = false
+	controls_help.text = WALKING_CONTROLS_TEXT
+	_update_ruin_exploration()
+	_update_interaction_prompt()
+
+
+func _take_ruin_treasure() -> void:
+	if not ruin_exploration.can_take_treasure():
+		return
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	if not ship.can_keep_cargo_lot():
+		_open_cargo_choice(
+			RuinExplorationState.TREASURE_LOT_NAME,
+			CARGO_SOURCE_RUIN,
+		)
+		return
+	if not ship.keep_cargo_lot(RuinExplorationState.TREASURE_LOT_NAME):
+		_last_cargo_action = "KEEP_RUIN_TREASURE"
+		_last_cargo_result = "NO_CHANGE_CARGO_FULL"
+		return
+	if not ruin_exploration.collect_direct(
+		cargo_before,
+		ship.get_cargo_lots(),
+	):
+		ship.undo_last_kept_cargo_lot(RuinExplorationState.TREASURE_LOT_NAME)
+		_last_cargo_action = "KEEP_RUIN_TREASURE"
+		_last_cargo_result = "ROLLED_BACK_RUIN_STATE"
+		return
+	_cargo_kept_count += 1
+	_last_cargo_action = "KEEP_RUIN_TREASURE"
+	_last_cargo_result = "KEPT_ONE_RUIN_TREASURE_LOT"
+	_update_cargo_view()
+	_update_ruin_exploration()
+	_update_interaction_prompt()
+
+
 func _fish_in_area() -> void:
 	if not fishing_area.can_receive_fishing_press():
 		return
@@ -4979,7 +5301,11 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 	if (
 		_cargo_choice_open
 		or cargo_lot.is_empty()
-		or not [CARGO_SOURCE_WRECK, CARGO_SOURCE_FISHING].has(cargo_source)
+		or not [
+			CARGO_SOURCE_WRECK,
+			CARGO_SOURCE_FISHING,
+			CARGO_SOURCE_RUIN,
+		].has(cargo_source)
 	):
 		return false
 	if (
@@ -4992,6 +5318,16 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 		and (
 			cargo_lot != FishingAreaState.FISH_LOT_NAME
 			or not fishing_area.record_choice_required()
+		)
+	):
+		return false
+	if (
+		cargo_source == CARGO_SOURCE_RUIN
+		and (
+			cargo_lot != RuinExplorationState.TREASURE_LOT_NAME
+			or not ruin_exploration.begin_treasure_choice(
+				ship.get_cargo_lots()
+			)
 		)
 	):
 		return false
@@ -5019,19 +5355,25 @@ func _leave_or_discard_pending_cargo_lot() -> void:
 		)
 	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
 		resolved = fishing_area.resolve_discard(ship.get_cargo_lots())
+	elif _pending_cargo_source == CARGO_SOURCE_RUIN:
+		resolved = ruin_exploration.leave_treasure_in_place(
+			ship.get_cargo_lots()
+		)
 	if not resolved:
 		return
 	_cargo_left_count += 1
 	_cargo_choice_resolution_count += 1
-	_last_cargo_action = (
-		"LEAVE_NEW_LOT" if _pending_cargo_source == CARGO_SOURCE_WRECK
-		else "DISCARD_NEW_FISH_LOT"
-	)
-	_last_cargo_result = (
-		"LEFT_%s_AT_WRECK" % _cargo_result_name(_pending_cargo_lot)
-		if _pending_cargo_source == CARGO_SOURCE_WRECK
-		else "DISCARDED_FISH_LOT_CARGO_UNCHANGED"
-	)
+	if _pending_cargo_source == CARGO_SOURCE_WRECK:
+		_last_cargo_action = "LEAVE_NEW_LOT"
+		_last_cargo_result = "LEFT_%s_AT_WRECK" % _cargo_result_name(
+			_pending_cargo_lot
+		)
+	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
+		_last_cargo_action = "DISCARD_NEW_FISH_LOT"
+		_last_cargo_result = "DISCARDED_FISH_LOT_CARGO_UNCHANGED"
+	else:
+		_last_cargo_action = "LEAVE_RUIN_TREASURE_IN_PLACE"
+		_last_cargo_result = "LEFT_RUIN_TREASURE_IN_PLACE_CARGO_UNCHANGED"
 	_close_cargo_choice()
 
 
@@ -5046,6 +5388,11 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 	if (
 		_pending_cargo_source == CARGO_SOURCE_FISHING
 		and not fishing_area.has_pending_catch()
+	):
+		return
+	if (
+		_pending_cargo_source == CARGO_SOURCE_RUIN
+		and not ruin_exploration.has_pending_treasure_choice()
 	):
 		return
 	var removed_lot: String = ship.replace_cargo_slot(
@@ -5064,6 +5411,11 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 		)
 	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
 		source_resolved = fishing_area.resolve_replacement(
+			removed_lot,
+			ship.get_cargo_lots(),
+		)
+	elif _pending_cargo_source == CARGO_SOURCE_RUIN:
+		source_resolved = ruin_exploration.collect_by_replacement(
 			removed_lot,
 			ship.get_cargo_lots(),
 		)
@@ -5107,11 +5459,11 @@ func _cargo_result_name(lot_name: String) -> String:
 
 
 func _get_cargo_choice_controls_text() -> String:
-	return (
-		FISHING_CARGO_CHOICE_CONTROLS_TEXT
-		if _pending_cargo_source == CARGO_SOURCE_FISHING
-		else CARGO_CHOICE_CONTROLS_TEXT
-	)
+	if _pending_cargo_source == CARGO_SOURCE_FISHING:
+		return FISHING_CARGO_CHOICE_CONTROLS_TEXT
+	if _pending_cargo_source == CARGO_SOURCE_RUIN:
+		return RUIN_CARGO_CHOICE_CONTROLS_TEXT
+	return CARGO_CHOICE_CONTROLS_TEXT
 
 
 func _update_cargo_view() -> void:
@@ -5158,11 +5510,16 @@ func _update_cargo_view() -> void:
 		choice_lines.append(
 			"[%d] REPLACE %s" % [slot_index + 1, cargo_lots[slot_index]]
 		)
-	choice_lines.append(
-		"[X] LEAVE %s AT WRECK" % _pending_cargo_lot
-		if _pending_cargo_source == CARGO_SOURCE_WRECK
-		else "[X] DISCARD CAUGHT %s · CARGO UNCHANGED" % _pending_cargo_lot
-	)
+	if _pending_cargo_source == CARGO_SOURCE_WRECK:
+		choice_lines.append("[X] LEAVE %s AT WRECK" % _pending_cargo_lot)
+	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
+		choice_lines.append(
+			"[X] DISCARD CAUGHT %s · CARGO UNCHANGED" % _pending_cargo_lot
+		)
+	else:
+		choice_lines.append(
+			"[X] LEAVE %s IN RUIN · TREASURE STAYS" % _pending_cargo_lot
+		)
 	cargo_choice_details.text = "\n".join(choice_lines)
 	cargo_choice_view.show()
 
@@ -5583,6 +5940,7 @@ func _update_trade_view() -> void:
 		var fixed_price: int = int(contact_state["current_fixed_price"])
 		var money_preview: Dictionary = _active_trade_contact.get_money_preview(money)
 		var fish_money_preview := _get_fish_money_preview(money)
+		var treasure_money_preview := _get_treasure_money_preview(money)
 		var money_delta: int = int(money_preview["money_delta"])
 		var money_delta_text := (
 			"+%d" % money_delta if money_delta > 0 else "%d" % money_delta
@@ -5682,9 +6040,23 @@ func _update_trade_view() -> void:
 				PrizeActionState.CANNON_CARGO_LOT_NAME,
 				cargo_lots.count(PrizeActionState.CANNON_CARGO_LOT_NAME),
 			])
+			port_lines.append(
+				(
+					"RUIN TREASURE SALE · %s · NORMAL · %d COINS · HELD %d · "
+					+ "TREASURE SELL PREVIEW · %d -> %d (+%d) · "
+					+ "[G] SELL ONE RUIN TREASURE LOT"
+				) % [
+					RuinExplorationState.TREASURE_LOT_NAME,
+					TradeContact.NORMAL_PRICE,
+					cargo_lots.count(RuinExplorationState.TREASURE_LOT_NAME),
+					treasure_money_preview["money_before"],
+					treasure_money_preview["money_after"],
+					treasure_money_preview["money_delta"],
+				]
+			)
 			trade_details.text = "\n".join(port_lines)
 			trade_controls.text = (
-				"[E] %s · [B] SUPPLY · [L] LOAD · [C] SELL CANNONS · [X] CLOSE" % (
+				"[E] %s · [B] SUPPLY · [L] LOAD · [C] CANNONS · [G] TREASURE · [X] CLOSE" % (
 					"BUY SPICE" if contact_state["trade_available"]
 					else "SPICE UNAVAILABLE"
 				)
@@ -6294,6 +6666,8 @@ func _return_to_ship() -> void:
 		_storage_persistence_holds = _storage_matches_persistence_snapshot()
 	if returning_shore_id == "cove" and _construction_persistence_tracking:
 		_construction_returned_to_ship = true
+	if returning_shore_id == "island":
+		ruin_exploration.record_return_to_ship(ship.get_cargo_lots())
 	if (
 		returning_shore_id == TradeContact.PORT_SHORE_ID
 		and _trade_bought_lot_count > _trade_sold_lot_count
@@ -6418,6 +6792,7 @@ func _update_interaction_prompt() -> void:
 		or _trade_release_pending
 		or _journal_view_open
 		or _journal_release_pending
+		or ruin_exploration.is_transition_release_pending()
 		or _target_inspection_view_open
 		or ship.navigation_release_pending
 	):
@@ -6458,6 +6833,12 @@ func _update_interaction_prompt() -> void:
 			interaction_prompt.show()
 		else:
 			interaction_prompt.hide()
+		return
+
+	var ruin_prompt := ruin_exploration.get_interaction_prompt()
+	if not ruin_prompt.is_empty():
+		interaction_prompt.text = ruin_prompt
+		interaction_prompt.show()
 		return
 
 	if not _player_shore_id.is_empty() and _player_near_ship_return:
@@ -6991,6 +7372,7 @@ func get_playtest_state() -> Dictionary:
 	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
 	var fishing_state: Dictionary = fishing_area.get_playtest_state()
 	var weather_state: Dictionary = weather_area.get_playtest_state()
+	var ruin_state: Dictionary = ruin_exploration.get_playtest_state()
 	var storage_state: Dictionary = cove_storage.get_playtest_state()
 	var construction_state: Dictionary = construction_site.get_playtest_state(
 		cove_storage
@@ -7120,6 +7502,7 @@ func get_playtest_state() -> Dictionary:
 	if _active_trade_contact != null:
 		active_trade_preview = _active_trade_contact.get_money_preview(money)
 	var fish_money_preview := _get_fish_money_preview(money)
+	var treasure_money_preview := _get_treasure_money_preview(money)
 	var food_view_full_text := "%s\n%s\n%s" % [
 		food_title.text,
 		food_status.text,
@@ -7171,11 +7554,13 @@ func get_playtest_state() -> Dictionary:
 		+ wreck_state["wreck_salvage_lot_count"]
 		+ storage_state["storage_used_slots"]
 		+ fishing_state["pending_catch_count"]
+		+ ruin_state["physical_treasure_lot_count"]
 	)
 	var initial_physical_cargo_total: int = int(
 		ship_state["starting_cargo_used_slots"]
 		+ wreck_state["wreck_initial_salvage_lot_count"]
 		+ storage_state["starting_storage_used_slots"]
+		+ ruin_state["initial_treasure_lot_count"]
 	)
 	var accounted_cargo_total: int = int(
 		physical_cargo_total
@@ -7189,6 +7574,8 @@ func get_playtest_state() -> Dictionary:
 		+ _fish_sold_lot_count
 		+ fishing_state["discarded_catch_count"]
 		+ fishing_state["displaced_cargo_discard_count"]
+		+ _treasure_sold_lot_count
+		+ ruin_state["displaced_cargo_discard_count"]
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total
@@ -7204,6 +7591,7 @@ func get_playtest_state() -> Dictionary:
 		- _ammunition_supply_money_spent
 		+ _prize_cannon_money_earned
 		+ _fish_sold_lot_count * TradeContact.NORMAL_PRICE
+		+ _treasure_sold_lot_count * TradeContact.NORMAL_PRICE
 	)
 	var ammunition_load_state: Dictionary = ammunition_state["last_load_evidence"]
 	var ammunition_conversion_cargo_delta: int = 0
@@ -7356,6 +7744,8 @@ func get_playtest_state() -> Dictionary:
 		camera_target = "TARGET_DECK"
 	elif _player_aboard_ship:
 		camera_target = "SHIP"
+	elif ruin_exploration.is_inside():
+		camera_target = "RUIN"
 	elif not _player_shore_id.is_empty():
 		camera_target = "PLAYER_ASHORE"
 	var boarding_deck_state: Dictionary = target_boarding_deck.get_playtest_state(
@@ -10350,6 +10740,7 @@ func get_playtest_state() -> Dictionary:
 			and cove_buyer_state["base_price_state"] == "VALUABLE"
 			and int(cove_buyer_state["base_fixed_price"]) == 30
 			and fishing_state["fish_price_state"] == "NORMAL"
+			and ruin_state["treasure_price_state"] == "NORMAL"
 			and TradeContact.NORMAL_PRICE
 				== int(TradeContact.get_fixed_price_map()["NORMAL"])
 		),
@@ -10380,6 +10771,7 @@ func get_playtest_state() -> Dictionary:
 		"money_view_visible": money_view.visible,
 		"money_view_text": money_details.text,
 		"fish_normal_sale_price": TradeContact.NORMAL_PRICE,
+		"ruin_treasure_normal_sale_price": TradeContact.NORMAL_PRICE,
 		"fish_fixed_price_state": {
 			"lot_name": FishingAreaState.FISH_LOT_NAME,
 			"price_state": fishing_state["fish_price_state"],
@@ -10445,6 +10837,32 @@ func get_playtest_state() -> Dictionary:
 					]
 				)
 				and trade_view_full_text.contains("[F] SELL ONE FISH LOT")
+			)
+		),
+		"port_ruin_treasure_sale_visible": (
+			not (
+				_trade_view_open
+				and _active_trade_contact == port_trader
+				and trade_view.visible
+			)
+			or (
+				trade_view_full_text.contains("RUIN TREASURE SALE")
+				and trade_view_full_text.contains(
+					RuinExplorationState.TREASURE_LOT_NAME
+				)
+				and trade_view_full_text.contains(
+					"NORMAL · %d COINS" % TradeContact.NORMAL_PRICE
+				)
+				and trade_view_full_text.contains(
+					"TREASURE SELL PREVIEW · %d -> %d (+%d)" % [
+						treasure_money_preview["money_before"],
+						treasure_money_preview["money_after"],
+						treasure_money_preview["money_delta"],
+					]
+				)
+				and trade_view_full_text.contains(
+					"[G] SELL ONE RUIN TREASURE LOT"
+				)
 			)
 		),
 		"port_ammunition_supply_price_visible": (
@@ -10543,11 +10961,18 @@ func get_playtest_state() -> Dictionary:
 			),
 			"sold_trade_lots": _trade_sold_lot_count,
 			"sold_fish_lots": _fish_sold_lot_count,
+			"sold_ruin_treasure_lots": _treasure_sold_lot_count,
 			"discarded_fish_lots": fishing_state["discarded_catch_count"],
 			"fishing_replacement_discarded_cargo_lots": (
 				fishing_state["displaced_cargo_discard_count"]
 			),
+			"ruin_replacement_discarded_cargo_lots": (
+				ruin_state["displaced_cargo_discard_count"]
+			),
 			"pending_fish_lots": fishing_state["pending_catch_count"],
+			"ruin_physical_treasure_lots": (
+				ruin_state["physical_treasure_lot_count"]
+			),
 			"initial_physical_cargo": initial_physical_cargo_total,
 			"initial_storage_lots": (
 				storage_state["starting_storage_used_slots"]
@@ -10621,6 +11046,7 @@ func get_playtest_state() -> Dictionary:
 			or _construction_release_pending
 			or _trade_release_pending
 			or _journal_release_pending
+			or ruin_state["transition_release_pending"]
 		),
 		"camera_position": travel_camera.global_position,
 		"camera_target": camera_target,
@@ -10888,6 +11314,215 @@ func get_playtest_state() -> Dictionary:
 			"tool_gates": weather_state["tool_gate_system_count"],
 			"story_clues": weather_state["story_clue_system_count"],
 			"monster_hunting": weather_state["monster_hunting_system_count"],
+		},
+		"ruin_system_count": ruin_state["system_count"],
+		"ruin_state_owner_count": ruin_state["owner_count"],
+		"ruin_scene_owner_count": get_tree().get_nodes_in_group(
+			"ruin_exploration"
+		).size(),
+		"ruin_id": ruin_state["ruin_id"],
+		"ruin_count": ruin_state["ruin_count"],
+		"ruin_uses_existing_island_dock": (
+			ship_state["dock_ids"].has("island")
+			and ship.get_dock_definition("island")["shore_position"]
+				== Vector2(1550.0, 1400.0)
+		),
+		"ruin_entrance_count": ruin_state["entrance_count"],
+		"ruin_entrance_position": ruin_state["entrance_position"],
+		"ruin_entrance_range": ruin_state["entrance_range"],
+		"ruin_entrance_visible": ruin_state["entrance_visible"],
+		"ruin_entrance_visual_rect": ruin_state["entrance_visual_rect"],
+		"ruin_entrance_visual_on_screen": (
+			ruin_state["entrance_visual_on_screen"]
+		),
+		"ruin_entrance_distance": ruin_state["entrance_distance"],
+		"ruin_entrance_in_island_walking_region": (
+			ruin_state["entrance_in_island_walking_region"]
+		),
+		"ruin_inside": ruin_state["inside_ruin"],
+		"ruin_area_count": ruin_state["ruin_area_count"],
+		"ruin_walking_rect": ruin_state["ruin_walking_rect"],
+		"ruin_visual_rect": ruin_state["ruin_visual_rect"],
+		"ruin_visual_on_screen": ruin_state["ruin_visual_on_screen"],
+		"ruin_entry_position": ruin_state["ruin_entry_position"],
+		"ruin_exit_position": ruin_state["ruin_exit_position"],
+		"ruin_exit_count": ruin_state["ruin_exit_count"],
+		"ruin_exit_visible": ruin_state["ruin_exit_visible"],
+		"ruin_exit_range": ruin_state["exit_range"],
+		"ruin_exit_distance": ruin_state["exit_distance"],
+		"ruin_player_uses_existing_walking_owner": (
+			int(ruin_state["movement_owner_count"]) == 1
+			and player_state["control_mode"] == "WALKING"
+		),
+		"ruin_player_movement_enabled": (
+			ruin_state["player_movement_enabled"]
+		),
+		"ruin_player_region_kind": player_state["shore_region_kind"],
+		"ruin_player_region_rect": player_state["shore_region_rect"],
+		"ruin_walking_distance": ruin_state["walking_distance"],
+		"ruin_walking_furthest_progress": (
+			ruin_state["walking_furthest_progress"]
+		),
+		"ruin_walking_path_length": ruin_state["walking_path_length"],
+		"ruin_walking_path_progress_ratio": (
+			ruin_state["walking_path_progress_ratio"]
+		),
+		"ruin_walking_path_reached_treasure_end": (
+			ruin_state["walking_path_reached_treasure_end"]
+		),
+		"ruin_interaction_prompt": ruin_state["interaction_prompt"],
+		"ruin_prompt_visible": (
+			interaction_prompt.visible
+			and interaction_prompt.text == ruin_state["interaction_prompt"]
+			and not String(ruin_state["interaction_prompt"]).is_empty()
+		),
+		"ruin_prompt_text": (
+			interaction_prompt.text
+			if interaction_prompt.visible
+			and interaction_prompt.text == ruin_state["interaction_prompt"]
+			else ""
+		),
+		"ruin_entrance_attempt_count": ruin_state["entrance_attempt_count"],
+		"ruin_entrance_success_count": ruin_state["entrance_success_count"],
+		"ruin_exit_attempt_count": ruin_state["exit_attempt_count"],
+		"ruin_exit_success_count": ruin_state["exit_success_count"],
+		"ruin_treasure_position": ruin_state["treasure_position"],
+		"ruin_treasure_range": ruin_state["treasure_range"],
+		"ruin_treasure_distance": ruin_state["treasure_distance"],
+		"ruin_treasure_lot_name": ruin_state["treasure_lot_name"],
+		"ruin_treasure_type_count": ruin_state["treasure_type_count"],
+		"ruin_treasure_price_state": ruin_state["treasure_price_state"],
+		"ruin_treasure_available": ruin_state["treasure_available"],
+		"ruin_treasure_visible": ruin_state["treasure_visible"],
+		"ruin_treasure_collected": ruin_state["treasure_collected"],
+		"ruin_treasure_choice_pending": (
+			ruin_state["treasure_choice_pending"]
+		),
+		"ruin_treasure_attempt_count": ruin_state["treasure_attempt_count"],
+		"ruin_treasure_collection_count": (
+			ruin_state["treasure_collection_count"]
+		),
+		"ruin_treasure_direct_keep_count": ruin_state["direct_keep_count"],
+		"ruin_treasure_choice_required_count": (
+			ruin_state["choice_required_count"]
+		),
+		"ruin_treasure_leave_in_place_count": (
+			ruin_state["leave_in_place_count"]
+		),
+		"ruin_treasure_replacement_keep_count": (
+			ruin_state["replacement_keep_count"]
+		),
+		"ruin_treasure_displaced_cargo_count": (
+			ruin_state["displaced_cargo_discard_count"]
+		),
+		"ruin_treasure_cargo_count": ship.get_cargo_lots().count(
+			RuinExplorationState.TREASURE_LOT_NAME
+		),
+		"ruin_treasure_uses_normal_cargo_slot": (
+			int(ruin_state["cargo_owner_count"]) == 1
+			and ship_state["each_cargo_lot_uses_one_slot"]
+		),
+		"ruin_treasure_collects_once": ruin_state["treasure_collects_once"],
+		"ruin_treasure_state_consistent": (
+			ruin_state["treasure_state_consistent"]
+		),
+		"ruin_last_transition_evidence": (
+			ruin_state["last_transition_evidence"]
+		),
+		"ruin_last_treasure_evidence": ruin_state["last_treasure_evidence"],
+		"ruin_last_choice_evidence": ruin_state["last_choice_evidence"],
+		"ruin_last_held_input_evidence": (
+			ruin_state["last_held_input_evidence"]
+		),
+		"ruin_fresh_press_required": ruin_state["fresh_press_required"],
+		"ruin_held_input_count": ruin_state["held_input_count"],
+		"ruin_transition_release_pending": (
+			ruin_state["transition_release_pending"]
+		),
+		"ruin_transition_release_count": (
+			ruin_state["transition_release_count"]
+		),
+		"ruin_return_to_island_count": ruin_state["return_to_island_count"],
+		"ruin_return_to_ship_count": ruin_state["return_to_ship_count"],
+		"ruin_cargo_choice": {
+			"open": _cargo_choice_open,
+			"open_for_ruin": (
+				_cargo_choice_open and _pending_cargo_source == CARGO_SOURCE_RUIN
+			),
+			"pending_lot": (
+				_pending_cargo_lot
+				if _pending_cargo_source == CARGO_SOURCE_RUIN
+				else ""
+			),
+			"pending_source": _pending_cargo_source,
+			"prompt_visible": (
+				cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_RUIN
+			),
+			"prompt_text": (
+				"%s\n%s" % [cargo_choice_title.text, cargo_choice_details.text]
+				if cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_RUIN
+				else ""
+			),
+			"leave_control": "X",
+			"replacement_controls": ["1", "2", "3"],
+			"last_resolution": ruin_state["last_choice_evidence"],
+		},
+		"ruin_existing_cargo_choice_sources_supported": (
+			[CARGO_SOURCE_WRECK, CARGO_SOURCE_FISHING, CARGO_SOURCE_RUIN]
+		),
+		"ruin_treasure_money_preview": treasure_money_preview.duplicate(true),
+		"ruin_treasure_sale_control": "G",
+		"ruin_treasure_sale_attempt_count": _treasure_sale_attempt_count,
+		"ruin_treasure_sold_lot_count": _treasure_sold_lot_count,
+		"ruin_treasure_sale_denied_count": _treasure_sale_denied_count,
+		"ruin_treasure_money_earned": _treasure_money_earned,
+		"ruin_last_treasure_sale_evidence": (
+			_last_treasure_sale_evidence.duplicate(true)
+		),
+		"ruin_successful_treasure_sale_evidence": (
+			_successful_treasure_sale_evidence.duplicate(true)
+		),
+		"ruin_last_held_treasure_trade_evidence": (
+			_last_held_treasure_trade_evidence.duplicate(true)
+		),
+		"ruin_treasure_sale_uses_existing_port_trader": true,
+		"ruin_treasure_sale_uses_canonical_normal_price": (
+			ruin_state["treasure_price_state"] == "NORMAL"
+			and TradeContact.NORMAL_PRICE
+				== int(TradeContact.get_fixed_price_map()["NORMAL"])
+		),
+		"ruin_treasure_sale_money_accounting_holds": (
+			_treasure_money_earned
+			== _treasure_sold_lot_count * TradeContact.NORMAL_PRICE
+		),
+		"ruin_accounting": {
+			"state_holds": ruin_state["cargo_accounting_holds"],
+			"world_cargo_accounting_holds": (
+				accounted_cargo_total == expected_cargo_total
+			),
+			"money_accounting_holds": money == expected_money,
+			"cargo_limit_never_exceeded": (
+				ship_state["cargo_limit_never_exceeded"]
+			),
+			"physical_treasure": ruin_state["physical_treasure_lot_count"],
+			"in_ship": ship.get_cargo_lots().count(
+				RuinExplorationState.TREASURE_LOT_NAME
+			),
+			"sold": _treasure_sold_lot_count,
+			"displaced_cargo": ruin_state["displaced_cargo_discard_count"],
+		},
+		"ruin_excluded_features": {
+			"tool_gates": ruin_state["tool_gate_system_count"],
+			"blocked_paths": ruin_state["blocked_path_count"],
+			"puzzles": ruin_state["puzzle_system_count"],
+			"story_clues": ruin_state["story_clue_system_count"],
+			"curses": ruin_state["curse_system_count"],
+			"combat": ruin_state["ruin_combat_system_count"],
+			"procedural_ruins": ruin_state["procedural_ruin_system_count"],
+			"treasure_variants": int(ruin_state["treasure_variant_count"]) - 1,
+			"new_markets": ruin_state["new_market_system_count"],
 		},
 		"fishing_system_count": fishing_state["system_count"],
 		"fishing_state_owner_count": fishing_state["owner_count"],

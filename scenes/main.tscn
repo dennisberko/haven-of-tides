@@ -1,4 +1,4 @@
-[gd_scene load_steps=31 format=3]
+[gd_scene load_steps=32 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -19,6 +19,7 @@
 [ext_resource type="Script" path="res://scripts/pirate_hunter_ship.gd" id="16_pirate_hunter"]
 [ext_resource type="Script" path="res://scripts/fishing_area.gd" id="17_fishing_area"]
 [ext_resource type="Script" path="res://scripts/weather_area.gd" id="18_weather_area"]
+[ext_resource type="Script" path="res://scripts/ruin_exploration.gd" id="19_ruin"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -297,6 +298,9 @@ visible = false
 position = Vector2(3600, 1200)
 script = ExtResource("15_boarding_deck")
 
+[node name="RuinExploration" type="Node2D" parent="." groups=["ruin_exploration"]]
+script = ExtResource("19_ruin")
+
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
 script = ExtResource("2_player")
@@ -332,7 +336,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 35 · Weather"
+text = "Phase 36 · Ruin Exploration"
 
 [node name="WeatherView" type="ColorRect" parent="Interface" groups=["weather_view"]]
 visible = false
@@ -1073,9 +1077,9 @@ horizontal_alignment = 1
 [node name="TradeView" type="ColorRect" parent="Interface"]
 visible = false
 offset_left = 70.0
-offset_top = 35.0
+offset_top = 12.0
 offset_right = 1082.0
-offset_bottom = 570.0
+offset_bottom = 580.0
 color = Color(0.0313726, 0.109804, 0.133333, 0.985)
 
 [node name="TradeTitle" type="Label" parent="Interface/TradeView"]
@@ -1092,7 +1096,7 @@ horizontal_alignment = 1
 offset_left = 30.0
 offset_top = 54.0
 offset_right = 982.0
-offset_bottom = 414.0
+offset_bottom = 444.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_constants/line_spacing = 0
 theme_override_font_sizes/font_size = 12
@@ -1101,9 +1105,9 @@ horizontal_alignment = 1
 
 [node name="TradeResult" type="Label" parent="Interface/TradeView"]
 offset_left = 38.0
-offset_top = 420.0
+offset_top = 482.0
 offset_right = 974.0
-offset_bottom = 468.0
+offset_bottom = 520.0
 theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
 theme_override_font_sizes/font_size = 18
 text = "READY"
@@ -1112,12 +1116,12 @@ autowrap_mode = 2
 
 [node name="TradeControls" type="Label" parent="Interface/TradeView"]
 offset_left = 28.0
-offset_top = 484.0
+offset_top = 535.0
 offset_right = 984.0
-offset_bottom = 520.0
+offset_bottom = 565.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 14
-text = "[E] BUY SPICE · [B] SUPPLY · [L] LOAD · [C] SELL CANNONS · [X] CLOSE"
+text = "[E] BUY SPICE · [B] SUPPLY · [L] LOAD · [C] CANNONS · [G] TREASURE · [X] CLOSE"
 horizontal_alignment = 1
 
 [node name="TradeJournalView" type="ColorRect" parent="Interface" groups=["trade_journal_screen"]]
