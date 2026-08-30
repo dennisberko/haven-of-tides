@@ -909,6 +909,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_record_held_boarding_interaction("BOARD")
 		elif fishing_area.can_receive_fishing_press():
 			fishing_area.record_held_press(ship.get_cargo_lots())
+		elif ruin_exploration.is_near_tool_gate():
+			ruin_exploration.record_held_or_guarded_interaction(
+				"TOOL_GATE",
+				ship.get_cargo_lots(),
+			)
 		return
 
 	_interact_held = true
@@ -943,6 +948,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if ruin_exploration.is_inside():
 		if ruin_exploration.can_take_treasure():
 			_take_ruin_treasure()
+		elif ruin_exploration.can_interact_tool_gate():
+			_open_ruin_tool_gate()
 		elif ruin_exploration.can_exit():
 			_exit_ruin()
 		get_viewport().set_input_as_handled()
@@ -5155,7 +5162,7 @@ func _enter_ruin() -> void:
 		"ruin",
 		ruin_exploration.get_walking_region(),
 	)
-	controls_help.text = "WASD / ARROWS TO WALK · E TAKE TREASURE OR EXIT"
+	controls_help.text = "WASD / ARROWS TO WALK · E INTERACT"
 	_update_ruin_exploration()
 	_update_interaction_prompt()
 
@@ -5203,6 +5210,14 @@ func _take_ruin_treasure() -> void:
 	_last_cargo_action = "KEEP_RUIN_TREASURE"
 	_last_cargo_result = "KEPT_ONE_RUIN_TREASURE_LOT"
 	_update_cargo_view()
+	_update_ruin_exploration()
+	_update_interaction_prompt()
+
+
+func _open_ruin_tool_gate() -> void:
+	if not ruin_exploration.can_interact_tool_gate():
+		return
+	ruin_exploration.try_open_tool_gate(ship.get_cargo_lots(), money)
 	_update_ruin_exploration()
 	_update_interaction_prompt()
 
@@ -6729,6 +6744,13 @@ func _close_dialogue() -> void:
 	dialogue_box.hide()
 	if finished_request:
 		_request_state = RequestState.COMPLETE
+		ruin_exploration.award_exploration_tool_from_request(
+			REQUEST_TITLE,
+			"GOAL_COMPLETE",
+			"COMPLETE",
+			ship.get_cargo_lots(),
+			money,
+		)
 		_update_request_view()
 	_update_interaction_prompt()
 
@@ -6763,7 +6785,9 @@ func _update_request_view() -> void:
 			request_goal.text = REQUEST_RETURN_GOAL
 		RequestState.COMPLETE:
 			request_status.text = "REQUEST COMPLETE"
-			request_goal.text = "Dock inspected for Mara"
+			request_goal.text = (
+				"Dock inspected for Mara · Received RUIN PRY BAR"
+			)
 
 
 func _update_interaction_prompt() -> void:
@@ -11444,6 +11468,104 @@ func get_playtest_state() -> Dictionary:
 		),
 		"ruin_return_to_island_count": ruin_state["return_to_island_count"],
 		"ruin_return_to_ship_count": ruin_state["return_to_ship_count"],
+		"ruin_exploration_tool_count": ruin_state["exploration_tool_count"],
+		"ruin_exploration_tool_owner_count": (
+			ruin_state["exploration_tool_owner_count"]
+		),
+		"ruin_exploration_tool_name": ruin_state["exploration_tool_name"],
+		"ruin_exploration_tool_source": ruin_state["exploration_tool_source"],
+		"ruin_exploration_tool_owned": ruin_state["exploration_tool_owned"],
+		"ruin_exploration_tool_award_count": ruin_state["tool_award_count"],
+		"ruin_last_tool_award_evidence": (
+			ruin_state["last_tool_award_evidence"]
+		),
+		"ruin_tool_uses_existing_test_resident_request": (
+			ruin_state["exploration_tool_source"]
+				== "MARA'S DAMAGED DOCK REQUEST"
+		),
+		"ruin_tool_request_complete": _request_state == RequestState.COMPLETE,
+		"ruin_tool_request_view_text": "%s\n%s\n%s" % [
+			request_title.text,
+			request_status.text,
+			request_goal.text,
+		],
+		"ruin_tool_gate_system_count": ruin_state["tool_gate_system_count"],
+		"ruin_blocked_path_count": ruin_state["blocked_path_count"],
+		"ruin_tool_gate_type_count": ruin_state["tool_gate_type_count"],
+		"ruin_tool_gate_position": ruin_state["tool_gate_position"],
+		"ruin_tool_gate_range": ruin_state["tool_gate_range"],
+		"ruin_tool_gate_distance": ruin_state["tool_gate_distance"],
+		"ruin_tool_gate_near": ruin_state["tool_gate_near"],
+		"ruin_tool_gate_open": ruin_state["tool_gate_open"],
+		"ruin_tool_gate_closed": ruin_state["tool_gate_closed"],
+		"ruin_tool_gate_collision_enabled": (
+			ruin_state["tool_gate_collision_enabled"]
+		),
+		"ruin_tool_gate_prompt_shows_required_tool": (
+			ruin_state["tool_gate_near"]
+			and not ruin_state["tool_gate_open"]
+			and String(ruin_state["interaction_prompt"]).contains(
+				"RUIN PRY BAR"
+			)
+		),
+		"ruin_tool_gate_attempt_count": ruin_state["tool_gate_attempt_count"],
+		"ruin_tool_gate_denied_count": ruin_state["tool_gate_denied_count"],
+		"ruin_tool_gate_open_count": ruin_state["tool_gate_open_count"],
+		"ruin_tool_gate_opens_once": ruin_state["tool_gate_opens_once"],
+		"ruin_tool_gate_open_persists": ruin_state["tool_gate_open_persists"],
+		"ruin_gate_open_exit_count": ruin_state["gate_open_exit_count"],
+		"ruin_gate_open_return_entry_count": (
+			ruin_state["gate_open_return_entry_count"]
+		),
+		"ruin_tool_gate_open_after_return": (
+			ruin_state["tool_gate_open_after_return"]
+		),
+		"ruin_tool_gate_completion_flow_holds": (
+			ruin_state["tool_gate_completion_flow_holds"]
+		),
+		"ruin_last_tool_gate_evidence": (
+			ruin_state["last_tool_gate_evidence"]
+		),
+		"ruin_last_denied_tool_gate_evidence": (
+			ruin_state["last_denied_tool_gate_evidence"]
+		),
+		"ruin_successful_tool_gate_evidence": (
+			ruin_state["successful_tool_gate_evidence"]
+		),
+		"ruin_gated_treasure_position": ruin_state["gated_treasure_position"],
+		"ruin_gated_treasure_distance": ruin_state["gated_treasure_distance"],
+		"ruin_gated_treasure_available": (
+			ruin_state["gated_treasure_available"]
+		),
+		"ruin_gated_treasure_visible": ruin_state["gated_treasure_visible"],
+		"ruin_gated_treasure_collected": ruin_state["gated_treasure_collected"],
+		"ruin_gated_treasure_count": ruin_state["gated_treasure_count"],
+		"ruin_gated_normal_treasure_count": (
+			ruin_state["gated_normal_treasure_count"]
+		),
+		"ruin_gated_treasure_collection_count": (
+			ruin_state["gated_treasure_collection_count"]
+		),
+		"ruin_gated_treasure_collects_once": (
+			ruin_state["gated_treasure_collects_once"]
+		),
+		"ruin_gated_treasure_state_consistent": (
+			ruin_state["gated_treasure_state_consistent"]
+		),
+		"ruin_gated_treasure_is_normal": (
+			ruin_state["treasure_lot_name"]
+				== RuinExplorationState.TREASURE_LOT_NAME
+			and ruin_state["treasure_price_state"] == "NORMAL"
+			and ruin_state["treasure_variant_count"] == 1
+		),
+		"ruin_gate_stays_open_after_treasure": (
+			not ruin_state["gated_treasure_collected"]
+			or ruin_state["tool_gate_open"]
+		),
+		"ruin_tool_gate_uses_existing_interaction": true,
+		"ruin_tool_gate_uses_existing_cargo_owner": (
+			ruin_state["cargo_owner_count"] == 1
+		),
 		"ruin_cargo_choice": {
 			"open": _cargo_choice_open,
 			"open_for_ruin": (
@@ -11523,6 +11645,38 @@ func get_playtest_state() -> Dictionary:
 			"procedural_ruins": ruin_state["procedural_ruin_system_count"],
 			"treasure_variants": int(ruin_state["treasure_variant_count"]) - 1,
 			"new_markets": ruin_state["new_market_system_count"],
+		},
+		"ruin_tool_gate_excluded_features": {
+			"tool_upgrades": ruin_state["tool_upgrade_count"],
+			"tool_durability": ruin_state["tool_durability_system_count"],
+			"extra_gate_types": int(ruin_state["tool_gate_type_count"]) - 1,
+			"many_required_return_visits": maxi(
+				int(ruin_state["required_return_visit_count"]) - 1,
+				0,
+			),
+			"skill_tree": ruin_state["skill_tree_system_count"],
+			"story_clues": ruin_state["story_clue_system_count"],
+			"map_fragments": ruin_state["map_fragment_count"],
+			"clue_lists": ruin_state["clue_list_count"],
+			"clue_descriptions": ruin_state["clue_description_count"],
+			"story_chart_locations": (
+				ruin_state["new_story_chart_location_count"]
+			),
+			"story_clue_persistence": (
+				ruin_state["story_clue_persistence_count"]
+			),
+			"monster_hunting": ruin_state["monster_hunting_system_count"],
+			"ship_module_loadout": (
+				ruin_state["ship_module_loadout_system_count"]
+			),
+			"resident_reactions": (
+				ruin_state["resident_reaction_system_count"]
+			),
+			"relationship_progress": (
+				ruin_state["relationship_progress_system_count"]
+			),
+			"day_and_night": ruin_state["day_night_system_count"],
+			"fast_travel": ruin_state["fast_travel_system_count"],
 		},
 		"fishing_system_count": fishing_state["system_count"],
 		"fishing_state_owner_count": fishing_state["owner_count"],

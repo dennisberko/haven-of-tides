@@ -12,11 +12,11 @@ extends Area2D
 ])
 @export var request_report_dialogue := PackedStringArray([
 	"You found the split supports before they gave way.",
-	"Thank you. I will keep everyone off the dock until we can repair it.",
+	"Thank you. Take my ruin pry bar. It can open one blocked stone path.",
 ])
 @export var request_complete_dialogue := PackedStringArray([
 	"The dock will hold until we can repair those supports.",
-	"You saved us from a much worse break.",
+	"Keep the ruin pry bar. It can open the blocked path in the test island ruin.",
 ])
 
 

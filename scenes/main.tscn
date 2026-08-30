@@ -1,4 +1,4 @@
-[gd_scene load_steps=32 format=3]
+[gd_scene load_steps=33 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -42,6 +42,9 @@ radius = 72.0
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_damaged_dock_goal"]
 size = Vector2(40, 120)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_ruin_tool_gate"]
+size = Vector2(24, 280)
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_ship_entry"]
 radius = 54.0
@@ -301,6 +304,13 @@ script = ExtResource("15_boarding_deck")
 [node name="RuinExploration" type="Node2D" parent="." groups=["ruin_exploration"]]
 script = ExtResource("19_ruin")
 
+[node name="ToolGateBlocker" type="StaticBody2D" parent="RuinExploration"]
+position = Vector2(4110, 1980)
+collision_mask = 0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="RuinExploration/ToolGateBlocker"]
+shape = SubResource("RectangleShape2D_ruin_tool_gate")
+
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
 script = ExtResource("2_player")
@@ -336,7 +346,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 36 · Ruin Exploration"
+text = "Phase 37 · Tool Gates"
 
 [node name="WeatherView" type="ColorRect" parent="Interface" groups=["weather_view"]]
 visible = false
