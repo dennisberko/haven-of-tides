@@ -300,7 +300,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 26 · Boarding"
+text = "Phase 27 · On-foot combat"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false

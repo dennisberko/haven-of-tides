@@ -170,7 +170,7 @@ const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const BOARDING_DECK_CONTROLS_TEXT := (
-	"WASD / ARROWS TO WALK · REACH THE GOLD RETURN POINT · E RETURN"
+	"WASD / ARROWS TO WALK · SPACE CUTLASS · GOLD POINT + E RETURN"
 )
 const SHORE_RETURN_DISTANCE := 64.0
 const STARTING_MONEY := 25
@@ -478,7 +478,7 @@ func _ready() -> void:
 	_capture_damage_checkpoint("INITIAL")
 
 
-func _physics_process(_delta: float) -> void:
+func _physics_process(delta: float) -> void:
 	_update_chart_release_pending()
 	_update_cargo_choice_release_pending()
 	_update_storage_release_pending()
@@ -492,7 +492,7 @@ func _physics_process(_delta: float) -> void:
 	)
 	_update_wreck_opportunity()
 	_update_target_inspection()
-	_update_boarding_deck_state()
+	_update_boarding_deck_state(delta)
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_money_view()
@@ -774,6 +774,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _handle_boarding_deck_input(key_event: InputEventKey) -> void:
+	if _key_matches(key_event, KEY_SPACE):
+		target_boarding_deck.handle_cutlass_input(
+			key_event.pressed,
+			key_event.echo,
+			player.global_position,
+		)
+		return
 	if _key_matches(key_event, KEY_E):
 		if not key_event.pressed:
 			_interact_held = false
@@ -2988,9 +2995,10 @@ func _board_nearby_target() -> void:
 	_update_interaction_prompt()
 
 
-func _update_boarding_deck_state() -> void:
+func _update_boarding_deck_state(delta: float = 0.0) -> void:
 	if not _player_on_target_deck:
 		return
+	target_boarding_deck.update_combat(delta, player.global_position)
 	var movement_distance := _boarding_previous_player_position.distance_to(
 		player.global_position
 	)
@@ -5873,13 +5881,187 @@ func get_playtest_state() -> Dictionary:
 			not _player_on_target_deck
 			or (not cargo_view.visible and not money_view.visible)
 		),
-		"boarding_defender_count": 0,
-		"boarding_on_foot_combat_system_count": 0,
+		"boarding_combat_owner_count": boarding_deck_state["combat_owner_count"],
+		"boarding_defender_count": boarding_deck_state["defender_count"],
+		"boarding_alive_defender_count": (
+			boarding_deck_state["alive_defender_count"]
+		),
+		"boarding_hostile_defender_count": (
+			boarding_deck_state["hostile_defender_count"]
+		),
+		"boarding_on_foot_combat_system_count": (
+			boarding_deck_state["on_foot_combat_system_count"]
+		),
+		"boarding_combat_active": boarding_deck_state["combat_active"],
+		"boarding_fight_ended": boarding_deck_state["fight_ended"],
+		"boarding_player_health_max": boarding_deck_state["player_health_max"],
+		"boarding_player_health_current": (
+			boarding_deck_state["player_health_current"]
+		),
+		"boarding_defender_health_max": (
+			boarding_deck_state["defender_health_max"]
+		),
+		"boarding_defender_health_current": (
+			boarding_deck_state["defender_health_current"]
+		),
+		"boarding_health_meter_count": boarding_deck_state["health_meter_count"],
+		"boarding_health_meters_visible": (
+			boarding_deck_state["health_meters_visible"]
+		),
+		"boarding_player_health_meter_text": (
+			boarding_deck_state["player_health_meter_text"]
+		),
+		"boarding_defender_health_meter_text": (
+			boarding_deck_state["defender_health_meter_text"]
+		),
+		"boarding_combat_player_position": boarding_deck_state["player_position"],
+		"boarding_defender_position": boarding_deck_state["defender_position"],
+		"boarding_defender_start_position": (
+			boarding_deck_state["defender_start_position"]
+		),
+		"boarding_player_defender_distance": (
+			boarding_deck_state["player_defender_distance"]
+		),
+		"boarding_cutlass_system_count": boarding_deck_state["cutlass_system_count"],
+		"boarding_cutlass_attack_type_count": (
+			boarding_deck_state["cutlass_attack_type_count"]
+		),
+		"boarding_cutlass_attack_type": boarding_deck_state["cutlass_attack_type"],
+		"boarding_cutlass_key": boarding_deck_state["cutlass_key"],
+		"boarding_cutlass_fresh_press_required": (
+			boarding_deck_state["cutlass_fresh_press_required"]
+		),
+		"boarding_cutlass_range": boarding_deck_state["cutlass_range"],
+		"boarding_cutlass_damage": boarding_deck_state["cutlass_damage"],
+		"boarding_cutlass_attempt_count": (
+			boarding_deck_state["cutlass_attempt_count"]
+		),
+		"boarding_cutlass_hit_count": boarding_deck_state["cutlass_hit_count"],
+		"boarding_cutlass_out_of_range_count": (
+			boarding_deck_state["cutlass_out_of_range_count"]
+		),
+		"boarding_cutlass_held_input_count": (
+			boarding_deck_state["cutlass_held_input_count"]
+		),
+		"boarding_cutlass_cooldown_rejection_count": (
+			boarding_deck_state["cutlass_cooldown_rejection_count"]
+		),
+		"boarding_cutlass_fight_ended_rejection_count": (
+			boarding_deck_state["cutlass_fight_ended_rejection_count"]
+		),
+		"boarding_cutlass_damage_total": (
+			boarding_deck_state["cutlass_damage_total"]
+		),
+		"boarding_cutlass_cooldown_remaining": (
+			boarding_deck_state["cutlass_cooldown_remaining"]
+		),
+		"boarding_last_cutlass_evidence": (
+			boarding_deck_state["last_cutlass_evidence"].duplicate(true)
+		),
+		"boarding_defender_attack_system_count": (
+			boarding_deck_state["defender_attack_system_count"]
+		),
+		"boarding_defender_attack_type_count": (
+			boarding_deck_state["defender_attack_type_count"]
+		),
+		"boarding_defender_attack_type": (
+			boarding_deck_state["defender_attack_type"]
+		),
+		"boarding_defender_attack_range": (
+			boarding_deck_state["defender_attack_range"]
+		),
+		"boarding_defender_attack_damage": (
+			boarding_deck_state["defender_attack_damage"]
+		),
+		"boarding_defender_attack_cooldown": (
+			boarding_deck_state["defender_attack_cooldown"]
+		),
+		"boarding_defender_chase_range": (
+			boarding_deck_state["defender_chase_range"]
+		),
+		"boarding_defender_move_speed": boarding_deck_state["defender_move_speed"],
+		"boarding_defender_move_frame_count": (
+			boarding_deck_state["defender_move_frame_count"]
+		),
+		"boarding_defender_movement_distance": (
+			boarding_deck_state["defender_movement_distance"]
+		),
+		"boarding_defender_entered_range_count": (
+			boarding_deck_state["defender_entered_range_count"]
+		),
+		"boarding_defender_left_range_count": (
+			boarding_deck_state["defender_left_range_count"]
+		),
+		"boarding_player_in_defender_attack_range": (
+			boarding_deck_state["player_in_defender_attack_range"]
+		),
+		"boarding_defender_attack_count": (
+			boarding_deck_state["defender_attack_count"]
+		),
+		"boarding_player_damage_total": boarding_deck_state["player_damage_total"],
+		"boarding_last_defender_attack_evidence": (
+			boarding_deck_state["last_defender_attack_evidence"].duplicate(true)
+		),
+		"boarding_player_damage_feedback_count": (
+			boarding_deck_state["player_damage_feedback_count"]
+		),
+		"boarding_player_damage_feedback_visible": (
+			boarding_deck_state["player_damage_feedback_visible"]
+		),
+		"boarding_player_damage_feedback_text": (
+			boarding_deck_state["player_damage_feedback_text"]
+		),
+		"boarding_defender_damage_feedback_count": (
+			boarding_deck_state["defender_damage_feedback_count"]
+		),
+		"boarding_defender_damage_feedback_visible": (
+			boarding_deck_state["defender_damage_feedback_visible"]
+		),
+		"boarding_defender_damage_feedback_text": (
+			boarding_deck_state["defender_damage_feedback_text"]
+		),
+		"boarding_fight_feedback_visible": (
+			boarding_deck_state["fight_feedback_visible"]
+		),
+		"boarding_fight_feedback_text": boarding_deck_state["fight_feedback_text"],
+		"boarding_defender_defeat_count": (
+			boarding_deck_state["defender_defeat_count"]
+		),
+		"boarding_defender_movement_stopped_after_defeat": (
+			boarding_deck_state["defender_movement_stopped_after_defeat"]
+		),
+		"boarding_defender_attacks_stopped_after_defeat": (
+			boarding_deck_state["defender_attacks_stopped_after_defeat"]
+		),
+		"boarding_no_gore": boarding_deck_state["no_gore"],
+		"boarding_gore_effect_count": boarding_deck_state["gore_effect_count"],
+		"boarding_pistol_system_count": boarding_deck_state["pistol_system_count"],
+		"boarding_dodge_system_count": boarding_deck_state["dodge_system_count"],
+		"boarding_parry_system_count": boarding_deck_state["parry_system_count"],
+		"boarding_officer_ability_system_count": (
+			boarding_deck_state["officer_ability_system_count"]
+		),
 		"boarding_surrender_system_count": 0,
+		"boarding_morale_meter_count": boarding_deck_state["morale_meter_count"],
+		"boarding_surrendered_defender_count": (
+			boarding_deck_state["surrendered_defender_count"]
+		),
+		"boarding_surrender_pose_count": (
+			boarding_deck_state["surrender_pose_count"]
+		),
 		"boarding_prize_action_system_count": 0,
 		"boarding_ship_capture_system_count": 0,
 		"boarding_reward_system_count": 0,
 		"boarding_heat_change_count": 0,
+		"boarding_crew_injury_system_count": (
+			boarding_deck_state["crew_injury_system_count"]
+		),
+		"boarding_player_defeat_system_count": (
+			boarding_deck_state["player_defeat_system_count"]
+		),
+		"boarding_defeat_recovery_system_count": (
+			boarding_deck_state["defeat_recovery_system_count"]
+		),
 		"target_hull_max": InspectableTargetShipState.HULL_MAX,
 		"target_sail_max": InspectableTargetShipState.SAIL_MAX,
 		"target_sail_state_owner_count_per_target": 1,
