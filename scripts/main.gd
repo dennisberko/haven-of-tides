@@ -13,6 +13,7 @@ const TargetBoardingDeckState := preload(
 )
 const PrizeActionState := preload("res://scripts/prize_actions.gd")
 const WorldHeatState := preload("res://scripts/world_heat.gd")
+const PirateHunterShipState := preload("res://scripts/pirate_hunter_ship.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -39,7 +40,11 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
+	$InspectableShips/PirateHunter,
 ]
+@onready var pirate_hunter: PirateHunterShipState = (
+	$InspectableShips/PirateHunter
+)
 @onready var target_boarding_deck: TargetBoardingDeckState = $TargetBoardingDeck
 @onready var ship = $Ship
 @onready var ship_entry: Area2D = $ShipAccess/EntryPoint
@@ -64,6 +69,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var heat_title: Label = $Interface/HeatView/HeatTitle
 @onready var heat_meter: ProgressBar = $Interface/HeatView/HeatMeter
 @onready var heat_status: Label = $Interface/HeatView/HeatStatus
+@onready var pirate_hunter_view: ColorRect = $Interface/PirateHunterView
+@onready var pirate_hunter_status: Label = (
+	$Interface/PirateHunterView/HunterStatus
+)
 @onready var food_view: ColorRect = $Interface/FoodView
 @onready var food_title: Label = $Interface/FoodView/FoodTitle
 @onready var food_status: Label = $Interface/FoodView/FoodStatus
@@ -394,6 +403,7 @@ var _broadside_held_input_count := 0
 var _last_broadside_result := "NO BROADSIDE ATTEMPT"
 var _last_broadside_attempt_evidence: Dictionary = {}
 var _successful_broadside_evidence: Dictionary = {}
+var _pirate_hunter_defeat_broadside_evidence: Dictionary = {}
 var _reload_rejected_broadside_evidence: Dictionary = {}
 var _inactive_rejected_broadside_evidence: Dictionary = {}
 var _zero_ammunition_rejected_broadside_evidence: Dictionary = {}
@@ -453,10 +463,12 @@ var _last_heat_persistence_payload: Dictionary = {}
 var _last_heat_file_save_evidence: Dictionary = {}
 var _last_heat_file_load_evidence: Dictionary = {}
 var _last_heat_file_cleanup_evidence: Dictionary = {}
+var _pirate_hunter_sea_bounds := Rect2()
 
 
 func _ready() -> void:
 	var sea_state: Dictionary = sea_area.get_playtest_state()
+	_pirate_hunter_sea_bounds = sea_state["bounds"]
 	ship.configure_sailing_area(
 		sea_state["bounds"],
 		sea_state["island_center"],
@@ -481,6 +493,7 @@ func _ready() -> void:
 	_update_construction_view()
 	_update_money_view()
 	_update_heat_view()
+	_update_pirate_hunter_view()
 	_update_food_view()
 	_update_hull_view()
 	_update_repair_view()
@@ -505,6 +518,7 @@ func _ready() -> void:
 	food_view.hide()
 	hull_view.hide()
 	repair_view.hide()
+	pirate_hunter_view.hide()
 	target_inspection_view.hide()
 	broadside_view.hide()
 	ammunition_view.hide()
@@ -541,12 +555,14 @@ func _physics_process(delta: float) -> void:
 		_player_aboard_ship,
 	)
 	_update_wreck_opportunity()
+	_update_pirate_hunter(delta)
 	_update_target_inspection()
 	_update_boarding_deck_state(delta)
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_money_view()
 	_update_heat_view()
+	_update_pirate_hunter_view()
 	_update_food_view()
 	_update_hull_view()
 	_update_repair_view()
@@ -3081,6 +3097,43 @@ func _update_wreck_opportunity() -> void:
 	)
 
 
+func _update_pirate_hunter(delta: float) -> void:
+	var player_ship_operating: bool = (
+		_player_aboard_ship
+		and not _player_on_target_deck
+		and not ship.is_docked
+		and not ship.navigation_input_blocked
+		and not ship.navigation_release_pending
+	)
+	var modal_pause_active: bool = (
+		waypoint_display.chart_visible
+		or _chart_release_pending
+		or _cargo_choice_open
+		or _cargo_choice_release_pending
+		or _storage_view_open
+		or _storage_release_pending
+		or _construction_view_open
+		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
+	)
+	var attack_requested := pirate_hunter.update_encounter(
+		delta,
+		_world_heat.get_current_heat(),
+		ship.global_position,
+		_player_aboard_ship,
+		player_ship_operating,
+		modal_pause_active,
+		_pirate_hunter_sea_bounds,
+	)
+	if attack_requested:
+		pirate_hunter.record_attack_result(
+			ship.apply_pirate_hunter_broadside()
+		)
+
+
 func _update_target_inspection() -> void:
 	var inspection_context_available: bool = (
 		not _player_on_target_deck
@@ -3848,6 +3901,23 @@ func _attempt_broadside_attack(side: String) -> void:
 	_successful_broadside_evidence = (
 		_last_broadside_attempt_evidence.duplicate(true)
 	)
+	if (
+		String(_last_broadside_attempt_evidence.get("target_id", ""))
+			== pirate_hunter.target_id
+		and bool(_last_broadside_attempt_evidence.get("shot_fired", false))
+		and bool(_last_broadside_attempt_evidence.get("target_hit", false))
+		and bool(_last_broadside_attempt_evidence.get(
+			"target_disabled",
+			false,
+		))
+		and bool(_last_broadside_attempt_evidence.get(
+			"ammunition_consumed",
+			false,
+		))
+	):
+		_pirate_hunter_defeat_broadside_evidence = (
+			_last_broadside_attempt_evidence.duplicate(true)
+		)
 	_update_cargo_view()
 	_update_broadside_view()
 	_update_ammunition_view()
@@ -4435,9 +4505,20 @@ func _update_heat_view() -> void:
 		current_heat,
 	))
 	heat_meter.value = float(current_heat)
-	heat_title.text = "WORLD HEAT · %d" % current_heat
+	heat_title.text = "WORLD HEAT · %d · HUNTER AT %d" % [
+		current_heat,
+		PirateHunterShipState.HEAT_THRESHOLD,
+	]
 	heat_status.text = String(heat_state["last_result"])
 	heat_view.show()
+
+
+func _update_pirate_hunter_view() -> void:
+	pirate_hunter_status.text = pirate_hunter.get_warning_text()
+	pirate_hunter_view.visible = (
+		_player_aboard_ship
+		and pirate_hunter.is_encounter_status_visible()
+	)
 
 
 func _update_food_view() -> void:
@@ -6065,6 +6146,7 @@ func get_playtest_state() -> Dictionary:
 		_trade_journal.get_playtest_state(completed_voyages)
 	)
 	var heat_state: Dictionary = _world_heat.get_playtest_state()
+	var hunter_state: Dictionary = pirate_hunter.get_hunter_playtest_state()
 	var journal_good_names: Array = []
 	var journal_current_price_states := {}
 	var journal_current_fixed_prices := {}
@@ -8067,7 +8149,240 @@ func get_playtest_state() -> Dictionary:
 			))
 		),
 		"world_heat_pirate_hunter_system_count": (
-			heat_state["pirate_hunter_system_count"]
+			hunter_state["system_count"]
+		),
+		"pirate_hunter_system_count": hunter_state["system_count"],
+		"pirate_hunter_ship_count": get_tree().get_nodes_in_group(
+			"pirate_hunter"
+		).size(),
+		"pirate_hunter_exactly_one_ship": (
+			int(hunter_state["hunter_ship_count"]) == 1
+			and get_tree().get_nodes_in_group("pirate_hunter").size() == 1
+		),
+		"pirate_hunter_heat_threshold": hunter_state["heat_threshold"],
+		"pirate_hunter_current_heat": heat_state["current_heat"],
+		"pirate_hunter_below_threshold_evidence": (
+			(hunter_state["below_threshold_evidence"] as Dictionary).duplicate(
+				true
+			)
+		),
+		"pirate_hunter_absent_below_threshold": bool(
+			(hunter_state["below_threshold_evidence"] as Dictionary).get(
+				"absent",
+				false,
+			)
+		),
+		"pirate_hunter_warning_view_count": get_tree().get_nodes_in_group(
+			"pirate_hunter_view"
+		).size(),
+		"pirate_hunter_warning_view_visible": pirate_hunter_view.visible,
+		"pirate_hunter_warning_view_text": (
+			pirate_hunter_status.text if pirate_hunter_view.visible else ""
+		),
+		"pirate_hunter_warning_active": hunter_state["warning_active"],
+		"pirate_hunter_warning_count": hunter_state["warning_count"],
+		"pirate_hunter_spawn_count": hunter_state["spawn_count"],
+		"pirate_hunter_warning_sequence": hunter_state["warning_sequence"],
+		"pirate_hunter_spawn_sequence": hunter_state["spawn_sequence"],
+		"pirate_hunter_warning_precedes_arrival": (
+			hunter_state["warning_precedes_spawn"]
+		),
+		"pirate_hunter_event_order_holds": (
+			int(hunter_state["spawn_sequence"]) == 0
+			or (
+				int(hunter_state["warning_sequence"])
+					< int(hunter_state["spawn_sequence"])
+				and (
+					int(hunter_state["first_chase_sequence"]) == 0
+					or int(hunter_state["spawn_sequence"])
+						< int(hunter_state["first_chase_sequence"])
+				)
+				and (
+					int(hunter_state["first_attack_sequence"]) == 0
+					or int(hunter_state["first_chase_sequence"])
+						< int(hunter_state["first_attack_sequence"])
+				)
+			)
+		),
+		"pirate_hunter_active_encounter_count": (
+			hunter_state["active_encounter_count"]
+		),
+		"pirate_hunter_one_encounter_maximum": (
+			hunter_state["one_encounter_maximum"]
+		),
+		"pirate_hunter_encounter_active": hunter_state["encounter_active"],
+		"pirate_hunter_encounter_resolved": (
+			hunter_state["encounter_resolved"]
+		),
+		"pirate_hunter_outcome": hunter_state["outcome"],
+		"pirate_hunter_chase_frame_count": (
+			hunter_state["chase_frame_count"]
+		),
+		"pirate_hunter_total_chase_distance": (
+			hunter_state["total_chase_distance"]
+		),
+		"pirate_hunter_chase_closed_distance": (
+			hunter_state["chase_closed_distance"]
+		),
+		"pirate_hunter_distance_at_spawn": hunter_state["distance_at_spawn"],
+		"pirate_hunter_closest_chase_distance": (
+			hunter_state["closest_chase_distance"]
+		),
+		"pirate_hunter_attack_request_count": (
+			hunter_state["attack_request_count"]
+		),
+		"pirate_hunter_attack_hit_count": hunter_state["attack_hit_count"],
+		"pirate_hunter_last_attack_evidence": (
+			(hunter_state["last_attack_evidence"] as Dictionary).duplicate(true)
+		),
+		"pirate_hunter_fixed_attack_damage": (
+			damage_state["pirate_hunter_fixed_damage"]
+		),
+		"pirate_hunter_uses_fixed_existing_hull_path": (
+			int(hunter_state["attack_request_count"]) == 0
+			or bool((hunter_state["last_attack_evidence"] as Dictionary).get(
+				"fixed_existing_hull_owner_used",
+				false,
+			))
+		),
+		"pirate_hunter_player_hull_floor": (
+			damage_state["pirate_hunter_hull_floor"]
+		),
+		"pirate_hunter_inspected": _inspected_target_ids.has(
+			pirate_hunter.target_id
+		),
+		"pirate_hunter_uses_existing_inspection": (
+			hunter_state["uses_existing_inspection_system"]
+		),
+		"pirate_hunter_uses_existing_broadside": (
+			hunter_state["uses_existing_broadside_system"]
+		),
+		"pirate_hunter_uses_existing_ammunition": (
+			hunter_state["uses_existing_ammunition_system"]
+		),
+		"pirate_hunter_uses_existing_sail_damage_speed": (
+			hunter_state["uses_existing_sail_damage_speed"]
+		),
+		"pirate_hunter_last_player_attack_used_existing_broadside": (
+			_last_attacked_target_id != pirate_hunter.target_id
+			or bool(_last_broadside_attempt_evidence.get("target_hit", false))
+		),
+		"pirate_hunter_escape_count": hunter_state["escape_count"],
+		"pirate_hunter_defeat_count": hunter_state["defeat_count"],
+		"pirate_hunter_escape_is_stable": (
+			String(hunter_state["outcome"]) != "ESCAPED"
+			or (
+				bool(hunter_state["encounter_resolved"])
+				and not bool(hunter_state["encounter_active"])
+				and not bool(hunter_state["visual_visible"])
+			)
+		),
+		"pirate_hunter_escape_reached_clear_distance": (
+			String(hunter_state["outcome"]) != "ESCAPED"
+			or float((hunter_state["last_resolution_evidence"] as Dictionary).get(
+				"distance_to_player",
+				-1.0,
+			)) >= float(hunter_state["escape_distance"])
+		),
+		"pirate_hunter_defeat_is_stable": (
+			String(hunter_state["outcome"]) != "DEFEATED"
+			or (
+				bool(hunter_state["encounter_resolved"])
+				and not bool(hunter_state["encounter_active"])
+				and bool((hunter_state["inspectable_target_state"] as Dictionary)[
+					"hull"
+				]["disabled"])
+			)
+		),
+		"pirate_hunter_defeated_by_existing_broadside": (
+			String(hunter_state["outcome"]) != "DEFEATED"
+			or (
+				String(_pirate_hunter_defeat_broadside_evidence.get(
+					"target_id",
+					"",
+				)) == pirate_hunter.target_id
+				and bool(_pirate_hunter_defeat_broadside_evidence.get(
+					"shot_fired",
+					false,
+				))
+				and bool(_pirate_hunter_defeat_broadside_evidence.get(
+					"target_hit",
+					false,
+				))
+				and bool(_pirate_hunter_defeat_broadside_evidence.get(
+					"target_disabled",
+					false,
+				))
+				and bool(_pirate_hunter_defeat_broadside_evidence.get(
+					"ammunition_consumed",
+					false,
+				))
+			)
+		),
+		"pirate_hunter_defeat_broadside_evidence": (
+			_pirate_hunter_defeat_broadside_evidence.duplicate(true)
+		),
+		"pirate_hunter_heat_unchanged_by_warning_and_spawn": (
+			hunter_state["heat_unchanged_by_warning_and_spawn"]
+		),
+		"pirate_hunter_heat_persists_after_outcome": (
+			hunter_state["heat_persisted_through_resolution"]
+		),
+		"pirate_hunter_no_new_player_combat_actions": (
+			int(hunter_state["new_player_combat_action_count"]) == 0
+		),
+		"pirate_hunter_existing_broadside_input_guard_count": (
+			_broadside_held_input_count
+		),
+		"pirate_hunter_paused_update_count": (
+			hunter_state["paused_update_count"]
+		),
+		"pirate_hunter_modal_paused_update_count": (
+			hunter_state["modal_paused_update_count"]
+		),
+		"pirate_hunter_modal_pause_position_held": (
+			hunter_state["modal_pause_position_held"]
+		),
+		"pirate_hunter_modal_pause_evidence": (
+			(hunter_state["modal_pause_evidence"] as Dictionary).duplicate(true)
+		),
+		"pirate_hunter_modal_input_pauses_encounter": (
+			int(hunter_state["modal_paused_update_count"]) > 0
+			and bool(hunter_state["modal_pause_position_held"])
+		),
+		"pirate_hunter_last_attack_conserved_cargo_and_food": (
+			(hunter_state["last_attack_evidence"] as Dictionary).is_empty()
+			or (
+				bool((hunter_state["last_attack_evidence"] as Dictionary).get(
+					"cargo_unchanged",
+					false,
+				))
+				and bool((hunter_state["last_attack_evidence"] as Dictionary).get(
+					"food_progress_unchanged",
+					false,
+				))
+				and bool((hunter_state["last_attack_evidence"] as Dictionary).get(
+					"food_units_unchanged",
+					false,
+				))
+			)
+		),
+		"pirate_hunter_state": hunter_state.duplicate(true),
+		"pirate_hunter_fleet_ship_count": hunter_state["hunter_fleet_ship_count"],
+		"pirate_hunter_wanted_level_system_count": (
+			hunter_state["wanted_level_system_count"]
+		),
+		"pirate_hunter_nation_rule_system_count": (
+			hunter_state["nation_rule_system_count"]
+		),
+		"pirate_hunter_faction_rule_system_count": (
+			hunter_state["faction_rule_system_count"]
+		),
+		"pirate_hunter_port_service_refusal_count": (
+			hunter_state["port_service_refusal_count"]
+		),
+		"pirate_hunter_crew_injury_system_count": (
+			hunter_state["crew_injury_system_count"]
 		),
 		"world_heat_port_service_refusal_count": (
 			heat_state["port_service_refusal_count"]

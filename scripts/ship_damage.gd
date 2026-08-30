@@ -10,6 +10,9 @@ const DAMAGE_FLASH_DURATION := 0.45
 const IMPACT_SOUND_DURATION := 0.18
 const REEF_COLLISION_SOURCE := "REEF"
 const REEF_COLLISION_RESPONSE := "REEF_HIT_STOP"
+const PIRATE_HUNTER_SOURCE := "PIRATE_HUNTER_BROADSIDE"
+const PIRATE_HUNTER_HIT_DAMAGE := 20
+const PIRATE_HUNTER_HULL_FLOOR := 20
 
 var _hull_condition := HULL_START
 var _hit_count := 0
@@ -29,6 +32,9 @@ var _last_damage_event: Dictionary = {}
 var _last_blocked_contact_evidence: Dictionary = {}
 var _last_contact_clear_evidence: Dictionary = {}
 var _last_repair_evidence: Dictionary = {}
+var _pirate_hunter_hit_count := 0
+var _pirate_hunter_blocked_hit_count := 0
+var _last_pirate_hunter_hit_evidence: Dictionary = {}
 
 
 func update_timers(delta: float) -> void:
@@ -96,6 +102,66 @@ func try_reef_hit(
 	return true
 
 
+func try_pirate_hunter_hit(
+		cargo_snapshot: Array[String],
+		food_progress: float,
+		food_units: int,
+) -> Dictionary:
+	var hull_before := _hull_condition
+	if hull_before <= PIRATE_HUNTER_HULL_FLOOR:
+		_pirate_hunter_blocked_hit_count += 1
+		_last_pirate_hunter_hit_evidence = {
+			"success": false,
+			"result": "HUNTER HIT BLOCKED · PHASE 33 DEFEAT NOT ACTIVE",
+			"source": PIRATE_HUNTER_SOURCE,
+			"fixed_damage": PIRATE_HUNTER_HIT_DAMAGE,
+			"hull_floor": PIRATE_HUNTER_HULL_FLOOR,
+			"hull_before": hull_before,
+			"hull_after": _hull_condition,
+			"hull_delta": 0,
+			"fixed_existing_hull_owner_used": true,
+			"cargo_unchanged": true,
+			"food_progress_unchanged": true,
+			"food_units_unchanged": true,
+			"no_state_change": true,
+		}
+		return _last_pirate_hunter_hit_evidence.duplicate(true)
+
+	_hull_condition = maxi(
+		PIRATE_HUNTER_HULL_FLOOR,
+		_hull_condition - PIRATE_HUNTER_HIT_DAMAGE,
+	)
+	_pirate_hunter_hit_count += 1
+	_flash_remaining = DAMAGE_FLASH_DURATION
+	_flash_count += 1
+	_last_pirate_hunter_hit_evidence = {
+		"success": true,
+		"result": "HUNTER BROADSIDE HIT · -%d HULL" % (
+			hull_before - _hull_condition
+		),
+		"source": PIRATE_HUNTER_SOURCE,
+		"fixed_damage": PIRATE_HUNTER_HIT_DAMAGE,
+		"hull_floor": PIRATE_HUNTER_HULL_FLOOR,
+		"hull_before": hull_before,
+		"hull_after": _hull_condition,
+		"hull_delta": _hull_condition - hull_before,
+		"damage": hull_before - _hull_condition,
+		"fixed_existing_hull_owner_used": true,
+		"cargo_before": cargo_snapshot.duplicate(),
+		"cargo_after": cargo_snapshot.duplicate(),
+		"cargo_unchanged": true,
+		"food_progress_before": food_progress,
+		"food_progress_after": food_progress,
+		"food_progress_unchanged": true,
+		"food_units_before": food_units,
+		"food_units_after": food_units,
+		"food_units_unchanged": true,
+		"crew_condition_changed": false,
+		"phase_33_defeat_triggered": false,
+	}
+	return _last_pirate_hunter_hit_evidence.duplicate(true)
+
+
 func clear_contact_after_movement_away(
 		actual_distance: float,
 		distance_before: float,
@@ -132,6 +198,24 @@ func record_sound_play(stream_kind: String, duration: float) -> void:
 		_last_damage_event["sound_play_count"] = _sound_play_count
 		_last_damage_event["sound_stream_kind"] = _sound_stream_kind
 		_last_damage_event["sound_duration"] = _sound_duration
+
+
+func record_pirate_hunter_sound_play(
+	stream_kind: String,
+	duration: float,
+) -> void:
+	_sound_play_count += 1
+	_sound_stream_kind = stream_kind
+	_sound_duration = duration
+	if not _last_pirate_hunter_hit_evidence.is_empty():
+		_last_pirate_hunter_hit_evidence["sound_played"] = true
+		_last_pirate_hunter_hit_evidence["sound_play_count"] = (
+			_sound_play_count
+		)
+		_last_pirate_hunter_hit_evidence["sound_stream_kind"] = (
+			_sound_stream_kind
+		)
+		_last_pirate_hunter_hit_evidence["sound_duration"] = _sound_duration
 
 
 func configure_sound(stream_kind: String, duration: float) -> void:
@@ -235,6 +319,18 @@ func get_playtest_state() -> Dictionary:
 		"repair_changes_hit_state": false,
 		"repair_resets_contact_latch": false,
 		"repair_resets_cooldown": false,
+		"pirate_hunter_source": PIRATE_HUNTER_SOURCE,
+		"pirate_hunter_fixed_damage": PIRATE_HUNTER_HIT_DAMAGE,
+		"pirate_hunter_hull_floor": PIRATE_HUNTER_HULL_FLOOR,
+		"pirate_hunter_hit_count": _pirate_hunter_hit_count,
+		"pirate_hunter_blocked_hit_count": (
+			_pirate_hunter_blocked_hit_count
+		),
+		"last_pirate_hunter_hit_evidence": (
+			_last_pirate_hunter_hit_evidence.duplicate(true)
+		),
+		"pirate_hunter_uses_existing_hull_owner": true,
+		"crew_injury_system_count": 0,
 	}
 
 

@@ -451,6 +451,23 @@ func get_damage_playtest_state() -> Dictionary:
 	return _damage_state.get_playtest_state()
 
 
+func apply_pirate_hunter_broadside() -> Dictionary:
+	var food_state: Dictionary = get_food_playtest_state()
+	var evidence: Dictionary = _damage_state.try_pirate_hunter_hit(
+		get_cargo_lots(),
+		float(food_state["progress_distance"]),
+		get_food_units(),
+	)
+	if bool(evidence.get("success", false)):
+		damage_impact_sound.play()
+		_damage_state.record_pirate_hunter_sound_play(
+			damage_impact_sound.stream.get_class(),
+			ShipDamageState.IMPACT_SOUND_DURATION,
+		)
+	queue_redraw()
+	return evidence
+
+
 func get_repair_playtest_state() -> Dictionary:
 	var damage_state: Dictionary = get_damage_playtest_state()
 	var hull_current := int(damage_state["hull_current"])
