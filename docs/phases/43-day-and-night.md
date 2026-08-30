@@ -2,6 +2,25 @@
 
 [Previous: Phase 42 - Relationship progress](42-relationship-progress.md) | [Next: Phase 44 - Fast travel](44-fast-travel.md)
 
+## Work status
+
+**Phase status: COMPLETE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Add day and night states | DONE |
+| Add 2: Show the current state in the cove | DONE |
+| Add 3: Change cove light and sky for each state | DONE |
+| Add 4: Advance the state after a voyage | DONE |
+| Add 5: Make one Mara scene available only at night | DONE |
+| Add 6: Explain when the scene is not available | DONE |
+| Complete when: A voyage changes day to night and controls the scene | DONE |
+| Test 1: Visit Mara during the day | DONE |
+| Test 2: Confirm the night-scene block reason | DONE |
+| Test 3: Complete one voyage and return at night | DONE |
+| Test 4: Confirm the cove appearance changed | DONE |
+| Test 5: Talk to Mara and start the night scene | DONE |
+
 ## Goal
 
 Make time change one activity at the cove.

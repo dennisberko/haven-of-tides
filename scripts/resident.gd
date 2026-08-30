@@ -25,6 +25,7 @@ const IMPORTANT_EVENT_SOURCE := "MONSTER_HUNT_RETURN_TO_COVE"
 const REACTION_DIALOGUE_KIND := "IMPORTANT_EVENT_REACTION"
 const NORMAL_DIALOGUE_KIND := "NORMAL_REQUEST_DIALOGUE"
 const RELATIONSHIP_DIALOGUE_KIND := "RELATIONSHIP_THRESHOLD_SCENE"
+const NIGHT_DIALOGUE_KIND := "MARA_NIGHT_SCENE"
 const REACTION_DIALOGUE_LINE := (
 	"You brought the Blackwake Leviathan down and returned with proof. "
 	+ "The cove will remember that."
@@ -34,6 +35,12 @@ const RELATIONSHIP_DIALOGUE_LINE_1 := (
 )
 const RELATIONSHIP_DIALOGUE_LINE_2 := (
 	"You have my trust now. When the sea turns hard, come back and talk to me."
+)
+const NIGHT_DIALOGUE_LINE_1 := (
+	"The cove sounds different after dark. The sea gives us room to speak."
+)
+const NIGHT_DIALOGUE_LINE_2 := (
+	"You came back with the night tide. Sit by the fire before the next voyage."
 )
 const RELATIONSHIP_RESIDENT_ID := "mara"
 const RELATIONSHIP_REQUEST_TITLE := "DAMAGED DOCK"
@@ -84,6 +91,15 @@ var _last_relationship_save_evidence: Dictionary = {}
 var _last_relationship_load_evidence: Dictionary = {}
 var _last_relationship_cleanup_evidence: Dictionary = {}
 var _last_relationship_runtime_reset_evidence: Dictionary = {}
+var _known_time_state := "DAY"
+var _night_scene_arm_count := 0
+var _night_scene_show_count := 0
+var _night_scene_finish_count := 0
+var _night_scene_normal_talk_after_count := 0
+var _night_scene_pending := false
+var _normal_talk_after_night_pending := false
+var _night_priority_delay_count := 0
+var _last_night_state_evidence: Dictionary = {}
 var _last_event_evidence: Dictionary = {}
 var _last_talk_evidence: Dictionary = {}
 var _last_talk_finish_evidence: Dictionary = {}
@@ -92,6 +108,85 @@ var _last_held_talk_evidence: Dictionary = {}
 
 func _ready() -> void:
 	queue_redraw()
+
+
+func record_day_night_state(
+	time_state: String,
+	transition_evidence: Dictionary,
+) -> Dictionary:
+	var state_before := _known_time_state
+	if time_state != "DAY" and time_state != "NIGHT":
+		_last_night_state_evidence = {
+			"success": false,
+			"result": "MARA NIGHT SCENE NOT ARMED",
+			"reason": "INVALID TIME STATE",
+			"time_state_before": state_before,
+			"time_state_after": _known_time_state,
+			"night_scene_pending": _night_scene_pending,
+			"night_scene_arm_count": _night_scene_arm_count,
+			"night_scene_show_count": _night_scene_show_count,
+			"no_state_change": true,
+		}
+		return _last_night_state_evidence.duplicate(true)
+	_known_time_state = time_state
+	var valid_night_transition := (
+		time_state == "NIGHT"
+		and bool(transition_evidence.get("success", false))
+		and String(transition_evidence.get("state_before", "")) == "DAY"
+		and String(transition_evidence.get("state_after", "")) == "NIGHT"
+		and bool(transition_evidence.get(
+			"eligible_counted_cove_return",
+			false,
+		))
+	)
+	var armed := false
+	var reason := "TIME STATUS UPDATED"
+	if valid_night_transition:
+		if _night_scene_arm_count == 0 and _night_scene_show_count == 0:
+			_night_scene_pending = true
+			_night_scene_arm_count = 1
+			armed = true
+			reason = "COUNTED VOYAGE RETURNED TO COVE AT NIGHT"
+		else:
+			reason = "NIGHT SCENE ALREADY ARMED OR SHOWN"
+	elif time_state == "DAY":
+		reason = "UNAVAILABLE DURING DAY · RETURN FROM A COUNTED VOYAGE TO THE COVE"
+	else:
+		reason = "NO ELIGIBLE DAY TO NIGHT TRANSITION"
+	_last_night_state_evidence = {
+		"success": armed,
+		"result": (
+			"MARA NIGHT SCENE READY"
+			if armed
+			else "MARA NIGHT SCENE NOT ARMED"
+		),
+		"reason": reason,
+		"time_state_before": state_before,
+		"time_state_after": _known_time_state,
+		"valid_counted_cove_return_transition": valid_night_transition,
+		"night_scene_pending": _night_scene_pending,
+		"night_scene_arm_count": _night_scene_arm_count,
+		"night_scene_show_count": _night_scene_show_count,
+		"shows_one_time": _night_scene_show_count <= 1,
+		"transition_evidence": transition_evidence.duplicate(true),
+	}
+	return _last_night_state_evidence.duplicate(true)
+
+
+func get_night_scene_status_text() -> String:
+	if _known_time_state == "DAY":
+		return (
+			"MARA NIGHT SCENE · UNAVAILABLE DURING DAY\n"
+			+ "NORMAL DIALOGUE AVAILABLE · RETURN FROM A COUNTED VOYAGE TO THE COVE"
+		)
+	if _night_scene_pending:
+		return (
+			"MARA NIGHT SCENE · READY\n"
+			+ "NEXT ELIGIBLE FRESH TALK AFTER PRIOR DIALOGUE"
+		)
+	if _night_scene_show_count == 1:
+		return "MARA NIGHT SCENE · SHOWN ONCE\nNORMAL DIALOGUE AVAILABLE"
+	return "MARA NIGHT SCENE · NOT READY\nNORMAL DIALOGUE AVAILABLE"
 
 
 func record_important_voyage_event(
@@ -511,11 +606,22 @@ func begin_talk(
 	_talk_open = true
 	var reaction_pending_before := _reaction_pending
 	var relationship_scene_pending_before := _relationship_scene_pending
+	var night_scene_pending_before := _night_scene_pending
 	var priority_conflict := (
 		_reaction_pending and _relationship_scene_pending
 	)
 	if priority_conflict:
 		_relationship_priority_conflict_count += 1
+	if (
+		_night_scene_pending
+		and (
+			_reaction_pending
+			or _normal_talk_after_reaction_pending
+			or _relationship_scene_pending
+			or _normal_talk_after_relationship_pending
+		)
+	):
+		_night_priority_delay_count += 1
 	var dialogue_lines := normal_dialogue.duplicate()
 	if _reaction_pending:
 		_active_dialogue_kind = REACTION_DIALOGUE_KIND
@@ -538,12 +644,25 @@ func begin_talk(
 		_relationship_scene_pending = false
 		_relationship_scene_show_count += 1
 		_normal_talk_after_relationship_pending = true
+	elif _normal_talk_after_relationship_pending:
+		_active_dialogue_kind = NORMAL_DIALOGUE_KIND
+		_normal_talk_count += 1
+		_normal_talk_after_relationship_pending = false
+		_relationship_normal_talk_after_count += 1
+	elif _night_scene_pending and _known_time_state == "NIGHT":
+		_active_dialogue_kind = NIGHT_DIALOGUE_KIND
+		dialogue_lines = _get_night_dialogue()
+		_night_scene_pending = false
+		_night_scene_show_count += 1
+		_normal_talk_after_night_pending = true
+	elif _normal_talk_after_night_pending:
+		_active_dialogue_kind = NORMAL_DIALOGUE_KIND
+		_normal_talk_count += 1
+		_normal_talk_after_night_pending = false
+		_night_scene_normal_talk_after_count += 1
 	else:
 		_active_dialogue_kind = NORMAL_DIALOGUE_KIND
 		_normal_talk_count += 1
-		if _normal_talk_after_relationship_pending:
-			_normal_talk_after_relationship_pending = false
-			_relationship_normal_talk_after_count += 1
 	_active_talk_request_state_before = request_state
 
 	_last_talk_evidence = {
@@ -557,6 +676,9 @@ func begin_talk(
 		"relationship_scene_pending_before": relationship_scene_pending_before,
 		"relationship_scene_pending_after": _relationship_scene_pending,
 		"relationship_scene_show_count": _relationship_scene_show_count,
+		"night_scene_pending_before": night_scene_pending_before,
+		"night_scene_pending_after": _night_scene_pending,
+		"night_scene_show_count": _night_scene_show_count,
 		"priority_conflict": priority_conflict,
 		"dialogue_priority": _get_dialogue_priority(),
 		"important_reaction_won_priority": (
@@ -572,6 +694,13 @@ func begin_talk(
 		"reaction_show_count": _reaction_show_count,
 		"normal_talk_count": _normal_talk_count,
 		"normal_talk_after_reaction_count": _normal_talk_after_reaction_count,
+		"night_scene_waited_for_earlier_priority": (
+			not night_scene_pending_before
+			or _active_dialogue_kind == NIGHT_DIALOGUE_KIND
+			or _active_dialogue_kind == REACTION_DIALOGUE_KIND
+			or _active_dialogue_kind == RELATIONSHIP_DIALOGUE_KIND
+			or _active_dialogue_kind == NORMAL_DIALOGUE_KIND
+		),
 		"fresh_press_required": true,
 		"next_talk_after_arm": (
 			_active_dialogue_kind == REACTION_DIALOGUE_KIND
@@ -592,6 +721,8 @@ func finish_talk(request_state: String) -> Dictionary:
 		_reaction_finish_count += 1
 	elif finished_dialogue_kind == RELATIONSHIP_DIALOGUE_KIND:
 		_relationship_scene_finish_count += 1
+	elif finished_dialogue_kind == NIGHT_DIALOGUE_KIND:
+		_night_scene_finish_count += 1
 	_last_talk_finish_evidence = {
 		"success": true,
 		"dialogue_kind": finished_dialogue_kind,
@@ -610,6 +741,12 @@ func finish_talk(request_state: String) -> Dictionary:
 		"reaction_show_count": _reaction_show_count,
 		"relationship_scene_finish_count": _relationship_scene_finish_count,
 		"relationship_scene_show_count": _relationship_scene_show_count,
+		"night_scene_finish_count": _night_scene_finish_count,
+		"night_scene_show_count": _night_scene_show_count,
+		"request_state_unchanged_by_night_scene": (
+			finished_dialogue_kind != NIGHT_DIALOGUE_KIND
+			or _active_talk_request_state_before == request_state
+		),
 	}
 	return _last_talk_finish_evidence.duplicate(true)
 
@@ -632,6 +769,10 @@ func record_held_talk_input(request_state: String) -> Dictionary:
 		"relationship_value_after": _relationship_value,
 		"relationship_scene_show_count_before": _relationship_scene_show_count,
 		"relationship_scene_show_count_after": _relationship_scene_show_count,
+		"night_scene_show_count_before": _night_scene_show_count,
+		"night_scene_show_count_after": _night_scene_show_count,
+		"night_scene_pending_before": _night_scene_pending,
+		"night_scene_pending_after": _night_scene_pending,
 		"normal_talk_count_before": _normal_talk_count,
 		"normal_talk_count_after": _normal_talk_count,
 		"fresh_press_required": true,
@@ -819,7 +960,42 @@ func get_playtest_state() -> Dictionary:
 		"day_state_count": 0,
 		"night_state_count": 0,
 		"time_advance_system_count": 0,
-		"night_only_scene_count": 0,
+		"night_only_scene_count": 1,
+		"night_scene_dialogue_kind": NIGHT_DIALOGUE_KIND,
+		"night_scene_dialogue": _get_night_dialogue(),
+		"known_time_state": _known_time_state,
+		"night_scene_arm_count": _night_scene_arm_count,
+		"night_scene_pending": _night_scene_pending,
+		"night_scene_available": (
+			_known_time_state == "NIGHT"
+			and _night_scene_pending
+			and _night_scene_show_count == 0
+		),
+		"night_scene_block_reason": (
+			"UNAVAILABLE DURING DAY · RETURN FROM A COUNTED VOYAGE TO THE COVE"
+			if _known_time_state == "DAY"
+			else ""
+		),
+		"night_scene_status_text": get_night_scene_status_text(),
+		"night_scene_show_count": _night_scene_show_count,
+		"night_scene_finish_count": _night_scene_finish_count,
+		"night_scene_shows_one_time": _night_scene_show_count <= 1,
+		"night_scene_arm_once": _night_scene_arm_count <= 1,
+		"night_scene_normal_talk_after_pending": (
+			_normal_talk_after_night_pending
+		),
+		"night_scene_normal_talk_after_count": (
+			_night_scene_normal_talk_after_count
+		),
+		"night_scene_normal_dialogue_available_after": (
+			_night_scene_show_count == 1
+			and not _night_scene_pending
+			and not _talk_open
+		),
+		"night_priority_delay_count": _night_priority_delay_count,
+		"last_night_state_evidence": (
+			_last_night_state_evidence.duplicate(true)
+		),
 		"reaction_to_every_action_count": 0,
 	}
 
@@ -843,11 +1019,20 @@ func _get_relationship_dialogue() -> PackedStringArray:
 	])
 
 
+func _get_night_dialogue() -> PackedStringArray:
+	return PackedStringArray([
+		NIGHT_DIALOGUE_LINE_1,
+		NIGHT_DIALOGUE_LINE_2,
+	])
+
+
 func _get_dialogue_priority() -> PackedStringArray:
 	return PackedStringArray([
 		REACTION_DIALOGUE_KIND,
 		"NORMAL_AFTER_IMPORTANT_EVENT_REACTION",
 		RELATIONSHIP_DIALOGUE_KIND,
+		"NORMAL_AFTER_RELATIONSHIP_THRESHOLD_SCENE",
+		NIGHT_DIALOGUE_KIND,
 		NORMAL_DIALOGUE_KIND,
 	])
 

@@ -21,6 +21,7 @@ const RuinExplorationState := preload("res://scripts/ruin_exploration.gd")
 const StoryClueState := preload("res://scripts/story_clue.gd")
 const MonsterHuntState := preload("res://scripts/monster_hunt.gd")
 const ShipModuleLoadoutState := preload("res://scripts/ship_module_loadout.gd")
+const DayNightCycleState := preload("res://scripts/day_night_cycle.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -43,6 +44,8 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var port_trader = $InteractiveObjects/PortTrader
 @onready var cove_buyer = $InteractiveObjects/CoveBuyer
 @onready var sea_area = $SeaArea
+@onready var cove = $Cove
+@onready var day_night_cycle: DayNightCycleState = $DayNightCycle
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var fishing_area: FishingAreaState = $FishingArea
 @onready var weather_area: WeatherAreaState = $WeatherArea
@@ -80,6 +83,9 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var relationship_details: Label = (
 	$Interface/RelationshipView/RelationshipDetails
 )
+@onready var cove_time_view: ColorRect = $Interface/CoveTimeView
+@onready var cove_time_title: Label = $Interface/CoveTimeView/TimeTitle
+@onready var cove_time_status: Label = $Interface/CoveTimeView/TimeStatus
 @onready var cargo_view: ColorRect = $Interface/CargoView
 @onready var cargo_details: Label = $Interface/CargoView/CargoDetails
 @onready var money_view: ColorRect = $Interface/MoneyView
@@ -607,6 +613,8 @@ func _ready() -> void:
 	_load_story_clue_persistence("STARTUP")
 	_sync_story_clue_chart()
 	resident.load_relationship_progress("STARTUP")
+	cove.set_time_state(day_night_cycle.get_time_state())
+	resident.record_day_night_state(day_night_cycle.get_time_state(), {})
 	waypoint_display.update_positions(ship.global_position, player.global_position, false)
 	var cove_dock: Dictionary = ship.get_dock_definition("cove")
 	var port_dock: Dictionary = ship.get_dock_definition("port")
@@ -644,6 +652,7 @@ func _ready() -> void:
 	_update_monster_hunt_view()
 	_update_ship_module_view()
 	_update_relationship_view()
+	_update_day_night_view()
 	ship.set_module_departure_ready(false)
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
@@ -734,6 +743,7 @@ func _physics_process(delta: float) -> void:
 	_update_weather_view()
 	_update_monster_hunt_view()
 	_update_ship_module_view()
+	_update_day_night_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
@@ -7546,6 +7556,7 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 			),
 			"reason": "NO_RECORDED_DEPARTURE",
 		}
+		_update_day_night_on_voyage_arrival()
 		return
 	if origin_dock_id == dock_id:
 		_same_dock_arrival_count += 1
@@ -7569,6 +7580,7 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 			),
 			"reason": "SAME_DOCK_ARRIVAL",
 		}
+		_update_day_night_on_voyage_arrival()
 		return
 
 	var journal_raw_before_completion := _trade_journal.get_entry_snapshot()
@@ -7667,6 +7679,7 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 				== int(heat_transition["heat_after"])
 		),
 	}
+	_update_day_night_on_voyage_arrival()
 	var journal_raw_after_completion := _trade_journal.get_entry_snapshot()
 	if record_remote_journal_evidence:
 		_journal_remote_raw_snapshot_before_voyage = (
@@ -7697,6 +7710,28 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 		_journal_return_market_refresh_recorded = false
 	_update_heat_view()
 	_update_trade_journal_view()
+
+
+func _update_day_night_on_voyage_arrival() -> void:
+	var transition_evidence: Dictionary = day_night_cycle.record_voyage_arrival(
+		_last_completed_voyage_evidence
+	)
+	_last_completed_voyage_evidence["day_night_transition"] = (
+		transition_evidence.duplicate(true)
+	)
+	var time_state := day_night_cycle.get_time_state()
+	var cove_updated: bool = cove.set_time_state(time_state)
+	var resident_evidence: Dictionary = resident.record_day_night_state(
+		time_state,
+		transition_evidence,
+	)
+	_last_completed_voyage_evidence["day_night_cove_palette_updated"] = (
+		cove_updated
+	)
+	_last_completed_voyage_evidence["day_night_resident_evidence"] = (
+		resident_evidence.duplicate(true)
+	)
+	_update_day_night_view()
 
 
 func _go_ashore() -> void:
@@ -7935,6 +7970,21 @@ func _update_relationship_view() -> void:
 		resident_state["relationship_value"]
 	)
 	relationship_view.show()
+
+
+func _update_day_night_view() -> void:
+	var time_state := day_night_cycle.get_time_state()
+	cove_time_title.text = "COVE TIME · %s" % time_state
+	cove_time_status.text = resident.get_night_scene_status_text()
+	var player_at_cove := (
+		not _player_aboard_ship
+		and not _player_on_target_deck
+		and (_player_shore_id.is_empty() or _player_shore_id == "cove")
+	)
+	if player_at_cove:
+		cove_time_view.show()
+	else:
+		cove_time_view.hide()
 
 
 func save_relationship_progress() -> Dictionary:
@@ -9287,6 +9337,12 @@ func get_playtest_state() -> Dictionary:
 		cove_storage.get_cargo_lots(),
 	)
 	var resident_state: Dictionary = resident.get_playtest_state()
+	var day_night_state: Dictionary = day_night_cycle.get_playtest_state()
+	var cove_state: Dictionary = cove.get_playtest_state()
+	var cove_time_view_text := "%s\n%s" % [
+		cove_time_title.text,
+		cove_time_status.text,
+	]
 	var ship_module_view_text := "%s\n%s\n%s\n%s\n%s" % [
 		ship_module_title.text,
 		ship_module_status.text,
@@ -13546,6 +13602,162 @@ func get_playtest_state() -> Dictionary:
 			"night_states": resident_state["night_state_count"],
 			"time_advance": resident_state["time_advance_system_count"],
 			"night_only_scenes": resident_state["night_only_scene_count"],
+		},
+		"day_night_system_count": day_night_state["system_count"],
+		"day_night_owner_count": day_night_state["owner_count"],
+		"day_night_state_count": day_night_state["state_count"],
+		"day_night_states": day_night_state["states"],
+		"day_night_initial_state": day_night_state["initial_state"],
+		"day_night_time_state": day_night_state["time_state"],
+		"day_active": day_night_state["day_active"],
+		"night_active": day_night_state["night_active"],
+		"day_night_arrival_check_count": (
+			day_night_state["arrival_check_count"]
+		),
+		"day_night_eligible_cove_return_count": (
+			day_night_state["eligible_cove_return_count"]
+		),
+		"day_night_advance_count": day_night_state["advance_count"],
+		"day_night_advances_at_most_once": (
+			day_night_state["advances_at_most_once"]
+		),
+		"day_night_advance_rule": day_night_state["advance_rule"],
+		"day_night_last_arrival_evidence": (
+			day_night_state["last_arrival_evidence"]
+		),
+		"day_night_successful_advance_evidence": (
+			day_night_state["successful_advance_evidence"]
+		),
+		"day_night_uncounted_arrival_count": (
+			day_night_state["uncounted_arrival_count"]
+		),
+		"day_night_same_dock_arrival_count": (
+			day_night_state["same_dock_arrival_count"]
+		),
+		"day_night_non_cove_arrival_count": (
+			day_night_state["non_cove_arrival_count"]
+		),
+		"cove_time_view_count": get_tree().get_nodes_in_group(
+			"day_night_view"
+		).size(),
+		"cove_time_view_visible": cove_time_view.visible,
+		"cove_time_view_text": cove_time_view_text,
+		"cove_time_view_matches_state": (
+			cove_time_title.text
+			== "COVE TIME · %s" % String(day_night_state["time_state"])
+		),
+		"cove_time_status_text": cove_time_status.text,
+		"cove_time_day_block_reason_visible": (
+			String(day_night_state["time_state"]) != DayNightCycleState.DAY
+			or (
+				cove_time_view.visible
+				and cove_time_status.text.contains("UNAVAILABLE DURING DAY")
+				and cove_time_status.text.contains(
+					"RETURN FROM A COUNTED VOYAGE TO THE COVE"
+				)
+			)
+		),
+		"cove_palette_time_state": cove_state["time_state"],
+		"cove_palette_change_count": cove_state["palette_change_count"],
+		"cove_active_palette": cove_state["active_palette"],
+		"cove_day_palette": cove_state["day_palette"],
+		"cove_night_palette": cove_state["night_palette"],
+		"cove_sky_changes_between_states": (
+			cove_state["sky_changes_between_states"]
+		),
+		"cove_water_changes_between_states": (
+			cove_state["water_changes_between_states"]
+		),
+		"cove_land_changes_between_states": (
+			cove_state["land_changes_between_states"]
+		),
+		"cove_light_changes_between_states": (
+			cove_state["light_changes_between_states"]
+		),
+		"cove_authored_palette_matches_time_state": (
+			cove_state["authored_palette_matches_time_state"]
+			and cove_state["time_state"] == day_night_state["time_state"]
+		),
+		"mara_night_scene_count": resident_state["night_only_scene_count"],
+		"mara_night_scene_dialogue_kind": (
+			resident_state["night_scene_dialogue_kind"]
+		),
+		"mara_night_scene_dialogue": resident_state["night_scene_dialogue"],
+		"mara_night_scene_arm_count": resident_state["night_scene_arm_count"],
+		"mara_night_scene_pending": resident_state["night_scene_pending"],
+		"mara_night_scene_available": resident_state["night_scene_available"],
+		"mara_night_scene_block_reason": (
+			resident_state["night_scene_block_reason"]
+		),
+		"mara_night_scene_show_count": resident_state["night_scene_show_count"],
+		"mara_night_scene_finish_count": (
+			resident_state["night_scene_finish_count"]
+		),
+		"mara_night_scene_shows_one_time": (
+			resident_state["night_scene_shows_one_time"]
+		),
+		"mara_night_scene_visible": (
+			_dialogue_open
+			and _dialogue_kind == CoveResident.NIGHT_DIALOGUE_KIND
+			and speaker_name.text == resident.display_name
+		),
+		"mara_night_scene_normal_talk_after_pending": (
+			resident_state["night_scene_normal_talk_after_pending"]
+		),
+		"mara_night_scene_normal_talk_after_count": (
+			resident_state["night_scene_normal_talk_after_count"]
+		),
+		"mara_night_scene_normal_dialogue_available_after": (
+			resident_state["night_scene_normal_dialogue_available_after"]
+		),
+		"mara_night_scene_last_state_evidence": (
+			resident_state["last_night_state_evidence"]
+		),
+		"day_night_dialogue_priority": resident_state["dialogue_priority"],
+		"day_night_dialogue_priority_holds": (
+			resident_state["dialogue_priority"] == PackedStringArray([
+				CoveResident.REACTION_DIALOGUE_KIND,
+				"NORMAL_AFTER_IMPORTANT_EVENT_REACTION",
+				CoveResident.RELATIONSHIP_DIALOGUE_KIND,
+				"NORMAL_AFTER_RELATIONSHIP_THRESHOLD_SCENE",
+				CoveResident.NIGHT_DIALOGUE_KIND,
+				CoveResident.NORMAL_DIALOGUE_KIND,
+			])
+		),
+		"day_night_held_talk_fresh_press_required": (
+			resident_state["fresh_press_required"]
+		),
+		"day_night_last_held_talk_evidence": (
+			resident_state["last_held_talk_evidence"]
+		),
+		"day_night_excluded_features": {
+			"calendar": day_night_state["calendar_system_count"],
+			"seasons": day_night_state["season_system_count"],
+			"resident_schedules": (
+				day_night_state["resident_schedule_system_count"]
+			),
+			"timed_request_failure": (
+				day_night_state["timed_request_failure_system_count"]
+			),
+			"sleep_needs": day_night_state["sleep_need_system_count"],
+			"real_time_waiting": (
+				day_night_state["real_time_wait_system_count"]
+			),
+			"phase44_port_unlocks": (
+				day_night_state["port_unlock_system_count"]
+			),
+			"phase44_fast_travel_actions": (
+				day_night_state["fast_travel_action_count"]
+			),
+			"phase44_food_costs": (
+				day_night_state["fast_travel_food_cost_count"]
+			),
+			"phase44_chart_actions": (
+				day_night_state["fast_travel_chart_action_count"]
+			),
+			"phase44_combat_travel_blocks": (
+				day_night_state["fast_travel_combat_block_count"]
+			),
 		},
 		"chart_visible": waypoint_state["chart_visible"],
 		"known_location_count": waypoint_state["known_location_count"],
