@@ -18,6 +18,7 @@ const DefeatRecoveryState := preload("res://scripts/defeat_recovery.gd")
 const FishingAreaState := preload("res://scripts/fishing_area.gd")
 const WeatherAreaState := preload("res://scripts/weather_area.gd")
 const RuinExplorationState := preload("res://scripts/ruin_exploration.gd")
+const StoryClueState := preload("res://scripts/story_clue.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -44,6 +45,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var fishing_area: FishingAreaState = $FishingArea
 @onready var weather_area: WeatherAreaState = $WeatherArea
 @onready var ruin_exploration: RuinExplorationState = $RuinExploration
+@onready var story_clue: StoryClueState = $StoryClue
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
@@ -196,12 +198,18 @@ const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART �
 const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · E ACTION · T WEATHER · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
+const CHART_STORY_CONTROLS_TEXT := (
+	"M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · 4 CLUE · X CLEAR"
+)
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
 const FISHING_CARGO_CHOICE_CONTROLS_TEXT := (
 	"X DISCARD CAUGHT FISH · 1 / 2 / 3 REPLACE CARGO SLOT"
 )
 const RUIN_CARGO_CHOICE_CONTROLS_TEXT := (
 	"X LEAVE TREASURE IN RUIN · 1 / 2 / 3 REPLACE CARGO SLOT"
+)
+const STORY_CLUE_CARGO_CHOICE_CONTROLS_TEXT := (
+	"X LEAVE MAP FRAGMENT IN RUIN · 1 / 2 / 3 REPLACE CARGO SLOT"
 )
 const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
 const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 1-6, M, WASD / ARROW KEYS"
@@ -236,6 +244,7 @@ const PRIZE_CANNON_CARGO_SALE_PRICE := 15
 const CARGO_SOURCE_WRECK := "WRECK"
 const CARGO_SOURCE_FISHING := "FISHING"
 const CARGO_SOURCE_RUIN := "RUIN"
+const CARGO_SOURCE_STORY_CLUE := "STORY_CLUE"
 const HEAT_PERSISTENCE_PATH := "user://haven_of_tides_phase30_heat.cfg"
 const HEAT_PERSISTENCE_SECTION := "phase30_heat"
 const HEAT_PERSISTENCE_KEY := "payload"
@@ -283,6 +292,8 @@ var _cargo_choice_release_pending := false
 var _prompt_refresh_after_navigation_release := false
 var _last_cargo_action := "NOT_ATTEMPTED"
 var _last_cargo_result := "NOT_ATTEMPTED"
+var _last_story_load_atomic_evidence: Dictionary = {}
+var _last_story_cleanup_atomic_evidence: Dictionary = {}
 var _cargo_kept_count := 0
 var _cargo_left_count := 0
 var _cargo_replaced_count := 0
@@ -545,6 +556,8 @@ func _ready() -> void:
 		sea_state["reef_radius"],
 	)
 	waypoint_display.configure(sea_state["bounds"], ship.get_dock_definitions())
+	_load_story_clue_persistence("STARTUP")
+	_sync_story_clue_chart()
 	waypoint_display.update_positions(ship.global_position, player.global_position, false)
 	var cove_dock: Dictionary = ship.get_dock_definition("cove")
 	var port_dock: Dictionary = ship.get_dock_definition("port")
@@ -557,6 +570,7 @@ func _ready() -> void:
 	_update_weather_area()
 	_update_fishing_area()
 	_update_ruin_exploration()
+	_update_story_clue()
 	_update_cargo_view()
 	_update_storage_view()
 	_update_construction_view()
@@ -634,6 +648,7 @@ func _physics_process(delta: float) -> void:
 	_update_weather_area()
 	_update_fishing_area()
 	_update_ruin_exploration()
+	_update_story_clue()
 	_update_pirate_hunter(delta)
 	_update_target_inspection()
 	_update_boarding_deck_state(delta)
@@ -713,7 +728,7 @@ func _physics_process(delta: float) -> void:
 		elif _cargo_choice_release_pending or ship.navigation_release_pending:
 			controls_help.text = RELEASE_CONTROLS_TEXT
 		elif waypoint_display.chart_visible:
-			controls_help.text = CHART_CONTROLS_TEXT
+			controls_help.text = _get_chart_controls_text()
 		elif _chart_release_pending:
 			controls_help.text = RELEASE_CONTROLS_TEXT
 		elif ship_docked:
@@ -745,7 +760,9 @@ func _physics_process(delta: float) -> void:
 			_player_near_ship_return = near_return
 			_update_interaction_prompt()
 		if ruin_exploration.is_inside():
-			controls_help.text = "WASD / ARROWS TO WALK · E TAKE TREASURE OR EXIT"
+			controls_help.text = (
+				"WASD / ARROWS TO WALK · E INTERACT WITH RUIN FINDS OR EXIT"
+			)
 	else:
 		travel_camera.global_position = COVE_CAMERA_POSITION
 
@@ -842,6 +859,22 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if (
+		story_clue.is_interaction_release_pending()
+		and _key_matches(key_event, KEY_E)
+	):
+		if not key_event.pressed:
+			_interact_held = false
+			story_clue.release_interaction_guard()
+			_update_story_clue()
+			_update_interaction_prompt()
+		elif not key_event.echo:
+			story_clue.record_held_or_guarded_interaction(
+				"FRAGMENT_RELEASE_GUARD",
+				ship.get_cargo_lots(),
+			)
+		get_viewport().set_input_as_handled()
+		return
+	if (
 		ruin_exploration.is_transition_release_pending()
 		and _key_matches(key_event, KEY_E)
 	):
@@ -909,6 +942,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_record_held_boarding_interaction("BOARD")
 		elif fishing_area.can_receive_fishing_press():
 			fishing_area.record_held_press(ship.get_cargo_lots())
+		elif story_clue.is_near_fragment():
+			story_clue.record_held_or_guarded_interaction(
+				"MAP_FRAGMENT",
+				ship.get_cargo_lots(),
+			)
 		elif ruin_exploration.is_near_tool_gate():
 			ruin_exploration.record_held_or_guarded_interaction(
 				"TOOL_GATE",
@@ -946,7 +984,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	if ruin_exploration.is_inside():
-		if ruin_exploration.can_take_treasure():
+		if story_clue.can_take_fragment():
+			_take_story_clue_fragment()
+		elif ruin_exploration.can_take_treasure():
 			_take_ruin_treasure()
 		elif ruin_exploration.can_interact_tool_gate():
 			_open_ruin_tool_gate()
@@ -3354,6 +3394,11 @@ func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
 				"TREASURE_CHOICE_HELD_E",
 				ship.get_cargo_lots(),
 			)
+		elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
+			story_clue.record_held_or_guarded_interaction(
+				"FRAGMENT_CHOICE_HELD_E",
+				ship.get_cargo_lots(),
+			)
 		return
 	if key_event.echo:
 		return
@@ -3387,6 +3432,8 @@ func _handle_chart_input(key_event: InputEventKey) -> bool:
 		waypoint_display.select_location("island")
 	elif _key_matches(key_event, KEY_3):
 		waypoint_display.select_location("port")
+	elif _key_matches(key_event, KEY_4):
+		waypoint_display.select_story_location()
 	elif _key_matches(key_event, KEY_X):
 		waypoint_display.clear_location()
 	else:
@@ -3396,6 +3443,12 @@ func _handle_chart_input(key_event: InputEventKey) -> bool:
 
 func _key_matches(key_event: InputEventKey, key: Key) -> bool:
 	return key_event.physical_keycode == key or key_event.keycode == key
+
+
+func _get_chart_controls_text() -> String:
+	if story_clue.is_story_location_unlocked():
+		return CHART_STORY_CONTROLS_TEXT
+	return CHART_CONTROLS_TEXT
 
 
 func _set_chart_visible(visible: bool) -> void:
@@ -3418,7 +3471,7 @@ func _set_chart_visible(visible: bool) -> void:
 		_chart_release_pending = false
 		player.movement_enabled = false
 		ship.set_navigation_input_blocked(true)
-		controls_help.text = CHART_CONTROLS_TEXT
+		controls_help.text = _get_chart_controls_text()
 		interaction_prompt.hide()
 	else:
 		_chart_release_pending = true
@@ -3696,7 +3749,7 @@ func _get_context_controls_text() -> String:
 	if _cargo_choice_release_pending or ship.navigation_release_pending:
 		return RELEASE_CONTROLS_TEXT
 	if ruin_exploration.is_inside():
-		return "WASD / ARROWS TO WALK · E TAKE TREASURE OR EXIT"
+		return "WASD / ARROWS TO WALK · E INTERACT WITH RUIN FINDS OR EXIT"
 	if _player_aboard_ship:
 		if ship.is_docked:
 			return DOCKED_CONTROLS_TEXT
@@ -3790,6 +3843,17 @@ func _update_ruin_exploration() -> void:
 		player.movement_enabled,
 	)
 	if ruin_exploration.get_interaction_prompt() != prompt_before:
+		_update_interaction_prompt()
+
+
+func _update_story_clue() -> void:
+	var prompt_before := story_clue.get_interaction_prompt()
+	story_clue.update_state(
+		player.global_position,
+		ruin_exploration.is_inside(),
+		ruin_exploration.is_tool_gate_open(),
+	)
+	if story_clue.get_interaction_prompt() != prompt_before:
 		_update_interaction_prompt()
 
 
@@ -5164,6 +5228,7 @@ func _enter_ruin() -> void:
 	)
 	controls_help.text = "WASD / ARROWS TO WALK · E INTERACT"
 	_update_ruin_exploration()
+	_update_story_clue()
 	_update_interaction_prompt()
 
 
@@ -5181,6 +5246,7 @@ func _exit_ruin() -> void:
 	_player_near_ship_return = false
 	controls_help.text = WALKING_CONTROLS_TEXT
 	_update_ruin_exploration()
+	_update_story_clue()
 	_update_interaction_prompt()
 
 
@@ -5219,6 +5285,35 @@ func _open_ruin_tool_gate() -> void:
 		return
 	ruin_exploration.try_open_tool_gate(ship.get_cargo_lots(), money)
 	_update_ruin_exploration()
+	_update_story_clue()
+	_update_interaction_prompt()
+
+
+func _take_story_clue_fragment() -> void:
+	if not story_clue.can_take_fragment():
+		return
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	if not ship.can_keep_cargo_lot():
+		_open_cargo_choice(
+			StoryClueState.FRAGMENT_LOT_NAME,
+			CARGO_SOURCE_STORY_CLUE,
+		)
+		return
+	if not ship.keep_cargo_lot(StoryClueState.FRAGMENT_LOT_NAME):
+		_last_cargo_action = "KEEP_STORY_MAP_FRAGMENT"
+		_last_cargo_result = "NO_CHANGE_CARGO_FULL"
+		return
+	if not story_clue.collect_direct(cargo_before, ship.get_cargo_lots()):
+		ship.undo_last_kept_cargo_lot(StoryClueState.FRAGMENT_LOT_NAME)
+		_last_cargo_action = "KEEP_STORY_MAP_FRAGMENT"
+		_last_cargo_result = "ROLLED_BACK_STORY_CLUE_STATE"
+		return
+	_cargo_kept_count += 1
+	_last_cargo_action = "KEEP_STORY_MAP_FRAGMENT"
+	_last_cargo_result = "KEPT_ONE_TORN_MAP_FRAGMENT"
+	_sync_story_clue_chart()
+	_update_cargo_view()
+	_update_story_clue()
 	_update_interaction_prompt()
 
 
@@ -5320,6 +5415,7 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 			CARGO_SOURCE_WRECK,
 			CARGO_SOURCE_FISHING,
 			CARGO_SOURCE_RUIN,
+			CARGO_SOURCE_STORY_CLUE,
 		].has(cargo_source)
 	):
 		return false
@@ -5341,6 +5437,16 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 		and (
 			cargo_lot != RuinExplorationState.TREASURE_LOT_NAME
 			or not ruin_exploration.begin_treasure_choice(
+				ship.get_cargo_lots()
+			)
+		)
+	):
+		return false
+	if (
+		cargo_source == CARGO_SOURCE_STORY_CLUE
+		and (
+			cargo_lot != StoryClueState.FRAGMENT_LOT_NAME
+			or not story_clue.begin_fragment_choice(
 				ship.get_cargo_lots()
 			)
 		)
@@ -5374,6 +5480,10 @@ func _leave_or_discard_pending_cargo_lot() -> void:
 		resolved = ruin_exploration.leave_treasure_in_place(
 			ship.get_cargo_lots()
 		)
+	elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
+		resolved = story_clue.leave_fragment_in_place(
+			ship.get_cargo_lots()
+		)
 	if not resolved:
 		return
 	_cargo_left_count += 1
@@ -5386,9 +5496,12 @@ func _leave_or_discard_pending_cargo_lot() -> void:
 	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
 		_last_cargo_action = "DISCARD_NEW_FISH_LOT"
 		_last_cargo_result = "DISCARDED_FISH_LOT_CARGO_UNCHANGED"
-	else:
+	elif _pending_cargo_source == CARGO_SOURCE_RUIN:
 		_last_cargo_action = "LEAVE_RUIN_TREASURE_IN_PLACE"
 		_last_cargo_result = "LEFT_RUIN_TREASURE_IN_PLACE_CARGO_UNCHANGED"
+	else:
+		_last_cargo_action = "LEAVE_STORY_MAP_FRAGMENT_IN_PLACE"
+		_last_cargo_result = "LEFT_MAP_FRAGMENT_IN_RUIN_CARGO_UNCHANGED"
 	_close_cargo_choice()
 
 
@@ -5408,6 +5521,11 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 	if (
 		_pending_cargo_source == CARGO_SOURCE_RUIN
 		and not ruin_exploration.has_pending_treasure_choice()
+	):
+		return
+	if (
+		_pending_cargo_source == CARGO_SOURCE_STORY_CLUE
+		and not story_clue.has_pending_fragment_choice()
 	):
 		return
 	var removed_lot: String = ship.replace_cargo_slot(
@@ -5434,6 +5552,11 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 			removed_lot,
 			ship.get_cargo_lots(),
 		)
+	elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
+		source_resolved = story_clue.collect_by_replacement(
+			removed_lot,
+			ship.get_cargo_lots(),
+		)
 	if not source_resolved:
 		ship.replace_cargo_slot(slot_index, removed_lot)
 		_last_cargo_action = "REPLACE_CARGO_SLOT"
@@ -5454,6 +5577,9 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 			ship.timber_lots,
 			ship.get_cargo_limit(),
 		)
+	elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
+		_sync_story_clue_chart()
+		_update_story_clue()
 	_close_cargo_choice()
 
 
@@ -5478,6 +5604,8 @@ func _get_cargo_choice_controls_text() -> String:
 		return FISHING_CARGO_CHOICE_CONTROLS_TEXT
 	if _pending_cargo_source == CARGO_SOURCE_RUIN:
 		return RUIN_CARGO_CHOICE_CONTROLS_TEXT
+	if _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
+		return STORY_CLUE_CARGO_CHOICE_CONTROLS_TEXT
 	return CARGO_CHOICE_CONTROLS_TEXT
 
 
@@ -5530,6 +5658,12 @@ func _update_cargo_view() -> void:
 	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
 		choice_lines.append(
 			"[X] DISCARD CAUGHT %s · CARGO UNCHANGED" % _pending_cargo_lot
+		)
+	elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
+		choice_lines.append(
+			"[X] LEAVE %s IN RUIN · CLUE NOT RECORDED" % (
+				_pending_cargo_lot
+			)
 		)
 	else:
 		choice_lines.append(
@@ -6644,6 +6778,13 @@ func _go_ashore() -> void:
 		_player_shore_id,
 		definition["shore_region"],
 	)
+	if _player_shore_id == "cove" and story_clue.is_fragment_acquired():
+		story_clue.record_return_to_cove(
+			ship.get_cargo_lots(),
+			cove_storage.get_cargo_lots(),
+		)
+		_save_story_clue_persistence("COVE_RETURN_AUTOSAVE")
+		_sync_story_clue_chart()
 	controls_help.text = WALKING_CONTROLS_TEXT
 	_capture_damage_checkpoint("ASHORE")
 	_capture_repair_checkpoint("ASHORE")
@@ -6816,6 +6957,7 @@ func _update_interaction_prompt() -> void:
 		or _trade_release_pending
 		or _journal_view_open
 		or _journal_release_pending
+		or story_clue.is_interaction_release_pending()
 		or ruin_exploration.is_transition_release_pending()
 		or _target_inspection_view_open
 		or ship.navigation_release_pending
@@ -6857,6 +6999,12 @@ func _update_interaction_prompt() -> void:
 			interaction_prompt.show()
 		else:
 			interaction_prompt.hide()
+		return
+
+	var story_prompt := story_clue.get_interaction_prompt()
+	if not story_prompt.is_empty():
+		interaction_prompt.text = story_prompt
+		interaction_prompt.show()
 		return
 
 	var ruin_prompt := ruin_exploration.get_interaction_prompt()
@@ -6903,6 +7051,685 @@ func _update_interaction_prompt() -> void:
 		return
 
 	interaction_prompt.hide()
+
+
+func save_story_clue_persistence() -> Dictionary:
+	return _save_story_clue_persistence("PUBLIC_GAME_SAVE")
+
+
+func load_story_clue_persistence() -> Dictionary:
+	return _load_story_clue_persistence("PUBLIC_GAME_LOAD")
+
+
+func cleanup_story_clue_persistence_for_mcp() -> Dictionary:
+	var physical_before := _get_story_fragment_physical_state()
+	var story_state_before: Dictionary = story_clue.get_playtest_state()
+	var ship_before: Array[String] = ship.get_cargo_lots()
+	var storage_before: Array[String] = cove_storage.get_storage_slots()
+	var file_before: Dictionary = story_clue.inspect_persistence_file()
+	var save_file_existed_before := FileAccess.file_exists(
+		StoryClueState.SAVE_PATH
+	)
+	var chart_before: Dictionary = waypoint_display.get_playtest_state()
+	var global_state_before_cleanup: Dictionary = get_playtest_state()
+	var global_story_cargo_accounting_before: Dictionary = (
+		global_state_before_cleanup["story_cargo_accounting"]
+	)
+	var last_load_evidence: Dictionary = (
+		story_state_before["last_load_evidence"]
+	)
+	var last_load_payload: Dictionary = last_load_evidence.get(
+		"payload",
+		{},
+	)
+	var valid_persisted_absent_load_case := (
+		bool(story_state_before["fragment_acquired"])
+		and int(physical_before["cargo_fragment_count"]) == 0
+		and int(physical_before["total_physical_fragment_count"]) == 0
+		and int(story_state_before["persisted_fragment_absent_count"]) == 1
+		and not bool(story_state_before["fragment_in_cargo_at_save"])
+		and int(story_state_before["load_count"]) > 0
+		and bool(last_load_evidence.get("success", false))
+		and not bool(last_load_payload.get(
+			"fragment_in_existing_cargo",
+			true,
+		))
+	)
+	if bool(physical_before["pending_fragment_transaction"]):
+		var pending_physical_after := _get_story_fragment_physical_state()
+		var pending_story_state_after := story_clue.get_playtest_state()
+		var pending_file_after := story_clue.inspect_persistence_file()
+		var pending_chart_after := waypoint_display.get_playtest_state()
+		_last_story_cleanup_atomic_evidence = {
+			"success": false,
+			"result": "STORY CLUE CLEANUP DENIED",
+			"reason": "PENDING_FRAGMENT_TRANSACTION",
+			"physical_before": physical_before,
+			"physical_after": pending_physical_after,
+			"state_unchanged": (
+				physical_before == pending_physical_after
+				and story_state_before == pending_story_state_after
+				and file_before == pending_file_after
+				and ship_before == ship.get_cargo_lots()
+				and storage_before == cove_storage.get_storage_slots()
+				and chart_before == pending_chart_after
+			),
+			"file_before": file_before,
+			"file_after": pending_file_after,
+			"file_unchanged": file_before == pending_file_after,
+			"save_file_existed_before": save_file_existed_before,
+			"save_file_exists_after": FileAccess.file_exists(
+				StoryClueState.SAVE_PATH
+			),
+			"save_file_unchanged": (
+				save_file_existed_before
+					== FileAccess.file_exists(StoryClueState.SAVE_PATH)
+			),
+			"ship_cargo_unchanged": ship_before == ship.get_cargo_lots(),
+			"storage_cargo_unchanged": (
+				storage_before == cove_storage.get_storage_slots()
+			),
+			"chart_unchanged": chart_before == pending_chart_after,
+			"pending_transaction_rejected": true,
+			"irreversible_change_started": false,
+			"ship_fragment_coverage": true,
+			"cove_storage_fragment_coverage": true,
+		}
+		return _last_story_cleanup_atomic_evidence.duplicate(true)
+
+	var unsupported_fragment_owner_or_removal := (
+		bool(story_state_before["fragment_acquired"])
+		and int(physical_before["cargo_fragment_count"]) == 0
+		and not valid_persisted_absent_load_case
+	)
+	if unsupported_fragment_owner_or_removal:
+		var unsupported_physical_after := _get_story_fragment_physical_state()
+		var unsupported_story_state_after := story_clue.get_playtest_state()
+		var unsupported_file_after := story_clue.inspect_persistence_file()
+		var unsupported_chart_after := waypoint_display.get_playtest_state()
+		_last_story_cleanup_atomic_evidence = {
+			"success": false,
+			"result": "STORY CLUE CLEANUP DENIED",
+			"reason": "UNSUPPORTED_FRAGMENT_OWNER_OR_REMOVAL",
+			"unsupported_fragment_owner_or_removal_rejected": true,
+			"valid_persisted_absent_load_case": false,
+			"irreversible_change_started": false,
+			"physical_before": physical_before,
+			"physical_after": unsupported_physical_after,
+			"story_state_before": story_state_before,
+			"story_state_after": unsupported_story_state_after,
+			"story_state_unchanged": (
+				story_state_before == unsupported_story_state_after
+			),
+			"file_before": file_before,
+			"file_after": unsupported_file_after,
+			"file_unchanged": file_before == unsupported_file_after,
+			"save_file_existed_before": save_file_existed_before,
+			"save_file_exists_after": FileAccess.file_exists(
+				StoryClueState.SAVE_PATH
+			),
+			"save_file_unchanged": (
+				save_file_existed_before
+					== FileAccess.file_exists(StoryClueState.SAVE_PATH)
+			),
+			"ship_cargo_before": ship_before,
+			"ship_cargo_after": ship.get_cargo_lots(),
+			"ship_cargo_unchanged": ship_before == ship.get_cargo_lots(),
+			"storage_cargo_before": storage_before,
+			"storage_cargo_after": cove_storage.get_storage_slots(),
+			"storage_cargo_unchanged": (
+				storage_before == cove_storage.get_storage_slots()
+			),
+			"chart_before": chart_before,
+			"chart_after": unsupported_chart_after,
+			"chart_unchanged": chart_before == unsupported_chart_after,
+			"global_story_cargo_accounting_before": (
+				global_story_cargo_accounting_before.duplicate(true)
+			),
+			"state_file_cargo_and_chart_unchanged": (
+				physical_before == unsupported_physical_after
+				and story_state_before == unsupported_story_state_after
+				and file_before == unsupported_file_after
+				and ship_before == ship.get_cargo_lots()
+				and storage_before == cove_storage.get_storage_slots()
+				and chart_before == unsupported_chart_after
+			),
+			"state_unchanged": (
+				physical_before == unsupported_physical_after
+				and story_state_before == unsupported_story_state_after
+				and file_before == unsupported_file_after
+				and ship_before == ship.get_cargo_lots()
+				and storage_before == cove_storage.get_storage_slots()
+				and chart_before == unsupported_chart_after
+			),
+			"ship_fragment_coverage": true,
+			"cove_storage_fragment_coverage": true,
+		}
+		return _last_story_cleanup_atomic_evidence.duplicate(true)
+
+	var predicted_physical_delta := (
+		1
+		- int(physical_before["world_fragment_count"])
+		- int(physical_before["cargo_fragment_count"])
+	)
+	var predicted_accounted_total_after_cleanup := (
+		int(global_story_cargo_accounting_before["accounted_total"])
+		+ predicted_physical_delta
+		- int(story_state_before["persisted_fragment_absent_count"])
+	)
+	var predicted_expected_total_after_cleanup := int(
+		global_story_cargo_accounting_before["expected_total"]
+	)
+	var cleanup_accounting_preflight_holds := (
+		predicted_accounted_total_after_cleanup
+			== predicted_expected_total_after_cleanup
+	)
+	if not cleanup_accounting_preflight_holds:
+		var preflight_physical_after := _get_story_fragment_physical_state()
+		var preflight_story_state_after := story_clue.get_playtest_state()
+		var preflight_file_after := story_clue.inspect_persistence_file()
+		var preflight_chart_after := waypoint_display.get_playtest_state()
+		_last_story_cleanup_atomic_evidence = {
+			"success": false,
+			"result": "STORY CLUE CLEANUP DENIED",
+			"reason": "GLOBAL_STORY_CARGO_ACCOUNTING_PREFLIGHT_FAILED",
+			"irreversible_change_started": false,
+			"valid_persisted_absent_load_case": (
+				valid_persisted_absent_load_case
+			),
+			"physical_before": physical_before,
+			"physical_after": preflight_physical_after,
+			"save_file_existed_before": save_file_existed_before,
+			"save_file_exists_after": FileAccess.file_exists(
+				StoryClueState.SAVE_PATH
+			),
+			"save_file_unchanged": (
+				save_file_existed_before
+					== FileAccess.file_exists(StoryClueState.SAVE_PATH)
+			),
+			"global_story_cargo_accounting_before": (
+				global_story_cargo_accounting_before.duplicate(true)
+			),
+			"predicted_physical_delta": predicted_physical_delta,
+			"predicted_accounted_total_after_cleanup": (
+				predicted_accounted_total_after_cleanup
+			),
+			"predicted_expected_total_after_cleanup": (
+				predicted_expected_total_after_cleanup
+			),
+			"cleanup_accounting_preflight_holds": false,
+			"state_file_cargo_and_chart_unchanged": (
+				physical_before == preflight_physical_after
+				and story_state_before == preflight_story_state_after
+				and file_before == preflight_file_after
+				and ship_before == ship.get_cargo_lots()
+				and storage_before == cove_storage.get_storage_slots()
+				and chart_before == preflight_chart_after
+			),
+			"state_unchanged": (
+				physical_before == preflight_physical_after
+				and story_state_before == preflight_story_state_after
+				and file_before == preflight_file_after
+				and ship_before == ship.get_cargo_lots()
+				and storage_before == cove_storage.get_storage_slots()
+				and chart_before == preflight_chart_after
+			),
+		}
+		return _last_story_cleanup_atomic_evidence.duplicate(true)
+
+	var ship_removals: Array[Dictionary] = []
+	var storage_removals: Array[Dictionary] = []
+	for slot_index in range(ship_before.size() - 1, -1, -1):
+		if ship_before[slot_index] != StoryClueState.FRAGMENT_LOT_NAME:
+			continue
+		var removed_ship_lot: String = ship.remove_cargo_slot_for_storage(
+			slot_index
+		)
+		if removed_ship_lot == StoryClueState.FRAGMENT_LOT_NAME:
+			ship_removals.append({
+				"slot_index": slot_index,
+				"lot_name": removed_ship_lot,
+			})
+	for slot_index in range(storage_before.size()):
+		if storage_before[slot_index] != StoryClueState.FRAGMENT_LOT_NAME:
+			continue
+		var removed_storage_lot := cove_storage.remove_cargo_slot(slot_index)
+		if removed_storage_lot == StoryClueState.FRAGMENT_LOT_NAME:
+			storage_removals.append({
+				"slot_index": slot_index,
+				"lot_name": removed_storage_lot,
+			})
+	var cargo_clear := _count_story_fragments_in_cargo_owners() == 0
+	if not cargo_clear:
+		var removal_rollback_holds := _restore_story_fragment_cargo_removals(
+			ship_removals,
+			storage_removals,
+		)
+		_last_story_cleanup_atomic_evidence = {
+			"success": false,
+			"result": "STORY CLUE CLEANUP DENIED",
+			"reason": "CARGO_FRAGMENT_REMOVE_FAILED",
+			"physical_before": physical_before,
+			"physical_after": _get_story_fragment_physical_state(),
+			"cargo_rollback_holds": removal_rollback_holds,
+			"irreversible_change_started": false,
+			"ship_fragment_coverage": true,
+			"cove_storage_fragment_coverage": true,
+		}
+		return _last_story_cleanup_atomic_evidence.duplicate(true)
+
+	var owner_evidence := story_clue.cleanup_persistence_for_mcp()
+	if not bool(owner_evidence["success"]):
+		var owner_failure_rollback_holds := (
+			_restore_story_fragment_cargo_removals(
+				ship_removals,
+				storage_removals,
+			)
+		)
+		_last_story_cleanup_atomic_evidence = {
+			"success": false,
+			"result": "STORY CLUE CLEANUP FAILED",
+			"reason": owner_evidence["result"],
+			"owner_evidence": owner_evidence,
+			"physical_before": physical_before,
+			"physical_after": _get_story_fragment_physical_state(),
+			"cargo_rollback_holds": owner_failure_rollback_holds,
+			"irreversible_change_started": false,
+			"ship_fragment_coverage": true,
+			"cove_storage_fragment_coverage": true,
+		}
+		return _last_story_cleanup_atomic_evidence.duplicate(true)
+
+	_sync_story_clue_chart()
+	_update_story_clue()
+	_update_cargo_view()
+	_update_interaction_prompt()
+	var physical_after := _get_story_fragment_physical_state()
+	var unrelated_ship_cargo_unchanged := (
+		_get_non_story_fragment_lots(ship_before)
+			== _get_non_story_fragment_lots(ship.get_cargo_lots())
+	)
+	var unrelated_storage_cargo_unchanged := (
+		_get_non_story_fragment_lots(storage_before)
+			== _get_non_story_fragment_lots(cove_storage.get_storage_slots())
+	)
+	var global_state_after_cleanup: Dictionary = get_playtest_state()
+	var global_story_cargo_accounting: Dictionary = (
+		global_state_after_cleanup["story_cargo_accounting"]
+	)
+	var replacement_discard_ledger_preserved := bool(
+		owner_evidence.get(
+			"displaced_cargo_accounting_preserved",
+			false,
+		)
+	)
+	var cleanup_invariants_hold := (
+		int(physical_after["total_physical_fragment_count"]) == 1
+		and int(physical_after["world_fragment_count"]) == 1
+		and int(physical_after["cargo_fragment_count"]) == 0
+		and unrelated_ship_cargo_unchanged
+		and unrelated_storage_cargo_unchanged
+		and replacement_discard_ledger_preserved
+		and bool(global_story_cargo_accounting["holds"])
+	)
+	var valid_persisted_absent_cleanup_holds := (
+		not valid_persisted_absent_load_case
+		or (
+			int(physical_before["total_physical_fragment_count"]) == 0
+			and int(physical_after["world_fragment_count"]) == 1
+			and int(physical_after["cargo_fragment_count"]) == 0
+			and int(global_story_cargo_accounting["accounted_total"])
+				== predicted_accounted_total_after_cleanup
+			and bool(global_story_cargo_accounting["holds"])
+		)
+	)
+	_last_story_cleanup_atomic_evidence = {
+		"success": true,
+		"result": "PHASE 38 STORY CLUE CLEANUP COMPLETE",
+		"reason": "CLEAN",
+		"irreversible_change_started": true,
+		"irreversible_change_committed": true,
+		"postcommit_invariants_hold": cleanup_invariants_hold,
+		"cleanup_accounting_preflight_holds": (
+			cleanup_accounting_preflight_holds
+		),
+		"predicted_physical_delta": predicted_physical_delta,
+		"predicted_accounted_total_after_cleanup": (
+			predicted_accounted_total_after_cleanup
+		),
+		"predicted_expected_total_after_cleanup": (
+			predicted_expected_total_after_cleanup
+		),
+		"preflight_prediction_matches_actual": (
+			int(global_story_cargo_accounting["accounted_total"])
+				== predicted_accounted_total_after_cleanup
+			and int(global_story_cargo_accounting["expected_total"])
+				== predicted_expected_total_after_cleanup
+		),
+		"valid_persisted_absent_load_case": (
+			valid_persisted_absent_load_case
+		),
+		"valid_persisted_absent_cleanup_observed": (
+			valid_persisted_absent_load_case
+		),
+		"valid_persisted_absent_cleanup_holds": (
+			valid_persisted_absent_cleanup_holds
+		),
+		"owner_evidence": owner_evidence,
+		"physical_before": physical_before,
+		"physical_after": physical_after,
+		"ship_fragment_removal_count": ship_removals.size(),
+		"storage_fragment_removal_count": storage_removals.size(),
+		"ship_fragment_coverage": true,
+		"cove_storage_fragment_coverage": true,
+		"pending_transaction_rejected": false,
+		"one_physical_fragment_after_cleanup": (
+			int(physical_after["total_physical_fragment_count"]) == 1
+		),
+		"unrelated_ship_cargo_unchanged": unrelated_ship_cargo_unchanged,
+		"unrelated_storage_cargo_unchanged": (
+			unrelated_storage_cargo_unchanged
+		),
+		"cargo_accounting_consistent": (
+			bool(global_story_cargo_accounting["holds"])
+		),
+		"global_story_cargo_accounting_after_cleanup": (
+			global_story_cargo_accounting.duplicate(true)
+		),
+		"global_accounted_cargo_total_after_cleanup": (
+			global_story_cargo_accounting["accounted_total"]
+		),
+		"global_expected_cargo_total_after_cleanup": (
+			global_story_cargo_accounting["expected_total"]
+		),
+		"replacement_discard_ledger_preserved": (
+			replacement_discard_ledger_preserved
+		),
+		"replacement_then_cleanup_sequence_observed": bool(
+			owner_evidence.get(
+				"replacement_then_cleanup_sequence_observed",
+				false,
+			)
+		),
+		"replacement_then_cleanup_accounting_holds": (
+			bool(owner_evidence.get(
+				"replacement_then_cleanup_ledger_holds",
+				false,
+			))
+			and bool(global_story_cargo_accounting["holds"])
+		),
+	}
+	return _last_story_cleanup_atomic_evidence.duplicate(true)
+
+
+func _save_story_clue_persistence(reason: String) -> Dictionary:
+	var at_cove_save_boundary: bool = (
+		(_player_shore_id == "cove" and not _player_aboard_ship)
+		or (
+			ship.is_docked
+			and ship.current_dock_id == "cove"
+			and _voyage_departure_dock_id.is_empty()
+		)
+	)
+	if not at_cove_save_boundary:
+		return {
+			"success": false,
+			"result": "STORY CLUE SAVE DENIED",
+			"reason": "NOT_AT_COVE_SAVE_BOUNDARY",
+			"path": StoryClueState.SAVE_PATH,
+			"save_reason": reason,
+		}
+	return story_clue.save_persistence(
+		ship.get_cargo_lots(),
+		cove_storage.get_cargo_lots(),
+		reason,
+	)
+
+
+func _load_story_clue_persistence(reason: String) -> Dictionary:
+	var at_safe_load_boundary: bool = (
+		reason == "STARTUP"
+		or (
+			_player_shore_id == "cove"
+			and not _player_aboard_ship
+		)
+		or (
+			ship.is_docked
+			and ship.current_dock_id == "cove"
+			and _voyage_departure_dock_id.is_empty()
+		)
+	)
+	if not at_safe_load_boundary:
+		return {
+			"success": false,
+			"result": "STORY CLUE LOAD DENIED",
+			"reason": "UNSAFE_LIVE_RESTORE_BOUNDARY",
+			"path": StoryClueState.SAVE_PATH,
+			"load_reason": reason,
+		}
+	var file_inspection := story_clue.inspect_persistence_file()
+	var physical_before := _get_story_fragment_physical_state()
+	var restoration_attempted := false
+	var restoration_added := false
+	var restoration_target := "NONE"
+	var saved_fragment_expected := false
+	if bool(file_inspection["valid"]):
+		var payload: Dictionary = file_inspection["payload"]
+		saved_fragment_expected = bool(
+			payload["fragment_in_existing_cargo"]
+		)
+	if (
+		bool(file_inspection["valid"])
+		and saved_fragment_expected
+		and int(physical_before["cargo_fragment_count"]) == 0
+		and not bool(physical_before["pending_fragment_transaction"])
+	):
+		if ship.can_keep_cargo_lot():
+			restoration_attempted = true
+			restoration_target = "SHIP"
+			restoration_added = ship.keep_cargo_lot(
+				StoryClueState.FRAGMENT_LOT_NAME
+			)
+		elif cove_storage.can_store_cargo_lot():
+			restoration_attempted = true
+			restoration_target = "COVE_STORAGE"
+			restoration_added = cove_storage.store_cargo_lot(
+				StoryClueState.FRAGMENT_LOT_NAME
+			)
+	var physical_after_add := _get_story_fragment_physical_state()
+	var physical_context := {
+		"cargo_fragment_count_before": physical_before["cargo_fragment_count"],
+		"cargo_fragment_count_after": physical_after_add["cargo_fragment_count"],
+		"fragment_found_in_cove_storage": (
+			int(physical_before["storage_fragment_count"]) == 1
+		),
+		"pending_fragment_transaction": (
+			physical_before["pending_fragment_transaction"]
+		),
+		"restoration_attempted": restoration_attempted,
+		"restoration_added": restoration_added,
+		"restoration_succeeded": restoration_added,
+		"restoration_target": restoration_target,
+	}
+	var evidence := story_clue.load_persistence(reason, physical_context)
+	var rollback_holds := true
+	if not bool(evidence["success"]) and restoration_added:
+		if restoration_target == "SHIP":
+			rollback_holds = ship.remove_cargo_lot(
+				StoryClueState.FRAGMENT_LOT_NAME
+			)
+		elif restoration_target == "COVE_STORAGE":
+			var storage_slot := cove_storage.get_storage_slots().find(
+				StoryClueState.FRAGMENT_LOT_NAME
+			)
+			rollback_holds = (
+				storage_slot >= 0
+				and cove_storage.remove_cargo_slot(storage_slot)
+					== StoryClueState.FRAGMENT_LOT_NAME
+			)
+	_sync_story_clue_chart()
+	_update_cargo_view()
+	var physical_final := _get_story_fragment_physical_state()
+	_last_story_load_atomic_evidence = {
+		"success": bool(evidence["success"]),
+		"result": evidence["result"],
+		"reason": evidence["reason"],
+		"file_inspection": file_inspection,
+		"owner_evidence": evidence,
+		"physical_before": physical_before,
+		"physical_after_add": physical_after_add,
+		"physical_final": physical_final,
+		"restoration_attempted": restoration_attempted,
+		"restoration_added": restoration_added,
+		"restoration_target": restoration_target,
+		"existing_fragment_satisfied_load": (
+			bool(evidence["success"])
+			and int(physical_before["cargo_fragment_count"]) == 1
+			and not restoration_added
+		),
+		"storage_fragment_satisfied_load": (
+			bool(evidence["success"])
+			and int(physical_before["storage_fragment_count"]) == 1
+			and not restoration_added
+		),
+		"no_slot_rejection": bool(evidence.get(
+			"no_slot_rejection",
+			false,
+		)),
+		"failed_add_rolled_back": (
+			not restoration_added
+			or bool(evidence["success"])
+			or rollback_holds
+		),
+		"one_physical_fragment_after_success": (
+			not bool(evidence["success"])
+			or (
+				saved_fragment_expected
+				and int(physical_final["total_physical_fragment_count"])
+					== 1
+			)
+		),
+		"expected_physical_fragment_count_after_success": int(
+			saved_fragment_expected
+		),
+		"physical_fragment_count_matches_saved_presence": (
+			not bool(evidence["success"])
+			or int(physical_final["total_physical_fragment_count"])
+				== int(saved_fragment_expected)
+		),
+		"valid_absent_fragment_load_case_observed": (
+			bool(evidence["success"]) and not saved_fragment_expected
+		),
+		"valid_absent_fragment_load_case_holds": (
+			not bool(evidence["success"])
+			or saved_fragment_expected
+			or (
+				int(physical_final["total_physical_fragment_count"]) == 0
+				and not restoration_attempted
+				and not restoration_added
+			)
+		),
+		"atomic_story_and_physical_commit": (
+			(
+				bool(evidence["success"])
+				and int(physical_final["total_physical_fragment_count"])
+					== int(saved_fragment_expected)
+			)
+			or (
+				not bool(evidence["success"])
+				and rollback_holds
+			)
+		),
+	}
+	return _last_story_load_atomic_evidence.duplicate(true)
+
+
+func _sync_story_clue_chart() -> void:
+	waypoint_display.set_story_clue_content(
+		story_clue.get_clue_entries(),
+		story_clue.get_location_definition(),
+		story_clue.is_story_location_unlocked(),
+	)
+
+
+func _count_story_fragments_in_cargo_owners() -> int:
+	return (
+		ship.get_cargo_lots().count(StoryClueState.FRAGMENT_LOT_NAME)
+		+ cove_storage.count_cargo_lot(StoryClueState.FRAGMENT_LOT_NAME)
+	)
+
+
+func _get_story_fragment_physical_state() -> Dictionary:
+	var story_state: Dictionary = story_clue.get_playtest_state()
+	var ship_fragment_count: int = ship.get_cargo_lots().count(
+		StoryClueState.FRAGMENT_LOT_NAME
+	)
+	var storage_fragment_count := cove_storage.count_cargo_lot(
+		StoryClueState.FRAGMENT_LOT_NAME
+	)
+	var world_fragment_count := int(story_state["world_fragment_lot_count"])
+	var main_pending_fragment_choice := (
+		_cargo_choice_open
+		and _pending_cargo_source == CARGO_SOURCE_STORY_CLUE
+		and _pending_cargo_lot == StoryClueState.FRAGMENT_LOT_NAME
+	)
+	var owner_pending_fragment_choice := (
+		story_clue.has_pending_fragment_choice()
+	)
+	var pending_fragment_transaction := (
+		main_pending_fragment_choice or owner_pending_fragment_choice
+	)
+	return {
+		"ship_fragment_count": ship_fragment_count,
+		"storage_fragment_count": storage_fragment_count,
+		"cargo_fragment_count": (
+			ship_fragment_count + storage_fragment_count
+		),
+		"world_fragment_count": world_fragment_count,
+		"pending_fragment_transaction": pending_fragment_transaction,
+		"main_pending_fragment_choice": main_pending_fragment_choice,
+		"owner_pending_fragment_choice": owner_pending_fragment_choice,
+		"pending_is_same_world_fragment": pending_fragment_transaction,
+		"total_physical_fragment_count": (
+			ship_fragment_count
+			+ storage_fragment_count
+			+ world_fragment_count
+		),
+	}
+
+
+func _restore_story_fragment_cargo_removals(
+	ship_removals: Array[Dictionary],
+	storage_removals: Array[Dictionary],
+) -> bool:
+	var restored_all := true
+	for removal_index in range(ship_removals.size() - 1, -1, -1):
+		var removal: Dictionary = ship_removals[removal_index]
+		restored_all = (
+			ship.restore_cargo_slot_from_storage(
+				int(removal["slot_index"]),
+				String(removal["lot_name"]),
+			)
+			and restored_all
+		)
+	for removal in storage_removals:
+		restored_all = (
+			cove_storage.restore_cargo_slot(
+				int(removal["slot_index"]),
+				String(removal["lot_name"]),
+			)
+			and restored_all
+		)
+	return restored_all
+
+
+func _get_non_story_fragment_lots(cargo_lots: Array[String]) -> Array[String]:
+	var other_lots: Array[String] = []
+	for lot_name in cargo_lots:
+		if lot_name.is_empty() or lot_name == StoryClueState.FRAGMENT_LOT_NAME:
+			continue
+		other_lots.append(lot_name)
+	return other_lots
 
 
 func save_world_heat_persistence() -> Dictionary:
@@ -7397,6 +8224,10 @@ func get_playtest_state() -> Dictionary:
 	var fishing_state: Dictionary = fishing_area.get_playtest_state()
 	var weather_state: Dictionary = weather_area.get_playtest_state()
 	var ruin_state: Dictionary = ruin_exploration.get_playtest_state()
+	var story_state: Dictionary = story_clue.get_playtest_state()
+	var story_physical_state: Dictionary = (
+		_get_story_fragment_physical_state()
+	)
 	var storage_state: Dictionary = cove_storage.get_playtest_state()
 	var construction_state: Dictionary = construction_site.get_playtest_state(
 		cove_storage
@@ -7579,12 +8410,14 @@ func get_playtest_state() -> Dictionary:
 		+ storage_state["storage_used_slots"]
 		+ fishing_state["pending_catch_count"]
 		+ ruin_state["physical_treasure_lot_count"]
+		+ story_state["world_fragment_lot_count"]
 	)
 	var initial_physical_cargo_total: int = int(
 		ship_state["starting_cargo_used_slots"]
 		+ wreck_state["wreck_initial_salvage_lot_count"]
 		+ storage_state["starting_storage_used_slots"]
 		+ ruin_state["initial_treasure_lot_count"]
+		+ story_state["initial_fragment_lot_count"]
 	)
 	var accounted_cargo_total: int = int(
 		physical_cargo_total
@@ -7600,6 +8433,8 @@ func get_playtest_state() -> Dictionary:
 		+ fishing_state["displaced_cargo_discard_count"]
 		+ _treasure_sold_lot_count
 		+ ruin_state["displaced_cargo_discard_count"]
+		+ story_state["displaced_cargo_discard_count"]
+		+ story_state["persisted_fragment_absent_count"]
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total
@@ -11677,6 +12512,468 @@ func get_playtest_state() -> Dictionary:
 			),
 			"day_and_night": ruin_state["day_night_system_count"],
 			"fast_travel": ruin_state["fast_travel_system_count"],
+		},
+		"story_clue_system_count": story_state["system_count"],
+		"story_clue_state_owner_count": story_state["owner_count"],
+		"story_fragment_id": story_state["fragment_id"],
+		"story_fragment_lot_name": story_state["fragment_lot_name"],
+		"story_fragment_position": story_state["fragment_position"],
+		"story_fragment_range": story_state["fragment_range"],
+		"story_fragment_distance": story_state["fragment_distance"],
+		"story_fragment_available": story_state["fragment_available"],
+		"story_fragment_visible": story_state["fragment_visible"],
+		"story_fragment_behind_existing_tool_gate": (
+			story_state["fragment_behind_existing_tool_gate"]
+			and ruin_state["tool_gate_system_count"] == 1
+			and ruin_state["tool_gate_type_count"] == 1
+		),
+		"story_fragment_requires_open_tool_gate": (
+			not story_state["fragment_interaction_available"]
+			or ruin_state["tool_gate_open"]
+		),
+		"story_fragment_interaction_available": (
+			story_state["fragment_interaction_available"]
+		),
+		"story_fragment_prompt_visible": (
+			interaction_prompt.visible
+			and interaction_prompt.text
+				== story_state["interaction_prompt"]
+			and not String(story_state["interaction_prompt"]).is_empty()
+		),
+		"story_fragment_prompt_text": (
+			interaction_prompt.text
+			if interaction_prompt.visible
+			and interaction_prompt.text == story_state["interaction_prompt"]
+			else ""
+		),
+		"story_fragment_acquired": story_state["fragment_acquired"],
+		"story_fragment_attempt_count": story_state["fragment_attempt_count"],
+		"story_fragment_acquisition_count": (
+			story_state["fragment_acquisition_count"]
+		),
+		"story_fragment_collects_once": story_state["fragment_collects_once"],
+		"story_fragment_direct_keep_count": story_state["direct_keep_count"],
+		"story_fragment_choice_required_count": (
+			story_state["choice_required_count"]
+		),
+		"story_fragment_leave_in_place_count": (
+			story_state["leave_in_place_count"]
+		),
+		"story_fragment_replacement_keep_count": (
+			story_state["replacement_keep_count"]
+		),
+		"story_fragment_displaced_cargo_count": (
+			story_state["displaced_cargo_discard_count"]
+		),
+		"story_fragment_in_ship_cargo_count": (
+			ship.get_cargo_lots().count(StoryClueState.FRAGMENT_LOT_NAME)
+		),
+		"story_fragment_in_cove_storage_count": (
+			cove_storage.count_cargo_lot(
+				StoryClueState.FRAGMENT_LOT_NAME
+			)
+		),
+		"story_fragment_in_existing_cargo_owner_count": (
+			story_physical_state["cargo_fragment_count"]
+		),
+		"story_fragment_physical_state": story_physical_state,
+		"story_one_physical_fragment_invariant": (
+			int(story_physical_state["total_physical_fragment_count"]) == 1
+		),
+		"story_fragment_uses_existing_cargo_owner": (
+			story_state["cargo_owner_count"] == 1
+			and ship_state["each_cargo_lot_uses_one_slot"]
+		),
+		"story_fragment_cargo_limit_never_exceeded": (
+			ship_state["cargo_limit_never_exceeded"]
+		),
+		"story_fragment_choice": {
+			"open": _cargo_choice_open,
+			"open_for_fragment": (
+				_cargo_choice_open
+				and _pending_cargo_source == CARGO_SOURCE_STORY_CLUE
+			),
+			"pending_lot": (
+				_pending_cargo_lot
+				if _pending_cargo_source == CARGO_SOURCE_STORY_CLUE
+				else ""
+			),
+			"pending_source": _pending_cargo_source,
+			"prompt_visible": (
+				cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_STORY_CLUE
+			),
+			"prompt_text": (
+				"%s\n%s" % [
+					cargo_choice_title.text,
+					cargo_choice_details.text,
+				]
+				if cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_STORY_CLUE
+				else ""
+			),
+			"leave_control": "X",
+			"replacement_controls": ["1", "2", "3"],
+			"last_resolution": story_state["last_choice_evidence"],
+		},
+		"story_fragment_existing_cargo_choice_sources_supported": [
+			CARGO_SOURCE_WRECK,
+			CARGO_SOURCE_FISHING,
+			CARGO_SOURCE_RUIN,
+			CARGO_SOURCE_STORY_CLUE,
+		],
+		"story_fragment_interaction_release_pending": (
+			story_state["interaction_release_pending"]
+		),
+		"story_fragment_release_count": story_state["release_count"],
+		"story_fragment_held_input_count": story_state["held_input_count"],
+		"story_fragment_fresh_press_required": (
+			story_state["fresh_press_required"]
+		),
+		"story_last_fragment_evidence": (
+			story_state["last_fragment_evidence"]
+		),
+		"story_successful_fragment_evidence": (
+			story_state["successful_fragment_evidence"]
+		),
+		"story_last_held_input_evidence": (
+			story_state["last_held_input_evidence"]
+		),
+		"story_clue_list_count": story_state["clue_list_count"],
+		"story_clue_entry_count": story_state["clue_entry_count"],
+		"story_clue_entries": story_state["clue_entries"],
+		"story_clue_id": story_state["clue_id"],
+		"story_clue_title": story_state["clue_title"],
+		"story_clue_description": story_state["clue_description"],
+		"story_clue_description_count": (
+			story_state["clue_description_count"]
+		),
+		"story_one_clue_entry_only": story_state["one_clue_entry_only"],
+		"story_clue_recorded_only_after_fragment": (
+			story_state["clue_recorded_only_after_acquisition"]
+		),
+		"story_clue_identity_exact": story_state["clue_identity_exact"],
+		"story_chart_clue_list_entry_count": (
+			waypoint_state["story_clue_entry_count"]
+		),
+		"story_chart_clue_entries": waypoint_state["story_clue_entries"],
+		"story_clue_view_matches_owner": (
+			waypoint_state["story_clue_entries"]
+				== story_state["clue_entries"]
+		),
+		"story_location_id": story_state["story_location_id"],
+		"story_location_name": story_state["story_location_name"],
+		"story_location_position": story_state["story_location_position"],
+		"story_location_count": story_state["story_location_count"],
+		"story_location_unlocked": story_state["story_location_unlocked"],
+		"story_location_unlocked_with_clue": (
+			story_state["story_location_unlocked_with_clue"]
+		),
+		"story_location_is_clear_sea_destination": (
+			sea_state["bounds"].has_point(
+				story_state["story_location_position"]
+			)
+			and story_state["story_location_position"].distance_to(
+				sea_state["island_center"]
+			) > float(sea_state["island_radius"])
+			and not sea_state["port_land_rect"].has_point(
+				story_state["story_location_position"]
+			)
+		),
+		"story_chart_location_marker_count": (
+			waypoint_state["story_location_marker_count"]
+		),
+		"story_chart_location_marker_visible": (
+			waypoint_state["story_location_marker_visible"]
+		),
+		"story_chart_location_selected": (
+			waypoint_state["story_location_selected"]
+		),
+		"story_chart_content_sync_count": (
+			waypoint_state["story_content_sync_count"]
+		),
+		"story_chart_same_location_sync_count": (
+			waypoint_state["story_same_location_sync_count"]
+		),
+		"story_chart_selection_preserved_count": (
+			waypoint_state["story_selection_preserved_count"]
+		),
+		"story_last_chart_content_sync_evidence": (
+			waypoint_state["last_story_content_sync_evidence"]
+		),
+		"story_chart_selection_persists_across_same_sync": (
+			bool(
+				waypoint_state["last_story_content_sync_evidence"].get(
+					"selection_preserved_on_same_location_sync",
+					true,
+				)
+			)
+		),
+		"story_chart_location_matches_owner": (
+			waypoint_state["story_location_id"]
+				== (
+					story_state["story_location_id"]
+					if story_state["story_location_unlocked"]
+					else ""
+				)
+			and waypoint_state["story_location_marker_count"]
+				== story_state["story_location_count"]
+		),
+		"story_chart_select_control": "4",
+		"story_return_to_cove_count": story_state["return_to_cove_count"],
+		"story_last_return_to_cove_evidence": (
+			story_state["last_return_to_cove_evidence"]
+		),
+		"story_clue_available_after_cove_return": (
+			story_state["return_to_cove_count"] == 0
+			or (
+				story_state["clue_entry_count"] == 1
+				and story_state["story_location_unlocked"]
+			)
+		),
+		"story_save_path": story_state["save_path"],
+		"story_save_section": story_state["save_section"],
+		"story_save_key": story_state["save_key"],
+		"story_save_format": story_state["save_format"],
+		"story_save_version": story_state["save_version"],
+		"story_save_file_exists": story_state["save_file_exists"],
+		"story_save_count": story_state["save_count"],
+		"story_load_count": story_state["load_count"],
+		"story_startup_load_attempt_count": (
+			story_state["startup_load_attempt_count"]
+		),
+		"story_startup_restore_count": (
+			story_state["startup_restore_count"]
+		),
+		"story_persistence_cleanup_count": story_state["cleanup_count"],
+		"story_fragment_in_cargo_at_save": (
+			story_state["fragment_in_cargo_at_save"]
+		),
+		"story_fragment_restored_to_cargo_count": (
+			story_state["fragment_restored_to_cargo_count"]
+		),
+		"story_last_save_evidence": story_state["last_save_evidence"],
+		"story_last_load_evidence": story_state["last_load_evidence"],
+		"story_last_cleanup_evidence": story_state["last_cleanup_evidence"],
+		"story_last_load_atomic_evidence": (
+			_last_story_load_atomic_evidence.duplicate(true)
+		),
+		"story_last_cleanup_atomic_evidence": (
+			_last_story_cleanup_atomic_evidence.duplicate(true)
+		),
+		"story_load_atomicity_holds": (
+			_last_story_load_atomic_evidence.is_empty()
+			or bool(_last_story_load_atomic_evidence.get(
+				"atomic_story_and_physical_commit",
+				false,
+			))
+		),
+		"story_load_existing_storage_fragment_case_holds": (
+			_last_story_load_atomic_evidence.is_empty()
+			or not bool(_last_story_load_atomic_evidence.get(
+				"storage_fragment_satisfied_load",
+				false,
+			))
+			or (
+				bool(_last_story_load_atomic_evidence.get("success", false))
+				and not bool(_last_story_load_atomic_evidence.get(
+					"restoration_added",
+					false,
+				))
+				and int(story_physical_state["storage_fragment_count"]) == 1
+				and int(story_physical_state["total_physical_fragment_count"])
+					== 1
+			)
+		),
+		"story_load_no_slot_rejection_holds": (
+			_last_story_load_atomic_evidence.is_empty()
+			or not bool(_last_story_load_atomic_evidence.get(
+				"no_slot_rejection",
+				false,
+			))
+			or (
+				not bool(_last_story_load_atomic_evidence.get("success", true))
+				and bool(_last_story_load_atomic_evidence.get(
+					"atomic_story_and_physical_commit",
+					false,
+				))
+			)
+		),
+		"story_load_absent_fragment_case_observed": bool(
+			_last_story_load_atomic_evidence.get(
+				"valid_absent_fragment_load_case_observed",
+				false,
+			)
+		),
+		"story_load_absent_fragment_case_holds": (
+			_last_story_load_atomic_evidence.is_empty()
+			or bool(_last_story_load_atomic_evidence.get(
+				"valid_absent_fragment_load_case_holds",
+				false,
+			))
+		),
+		"story_cleanup_atomicity_holds": (
+			_last_story_cleanup_atomic_evidence.is_empty()
+			or (
+				bool(_last_story_cleanup_atomic_evidence.get("success", false))
+				and bool(_last_story_cleanup_atomic_evidence.get(
+					"cargo_accounting_consistent",
+					false,
+				))
+				and bool(_last_story_cleanup_atomic_evidence.get(
+					"one_physical_fragment_after_cleanup",
+					false,
+				))
+			)
+			or (
+				not bool(_last_story_cleanup_atomic_evidence.get(
+					"success",
+					true,
+				))
+				and (
+					bool(_last_story_cleanup_atomic_evidence.get(
+						"state_unchanged",
+						false,
+					))
+					or bool(_last_story_cleanup_atomic_evidence.get(
+						"cargo_rollback_holds",
+						false,
+					))
+				)
+			)
+		),
+		"story_cleanup_after_replacement_case_observed": bool(
+			_last_story_cleanup_atomic_evidence.get(
+				"replacement_then_cleanup_sequence_observed",
+				false,
+			)
+		),
+		"story_cleanup_after_replacement_case_holds": (
+			_last_story_cleanup_atomic_evidence.is_empty()
+			or not bool(_last_story_cleanup_atomic_evidence.get(
+				"replacement_then_cleanup_sequence_observed",
+				false,
+			))
+			or bool(_last_story_cleanup_atomic_evidence.get(
+				"replacement_then_cleanup_accounting_holds",
+				false,
+			))
+		),
+		"story_cleanup_unsupported_fragment_removal_rejection_observed": (
+			String(_last_story_cleanup_atomic_evidence.get(
+				"reason",
+				"",
+			)) == "UNSUPPORTED_FRAGMENT_OWNER_OR_REMOVAL"
+		),
+		"story_cleanup_unsupported_fragment_removal_rejection_holds": (
+			String(_last_story_cleanup_atomic_evidence.get(
+				"reason",
+				"",
+			)) != "UNSUPPORTED_FRAGMENT_OWNER_OR_REMOVAL"
+			or (
+				not bool(_last_story_cleanup_atomic_evidence.get(
+					"success",
+					true,
+				))
+				and not bool(_last_story_cleanup_atomic_evidence.get(
+					"irreversible_change_started",
+					true,
+				))
+				and bool(_last_story_cleanup_atomic_evidence.get(
+					"state_file_cargo_and_chart_unchanged",
+					false,
+				))
+			)
+		),
+		"story_cleanup_valid_persisted_absent_case_observed": bool(
+			_last_story_cleanup_atomic_evidence.get(
+				"valid_persisted_absent_cleanup_observed",
+				false,
+			)
+		),
+		"story_cleanup_valid_persisted_absent_case_holds": (
+			not bool(_last_story_cleanup_atomic_evidence.get(
+				"valid_persisted_absent_cleanup_observed",
+				false,
+			))
+			or (
+				bool(_last_story_cleanup_atomic_evidence.get("success", false))
+				and bool(_last_story_cleanup_atomic_evidence.get(
+					"valid_persisted_absent_cleanup_holds",
+					false,
+				))
+			)
+		),
+		"story_cleanup_never_reports_failure_after_irreversible_commit": (
+			_last_story_cleanup_atomic_evidence.is_empty()
+			or not bool(_last_story_cleanup_atomic_evidence.get(
+				"irreversible_change_committed",
+				false,
+			))
+			or bool(_last_story_cleanup_atomic_evidence.get("success", false))
+		),
+		"story_clue_and_location_persist_after_load": (
+			story_state["load_count"] == 0
+			or (
+				story_state["clue_entry_count"] == 1
+				and story_state["story_location_unlocked"]
+				and waypoint_state["story_location_marker_count"] == 1
+			)
+		),
+		"story_cargo_accounting": {
+			"world_fragment": story_state["world_fragment_lot_count"],
+			"in_ship": ship.get_cargo_lots().count(
+				StoryClueState.FRAGMENT_LOT_NAME
+			),
+			"in_cove_storage": cove_storage.count_cargo_lot(
+				StoryClueState.FRAGMENT_LOT_NAME
+			),
+			"one_physical_fragment": (
+				int(story_physical_state["total_physical_fragment_count"])
+					== 1
+			),
+			"displaced_cargo": (
+				story_state["displaced_cargo_discard_count"]
+			),
+			"persisted_fragment_absent": (
+				story_state["persisted_fragment_absent_count"]
+			),
+			"accounted_total": accounted_cargo_total,
+			"expected_total": expected_cargo_total,
+			"holds": accounted_cargo_total == expected_cargo_total,
+			"cargo_limit_never_exceeded": (
+				ship_state["cargo_limit_never_exceeded"]
+			),
+		},
+		"story_completion_flow_holds": (
+			story_state["fragment_acquisition_count"] == 1
+			and story_state["clue_entry_count"] == 1
+			and story_state["story_location_unlocked"]
+			and waypoint_state["story_location_marker_count"] == 1
+		),
+		"story_excluded_features": {
+			"extra_clue_chains": maxi(
+				int(story_state["clue_chain_count"]) - 1,
+				0,
+			),
+			"clue_combination": (
+				story_state["clue_combination_system_count"]
+			),
+			"deduction_screens": story_state["deduction_screen_count"],
+			"cursed_objects": story_state["cursed_object_count"],
+			"resident_reactions": (
+				story_state["resident_reaction_system_count"]
+			),
+			"relationship_progress": (
+				story_state["relationship_progress_system_count"]
+			),
+			"monsters": story_state["monster_system_count"],
+			"harpoon_actions": story_state["harpoon_action_count"],
+			"monster_attacks": story_state["monster_attack_count"],
+			"monster_part_cargo": story_state["monster_part_cargo_count"],
+			"ship_module_loadout": (
+				story_state["ship_module_loadout_system_count"]
+			),
 		},
 		"fishing_system_count": fishing_state["system_count"],
 		"fishing_state_owner_count": fishing_state["owner_count"],

@@ -11,6 +11,12 @@ var selected_location_id := ""
 
 var _sea_bounds := Rect2()
 var _known_locations := {}
+var _story_clue_entries: Array[Dictionary] = []
+var _story_location_id := ""
+var _story_content_sync_count := 0
+var _story_same_location_sync_count := 0
+var _story_selection_preserved_count := 0
+var _last_story_content_sync_evidence: Dictionary = {}
 var _ship_position := Vector2.ZERO
 var _player_position := Vector2.ZERO
 var _player_aboard_ship := false
@@ -53,6 +59,92 @@ func select_location(location_id: String) -> bool:
 func clear_location() -> void:
 	selected_location_id = ""
 	queue_redraw()
+
+
+func set_story_clue_content(
+	clue_entries: Array[Dictionary],
+	location_definition: Dictionary,
+	location_unlocked: bool,
+) -> void:
+	var previous_story_location_id := _story_location_id
+	var selected_location_before := selected_location_id
+	var next_story_location_id := ""
+	var next_story_location_name := ""
+	var next_story_location_position := Vector2.ZERO
+	if location_unlocked:
+		next_story_location_id = String(location_definition.get("id", ""))
+		next_story_location_name = String(location_definition.get("name", ""))
+		next_story_location_position = location_definition.get(
+			"position",
+			Vector2.ZERO,
+		)
+	if (
+		next_story_location_id.is_empty()
+		or next_story_location_name.is_empty()
+		or clue_entries.size() != 1
+	):
+		next_story_location_id = ""
+
+	var same_story_location := (
+		not previous_story_location_id.is_empty()
+		and previous_story_location_id == next_story_location_id
+	)
+	var selected_story_location_before := (
+		not previous_story_location_id.is_empty()
+		and selected_location_before == previous_story_location_id
+	)
+	if (
+		not previous_story_location_id.is_empty()
+		and not same_story_location
+	):
+		_known_locations.erase(previous_story_location_id)
+		if selected_story_location_before:
+			selected_location_id = ""
+
+	_story_clue_entries.clear()
+	_story_location_id = next_story_location_id
+	if not _story_location_id.is_empty():
+		_known_locations[_story_location_id] = {
+			"id": _story_location_id,
+			"name": next_story_location_name,
+			"position": next_story_location_position,
+		}
+		_story_clue_entries.append(clue_entries[0].duplicate(true))
+
+	_story_content_sync_count += 1
+	if same_story_location:
+		_story_same_location_sync_count += 1
+	if same_story_location and selected_story_location_before:
+		_story_selection_preserved_count += 1
+	_last_story_content_sync_evidence = {
+		"previous_story_location_id": previous_story_location_id,
+		"next_story_location_id": next_story_location_id,
+		"same_story_location": same_story_location,
+		"selected_location_before": selected_location_before,
+		"selected_location_after": selected_location_id,
+		"selected_story_location_before": selected_story_location_before,
+		"selection_preserved_on_same_location_sync": (
+			not same_story_location
+			or not selected_story_location_before
+			or selected_location_id == next_story_location_id
+		),
+		"selection_cleared_only_for_removed_or_replaced_story_location": (
+			selected_location_before == selected_location_id
+			or (
+				selected_story_location_before
+				and not same_story_location
+				and selected_location_id.is_empty()
+			)
+		),
+		"story_content_sync_count": _story_content_sync_count,
+	}
+	queue_redraw()
+
+
+func select_story_location() -> bool:
+	if _story_location_id.is_empty():
+		return false
+	return select_location(_story_location_id)
 
 
 func update_positions(
@@ -109,6 +201,28 @@ func get_playtest_state() -> Dictionary:
 		"direction_vector": direction,
 		"direction_angle_radians": direction_angle,
 		"direction_angle_degrees": rad_to_deg(direction_angle),
+		"story_clue_list_count": 1,
+		"story_clue_entry_count": _story_clue_entries.size(),
+		"story_clue_entries": _story_clue_entries.duplicate(true),
+		"story_location_id": _story_location_id,
+		"story_location_marker_count": int(
+			not _story_location_id.is_empty()
+		),
+		"story_location_marker_visible": (
+			chart_visible
+			and not _story_location_id.is_empty()
+			and _known_locations.has(_story_location_id)
+		),
+		"story_location_selected": (
+			not _story_location_id.is_empty()
+			and selected_location_id == _story_location_id
+		),
+		"story_content_sync_count": _story_content_sync_count,
+		"story_same_location_sync_count": _story_same_location_sync_count,
+		"story_selection_preserved_count": _story_selection_preserved_count,
+		"last_story_content_sync_evidence": (
+			_last_story_content_sync_evidence.duplicate(true)
+		),
 	}
 
 
@@ -158,6 +272,8 @@ func _draw_chart() -> void:
 			16,
 			Color("#fff1c5"),
 		)
+
+	_draw_story_clue_list(font)
 
 	if not selected_location_id.is_empty() and _known_locations.has(selected_location_id):
 		var selected_position := _world_to_chart(get_target_position())
@@ -210,10 +326,17 @@ func _draw_chart() -> void:
 		18,
 		Color("#173f4b"),
 	)
+	var chart_controls := (
+		"[1] COVE  [2] ISLAND  [3] PORT  [X] CLEAR  [M] CLOSE"
+	)
+	if not _story_location_id.is_empty():
+		chart_controls = (
+			"[1] COVE  [2] ISLAND  [3] PORT  [4] CLUE  [X] CLEAR  [M] CLOSE"
+		)
 	draw_string(
 		font,
-		Vector2(CHART_PANEL.end.x - 445.0, CHART_PANEL.end.y - 25.0),
-		"[1] COVE  [2] ISLAND  [3] PORT  [X] CLEAR  [M] CLOSE",
+		Vector2(CHART_PANEL.end.x - 555.0, CHART_PANEL.end.y - 25.0),
+		chart_controls,
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1.0,
 		15,
@@ -273,4 +396,47 @@ func _location_label(location_id: String) -> String:
 			return "ISLAND"
 		"port":
 			return "PORT"
+	if _known_locations.has(location_id):
+		return String(_known_locations[location_id].get(
+			"name",
+			location_id.to_upper(),
+		))
 	return location_id.to_upper()
+
+
+func _draw_story_clue_list(font: Font) -> void:
+	var clue_panel := Rect2(
+		Vector2(CHART_WORLD.position.x + 14.0, CHART_WORLD.end.y - 58.0),
+		Vector2(CHART_WORLD.size.x - 28.0, 46.0),
+	)
+	draw_rect(clue_panel, Color("#071a23dc"))
+	draw_string(
+		font,
+		clue_panel.position + Vector2(12.0, 18.0),
+		"CLUES · %d" % _story_clue_entries.size(),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		120.0,
+		14,
+		Color("#fff1c5"),
+	)
+	if _story_clue_entries.is_empty():
+		return
+	var clue: Dictionary = _story_clue_entries[0]
+	draw_string(
+		font,
+		clue_panel.position + Vector2(132.0, 18.0),
+		String(clue.get("title", "")),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		180.0,
+		14,
+		Color("#ef6b35"),
+	)
+	draw_string(
+		font,
+		clue_panel.position + Vector2(12.0, 38.0),
+		String(clue.get("description", "")),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		clue_panel.size.x - 24.0,
+		13,
+		Color("#d8eee8"),
+	)

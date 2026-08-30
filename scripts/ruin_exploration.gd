@@ -148,6 +148,10 @@ func is_near_tool_gate() -> bool:
 	return _inside_ruin and _tool_gate_distance <= TOOL_GATE_RANGE
 
 
+func is_tool_gate_open() -> bool:
+	return _tool_gate_open
+
+
 func can_interact_tool_gate() -> bool:
 	return (
 		is_near_tool_gate()

@@ -1,4 +1,4 @@
-[gd_scene load_steps=33 format=3]
+[gd_scene load_steps=34 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -20,6 +20,7 @@
 [ext_resource type="Script" path="res://scripts/fishing_area.gd" id="17_fishing_area"]
 [ext_resource type="Script" path="res://scripts/weather_area.gd" id="18_weather_area"]
 [ext_resource type="Script" path="res://scripts/ruin_exploration.gd" id="19_ruin"]
+[ext_resource type="Script" path="res://scripts/story_clue.gd" id="20_story_clue"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -310,6 +311,10 @@ collision_mask = 0
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="RuinExploration/ToolGateBlocker"]
 shape = SubResource("RectangleShape2D_ruin_tool_gate")
+
+[node name="StoryClue" type="Node2D" parent="." groups=["story_clue"]]
+z_index = 2
+script = ExtResource("20_story_clue")
 
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
