@@ -6041,15 +6041,128 @@ func get_playtest_state() -> Dictionary:
 		"boarding_officer_ability_system_count": (
 			boarding_deck_state["officer_ability_system_count"]
 		),
-		"boarding_surrender_system_count": 0,
+		"boarding_surrender_system_count": (
+			boarding_deck_state["surrender_system_count"]
+		),
+		"boarding_surrender_owner_count": (
+			boarding_deck_state["surrender_owner_count"]
+		),
+		"boarding_morale_owner_count": boarding_deck_state["morale_owner_count"],
 		"boarding_morale_meter_count": boarding_deck_state["morale_meter_count"],
+		"boarding_morale_meter_visible": (
+			boarding_deck_state["morale_meter_visible"]
+		),
+		"boarding_defender_morale_max": boarding_deck_state["defender_morale_max"],
+		"boarding_defender_morale_current": (
+			boarding_deck_state["defender_morale_current"]
+		),
+		"boarding_defender_morale_profile": (
+			boarding_deck_state["defender_morale_profile"]
+		),
+		"boarding_selected_morale_profile": (
+			boarding_deck_state["selected_morale_profile"]
+		),
+		"boarding_selected_morale_capacity": (
+			boarding_deck_state["selected_morale_capacity"]
+		),
+		"boarding_morale_meter_text": boarding_deck_state["morale_meter_text"],
+		"boarding_morale_damage_per_cutlass_hit": (
+			boarding_deck_state["morale_damage_per_cutlass_hit"]
+		),
+		"boarding_morale_damage_total": (
+			boarding_deck_state["morale_damage_total"]
+		),
+		"boarding_last_morale_damage": boarding_deck_state["last_morale_damage"],
+		"boarding_morale_reduces_with_defender_damage": (
+			boarding_deck_state["morale_reduces_with_defender_damage"]
+		),
+		"boarding_surrender_count": boarding_deck_state["surrender_count"],
 		"boarding_surrendered_defender_count": (
 			boarding_deck_state["surrendered_defender_count"]
 		),
+		"boarding_defender_surrendered": (
+			boarding_deck_state["defender_surrendered"]
+		),
+		"boarding_defender_alive_at_surrender": (
+			boarding_deck_state["defender_alive_at_surrender"]
+		),
+		"boarding_defender_health_above_zero_at_surrender": (
+			boarding_deck_state["defender_health_above_zero_at_surrender"]
+		),
+		"boarding_surrender_before_health_zero": (
+			boarding_deck_state["surrender_before_health_zero"]
+		),
+		"boarding_surrender_timing_exact": (
+			boarding_deck_state["surrender_timing_exact"]
+		),
+		"boarding_surrender_route_target_id": (
+			boarding_deck_state["surrender_route_target_id"]
+		),
+		"boarding_surrender_route_morale_max": (
+			boarding_deck_state["surrender_route_morale_max"]
+		),
+		"boarding_defeat_path_target_id": (
+			boarding_deck_state["defeat_path_target_id"]
+		),
+		"boarding_defeat_path_morale_max": (
+			boarding_deck_state["defeat_path_morale_max"]
+		),
+		"boarding_defeat_path_available": (
+			boarding_deck_state["defeat_path_available"]
+		),
+		"boarding_defeat_path_contract_holds": (
+			boarding_deck_state["defeat_path_contract_holds"]
+		),
+		"boarding_defeat_path_evidence": (
+			boarding_deck_state["defeat_path_evidence"].duplicate(true)
+		),
+		"boarding_last_surrender_evidence": (
+			boarding_deck_state["last_surrender_evidence"].duplicate(true)
+		),
+		"boarding_fight_outcome": boarding_deck_state["fight_outcome"],
 		"boarding_surrender_pose_count": (
 			boarding_deck_state["surrender_pose_count"]
 		),
-		"boarding_prize_action_system_count": 0,
+		"boarding_surrender_pose_visible": (
+			boarding_deck_state["surrender_pose_visible"]
+		),
+		"boarding_defender_weapon_visible": (
+			boarding_deck_state["defender_weapon_visible"]
+		),
+		"boarding_defender_weapon_disabled_after_surrender": (
+			boarding_deck_state["defender_weapon_disabled_after_surrender"]
+		),
+		"boarding_defender_movement_stopped_after_surrender": (
+			boarding_deck_state["defender_movement_stopped_after_surrender"]
+		),
+		"boarding_defender_attacks_stopped_after_surrender": (
+			boarding_deck_state["defender_attacks_stopped_after_surrender"]
+		),
+		"boarding_post_surrender_cutlass_rejection_count": (
+			boarding_deck_state["post_surrender_cutlass_rejection_count"]
+		),
+		"boarding_last_post_surrender_cutlass_evidence": (
+			boarding_deck_state["last_post_surrender_cutlass_evidence"].duplicate(true)
+		),
+		"boarding_post_surrender_cutlass_no_state_change": (
+			boarding_deck_state["post_surrender_cutlass_no_state_change"]
+		),
+		"boarding_execution_system_count": (
+			boarding_deck_state["execution_system_count"]
+		),
+		"boarding_ransom_system_count": boarding_deck_state["ransom_system_count"],
+		"boarding_prisoner_system_count": (
+			boarding_deck_state["prisoner_system_count"]
+		),
+		"boarding_crew_trading_system_count": (
+			boarding_deck_state["crew_trading_system_count"]
+		),
+		"boarding_prize_action_system_count": (
+			boarding_deck_state["prize_action_system_count"]
+		),
+		"boarding_relationship_reaction_count": (
+			boarding_deck_state["relationship_reaction_count"]
+		),
 		"boarding_ship_capture_system_count": 0,
 		"boarding_reward_system_count": 0,
 		"boarding_heat_change_count": 0,
