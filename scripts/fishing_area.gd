@@ -17,6 +17,8 @@ var _player_aboard_ship := false
 var _captain_aboard := false
 var _sailing_view_active := false
 var _input_available := false
+var _weather_blocked := false
+var _catch_input_available := false
 var _fishing_eligible := false
 var _visual_on_screen := false
 var _sailing_viewport_world_rect := Rect2()
@@ -28,11 +30,16 @@ var _discarded_catch_count := 0
 var _replacement_keep_count := 0
 var _displaced_cargo_discard_count := 0
 var _held_input_count := 0
+var _storm_blocked_attempt_count := 0
+var _weather_recovery_catch_count := 0
+var _weather_recovery_pending := false
 var _pending_catch_count := 0
 var _last_catch_result := "NOT_ATTEMPTED"
 var _last_catch_evidence: Dictionary = {}
 var _last_choice_evidence: Dictionary = {}
 var _last_held_input_evidence: Dictionary = {}
+var _last_storm_blocked_evidence: Dictionary = {}
+var _last_weather_recovery_evidence: Dictionary = {}
 var _pending_cargo_snapshot: Array[String] = []
 
 
@@ -48,6 +55,7 @@ func update_state(
 	captain_aboard: bool,
 	sailing_view_active: bool,
 	input_available: bool,
+	weather_blocked: bool,
 ) -> void:
 	_ship_position = ship_position
 	_ship_speed = ship_speed
@@ -55,6 +63,7 @@ func update_state(
 	_captain_aboard = captain_aboard
 	_sailing_view_active = sailing_view_active
 	_input_available = input_available
+	_weather_blocked = weather_blocked
 	_ship_distance = _ship_position.distance_to(global_position)
 	_sailing_viewport_world_rect = Rect2(
 		_ship_position - SAILING_VIEWPORT_SIZE * 0.5,
@@ -70,7 +79,7 @@ func update_state(
 			true,
 		)
 	)
-	_fishing_eligible = (
+	_catch_input_available = (
 		_player_aboard_ship
 		and _captain_aboard
 		and _ship_distance <= FISHING_RANGE
@@ -78,6 +87,7 @@ func update_state(
 		and _input_available
 		and _pending_catch_count == 0
 	)
+	_fishing_eligible = _catch_input_available and not _weather_blocked
 	visible = _sailing_view_active
 
 
@@ -86,7 +96,7 @@ func is_fishing_eligible() -> bool:
 
 
 func can_receive_fishing_press() -> bool:
-	return _fishing_eligible
+	return _catch_input_available
 
 
 func has_pending_catch() -> bool:
@@ -106,11 +116,36 @@ func get_interaction_prompt() -> String:
 		return "CAPTAIN MUST BE ABOARD TO FISH"
 	if absf(_ship_speed) > FISHING_MAX_SPEED:
 		return "STOP SHIP TO FISH"
+	if _weather_blocked:
+		return "STORM · FISHING BLOCKED"
 	return "[E] CATCH ONE FISH LOT"
 
 
 func try_catch_fish_lot(cargo_before: Array[String]) -> String:
 	_catch_attempt_count += 1
+	if _catch_input_available and _weather_blocked:
+		_storm_blocked_attempt_count += 1
+		_weather_recovery_pending = true
+		_last_catch_result = "NO_CHANGE_STORM_FISHING_BLOCKED"
+		_last_storm_blocked_evidence = {
+			"success": false,
+			"result": _last_catch_result,
+			"weather_effect": "STORM_FISHING_BLOCKED",
+			"cargo_before": cargo_before.duplicate(),
+			"cargo_after": cargo_before.duplicate(),
+			"cargo_unchanged": true,
+			"fish_count_before": cargo_before.count(FISH_LOT_NAME),
+			"fish_count_after": cargo_before.count(FISH_LOT_NAME),
+			"fish_count_unchanged": true,
+			"successful_catch_count_before": _successful_catch_count,
+			"successful_catch_count_after": _successful_catch_count,
+			"pending_catch_count_before": _pending_catch_count,
+			"pending_catch_count_after": _pending_catch_count,
+			"no_fish_generated": true,
+			"fresh_press_required": true,
+		}
+		_last_catch_evidence = _last_storm_blocked_evidence.duplicate(true)
+		return ""
 	if not _fishing_eligible or _pending_catch_count > 0:
 		_last_catch_result = "NO_CHANGE_INELIGIBLE"
 		_last_catch_evidence = {
@@ -135,7 +170,23 @@ func try_catch_fish_lot(cargo_before: Array[String]) -> String:
 		"fresh_press_required": true,
 		"generated_lot_count": 1,
 	}
+	if _weather_recovery_pending:
+		_weather_recovery_catch_count += 1
+		_weather_recovery_pending = false
+		_last_weather_recovery_evidence = {
+			"success": true,
+			"result": "NORMAL_FISHING_RULES_RETURNED",
+			"weather_blocked": _weather_blocked,
+			"cargo_before": cargo_before.duplicate(),
+			"successful_catch_count_after": _successful_catch_count,
+			"generated_lot_count": 1,
+			"normal_fish_lot_returned": true,
+		}
 	return FISH_LOT_NAME
+
+
+func get_last_catch_result() -> String:
+	return _last_catch_result
 
 
 func record_held_press(cargo_lots: Array[String]) -> void:
@@ -270,6 +321,8 @@ func get_playtest_state() -> Dictionary:
 		"player_aboard_ship": _player_aboard_ship,
 		"captain_aboard": _captain_aboard,
 		"input_available": _input_available,
+		"catch_input_available": _catch_input_available,
+		"weather_blocked": _weather_blocked,
 		"fishing_eligible": _fishing_eligible,
 		"eligibility": {
 			"player_aboard_ship": _player_aboard_ship,
@@ -277,6 +330,7 @@ func get_playtest_state() -> Dictionary:
 			"inside_fishing_area": _ship_distance <= FISHING_RANGE,
 			"ship_stopped": absf(_ship_speed) <= FISHING_MAX_SPEED,
 			"input_available": _input_available,
+			"weather_allows_fishing": not _weather_blocked,
 			"no_pending_catch": _pending_catch_count == 0,
 			"eligible": _fishing_eligible,
 		},
@@ -289,11 +343,20 @@ func get_playtest_state() -> Dictionary:
 		"replacement_keep_count": _replacement_keep_count,
 		"displaced_cargo_discard_count": _displaced_cargo_discard_count,
 		"held_input_count": _held_input_count,
+		"storm_blocked_attempt_count": _storm_blocked_attempt_count,
+		"weather_recovery_catch_count": _weather_recovery_catch_count,
+		"weather_recovery_pending": _weather_recovery_pending,
 		"pending_catch_count": _pending_catch_count,
 		"last_catch_result": _last_catch_result,
 		"last_catch_evidence": _last_catch_evidence.duplicate(true),
 		"last_choice_evidence": _last_choice_evidence.duplicate(true),
 		"last_held_input_evidence": _last_held_input_evidence.duplicate(true),
+		"last_storm_blocked_evidence": (
+			_last_storm_blocked_evidence.duplicate(true)
+		),
+		"last_weather_recovery_evidence": (
+			_last_weather_recovery_evidence.duplicate(true)
+		),
 		"fresh_press_required": true,
 		"one_lot_per_fresh_press": true,
 		"catch_accounting_holds": (
@@ -306,7 +369,9 @@ func get_playtest_state() -> Dictionary:
 		"separate_minigame_enabled": false,
 		"fishing_upgrades_enabled": false,
 		"rare_fish_enabled": false,
-		"weather_effects_enabled": false,
+		"weather_effects_enabled": true,
+		"weather_effect_count": 1,
+		"weather_effect_kind": "BLOCK_CATCH_INSIDE_ACTIVE_STORM",
 		"time_effects_enabled": false,
 		"monster_fishing_enabled": false,
 	}

@@ -16,6 +16,7 @@ const WorldHeatState := preload("res://scripts/world_heat.gd")
 const PirateHunterShipState := preload("res://scripts/pirate_hunter_ship.gd")
 const DefeatRecoveryState := preload("res://scripts/defeat_recovery.gd")
 const FishingAreaState := preload("res://scripts/fishing_area.gd")
+const WeatherAreaState := preload("res://scripts/weather_area.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -40,6 +41,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var sea_area = $SeaArea
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
 @onready var fishing_area: FishingAreaState = $FishingArea
+@onready var weather_area: WeatherAreaState = $WeatherArea
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
@@ -181,12 +183,15 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var defeat_result_controls: Label = (
 	$Interface/DefeatResultView/DefeatControls
 )
+@onready var weather_view: ColorRect = $Interface/WeatherView
+@onready var weather_title: Label = $Interface/WeatherView/WeatherTitle
+@onready var weather_status: Label = $Interface/WeatherView/WeatherStatus
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · E ACTION · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · E ACTION · T WEATHER · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
@@ -251,6 +256,7 @@ var _player_shore_id := ""
 var _player_near_ship_return := false
 var _last_ship_docked := false
 var _chart_release_pending := false
+var _weather_toggle_held := false
 var _last_salvage_eligible := false
 var _last_fishing_prompt := ""
 var _salvage_collection_position := Vector2.ZERO
@@ -535,6 +541,7 @@ func _ready() -> void:
 	)
 	_load_world_heat_persistence("STARTUP")
 	_update_wreck_opportunity()
+	_update_weather_area()
 	_update_fishing_area()
 	_update_cargo_view()
 	_update_storage_view()
@@ -555,6 +562,7 @@ func _ready() -> void:
 	_update_trade_view()
 	_update_trade_journal_view()
 	_update_defeat_result_view()
+	_update_weather_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -576,6 +584,7 @@ func _ready() -> void:
 	target_combat_view.hide()
 	prize_view.hide()
 	defeat_result_view.hide()
+	weather_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -608,6 +617,7 @@ func _physics_process(delta: float) -> void:
 		_player_aboard_ship,
 	)
 	_update_wreck_opportunity()
+	_update_weather_area()
 	_update_fishing_area()
 	_update_pirate_hunter(delta)
 	_update_target_inspection()
@@ -629,6 +639,7 @@ func _physics_process(delta: float) -> void:
 	_update_trade_view()
 	_update_trade_journal_view()
 	_update_defeat_result_view()
+	_update_weather_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
@@ -727,6 +738,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _key_matches(key_event, KEY_T) and not key_event.pressed:
+		_weather_toggle_held = false
 	if _defeat_recovery.is_result_open():
 		_handle_defeat_result_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -847,6 +860,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if _key_matches(key_event, KEY_R):
 		_handle_repair_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if _key_matches(key_event, KEY_T):
+		_handle_weather_toggle_input(key_event)
 		get_viewport().set_input_as_handled()
 		return
 	if key_event.physical_keycode != KEY_E and key_event.keycode != KEY_E:
@@ -3527,6 +3544,106 @@ func _update_fishing_area() -> void:
 		ship.captain_aboard,
 		_player_aboard_ship and not _player_on_target_deck,
 		world_input_available,
+		weather_area.is_fishing_blocked(),
+	)
+
+
+func _update_weather_area() -> void:
+	weather_area.update_state(
+		ship.global_position,
+		_player_aboard_ship and not _player_on_target_deck,
+	)
+	ship.set_weather_turn_multiplier(
+		weather_area.get_turn_multiplier(),
+		weather_area.is_ship_inside_active_storm(),
+	)
+	if weather_area.needs_ship_response_record():
+		weather_area.record_ship_response(
+			ship.get_base_turn_speed(),
+			ship.get_turn_speed(),
+			_get_weather_context(),
+		)
+	if weather_area.needs_turn_input_response_record(
+		ship.get_turn_input_frame_count()
+	):
+		weather_area.record_turn_input_response(
+			ship.get_last_turn_response_evidence()
+		)
+
+
+func _get_weather_context() -> Dictionary:
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	return {
+		"ship_position": ship.global_position,
+		"ship_rotation": ship.rotation,
+		"ship_speed": ship.current_speed,
+		"ship_top_speed": ship.get_top_speed(),
+		"cargo_lots": ship.get_cargo_lots(),
+		"money": money,
+		"hull_current": damage_state["hull_current"],
+		"hull_max": damage_state["hull_max"],
+	}
+
+
+func _is_weather_toggle_available() -> bool:
+	return (
+		_player_aboard_ship
+		and ship.captain_aboard
+		and ship.controls_enabled
+		and not ship.is_docked
+		and not _player_on_target_deck
+		and not _defeat_recovery.is_result_open()
+		and not _defeat_recovery.is_release_guard_pending()
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not _target_inspection_view_open
+		and not ship.navigation_input_blocked
+		and not ship.navigation_release_pending
+	)
+
+
+func _handle_weather_toggle_input(key_event: InputEventKey) -> void:
+	if not key_event.pressed:
+		_weather_toggle_held = false
+		return
+	var weather_context := _get_weather_context()
+	if key_event.echo or _weather_toggle_held:
+		weather_area.record_held_toggle(weather_context)
+		return
+	_weather_toggle_held = true
+	weather_area.try_toggle_weather(
+		_is_weather_toggle_available(),
+		weather_context,
+	)
+	_update_weather_area()
+	_update_fishing_area()
+	_update_weather_view()
+	_update_interaction_prompt()
+
+
+func _update_weather_view() -> void:
+	weather_title.text = weather_area.get_hud_title()
+	weather_status.text = weather_area.get_hud_status()
+	weather_view.visible = (
+		_player_aboard_ship
+		and not _player_on_target_deck
+		and not _defeat_recovery.is_result_open()
+		and not waypoint_display.chart_visible
+		and not _cargo_choice_open
+		and not _storage_view_open
+		and not _construction_view_open
+		and not _trade_view_open
+		and not _journal_view_open
 	)
 
 
@@ -4776,7 +4893,7 @@ func _fish_in_area() -> void:
 	var fish_lot: String = fishing_area.try_catch_fish_lot(cargo_before)
 	if fish_lot.is_empty():
 		_last_cargo_action = "FISHING_ATTEMPT"
-		_last_cargo_result = "NO_CHANGE_INELIGIBLE"
+		_last_cargo_result = fishing_area.get_last_catch_result()
 		_update_interaction_prompt()
 		return
 
@@ -6873,6 +6990,7 @@ func get_playtest_state() -> Dictionary:
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
 	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
 	var fishing_state: Dictionary = fishing_area.get_playtest_state()
+	var weather_state: Dictionary = weather_area.get_playtest_state()
 	var storage_state: Dictionary = cove_storage.get_playtest_state()
 	var construction_state: Dictionary = construction_site.get_playtest_state(
 		cove_storage
@@ -7044,6 +7162,10 @@ func get_playtest_state() -> Dictionary:
 	var crew_view_rect := crew_view.get_global_rect()
 	var food_view_rect := food_view.get_global_rect()
 	var controls_help_rect := controls_help.get_global_rect()
+	var weather_view_text := "%s\n%s" % [
+		weather_title.text,
+		weather_status.text,
+	]
 	var physical_cargo_total: int = int(
 		ship_state["cargo_used_slots"]
 		+ wreck_state["wreck_salvage_lot_count"]
@@ -7320,6 +7442,23 @@ func get_playtest_state() -> Dictionary:
 		"ship_top_speed": ship_state["top_speed"],
 		"ship_base_top_speed": ship_state["base_top_speed"],
 		"ship_turn_speed": ship_state["turn_speed"],
+		"ship_base_turn_speed": ship_state["base_turn_speed"],
+		"ship_weather_turn_multiplier": (
+			ship_state["weather_turn_multiplier"]
+		),
+		"ship_weather_control_effect_active": (
+			ship_state["weather_control_effect_active"]
+		),
+		"ship_weather_control_update_count": (
+			ship_state["weather_control_update_count"]
+		),
+		"ship_last_weather_control_evidence": (
+			ship_state["last_weather_control_evidence"]
+		),
+		"ship_turn_input_frame_count": ship_state["turn_input_frame_count"],
+		"ship_last_turn_response_evidence": (
+			ship_state["last_turn_response_evidence"]
+		),
 		"crew_condition_system_count": crew_state["system_count"],
 		"crew_condition_owner_count": crew_state["owner_count"],
 		"crew_condition_aggregate_value_count": (
@@ -10533,6 +10672,223 @@ func get_playtest_state() -> Dictionary:
 			waypoint_state["chart_visible"]
 			and ship_state["navigation_input_blocked"]
 		),
+		"weather_system_count": weather_state["system_count"],
+		"weather_state_owner_count": weather_state["owner_count"],
+		"weather_state_count": weather_state["weather_state_count"],
+		"weather_states": weather_state["weather_states"],
+		"active_weather_state": weather_state["weather_state"],
+		"clear_weather_active": weather_state["clear_active"],
+		"storm_weather_active": weather_state["storm_active"],
+		"storm_area_count": weather_state["storm_area_count"],
+		"storm_area_id": weather_state["storm_area_id"],
+		"storm_area_position": weather_state["storm_area_position"],
+		"storm_area_radius": weather_state["storm_area_radius"],
+		"storm_outside_test_position": (
+			weather_state["storm_outside_test_position"]
+		),
+		"storm_inside_test_position": (
+			weather_state["storm_inside_test_position"]
+		),
+		"storm_exit_test_position": weather_state["storm_exit_test_position"],
+		"storm_area_visible": weather_state["storm_area_visible"],
+		"storm_area_visual_on_screen": (
+			weather_state["storm_visual_on_screen"]
+		),
+		"storm_area_visual_world_rect": (
+			weather_state["storm_visual_world_rect"]
+		),
+		"storm_area_at_sea": sea_state["bounds"].has_point(
+			weather_state["storm_area_position"]
+		),
+		"storm_area_overlaps_fishing_area": (
+			weather_state["storm_area_position"].distance_to(
+				fishing_state["area_position"]
+			)
+			<= float(weather_state["storm_area_radius"])
+				+ float(fishing_state["fishing_range"])
+		),
+		"storm_fishing_center_affected": (
+			weather_state["storm_area_position"].distance_to(
+				fishing_state["area_position"]
+			)
+			<= float(weather_state["storm_area_radius"])
+		),
+		"storm_exit_position_keeps_fishing_available": (
+			weather_state["storm_exit_test_position"].distance_to(
+				weather_state["storm_area_position"]
+			) > float(weather_state["storm_area_radius"])
+			and weather_state["storm_exit_test_position"].distance_to(
+				fishing_state["area_position"]
+			) <= float(fishing_state["fishing_range"])
+		),
+		"storm_area_seen_from_outside": (
+			weather_state["storm_seen_from_outside"]
+		),
+		"storm_outside_visibility_count": (
+			weather_state["outside_visibility_count"]
+		),
+		"storm_last_outside_visibility_evidence": (
+			weather_state["last_outside_visibility_evidence"]
+		),
+		"ship_distance_to_storm_area": weather_state["ship_distance"],
+		"ship_inside_active_storm": (
+			weather_state["ship_inside_active_storm"]
+		),
+		"storm_entry_count": weather_state["storm_entry_count"],
+		"storm_exit_count": weather_state["storm_exit_count"],
+		"storm_last_entry_evidence": weather_state["last_entry_evidence"],
+		"storm_last_exit_evidence": weather_state["last_exit_evidence"],
+		"weather_normal_turn_multiplier": (
+			weather_state["normal_turn_multiplier"]
+		),
+		"weather_storm_turn_multiplier": (
+			weather_state["storm_turn_multiplier"]
+		),
+		"weather_current_turn_multiplier": (
+			weather_state["current_turn_multiplier"]
+		),
+		"weather_clear_turn_speed_radians": ship_state["base_turn_speed"],
+		"weather_clear_turn_speed_degrees": rad_to_deg(
+			ship_state["base_turn_speed"]
+		),
+		"weather_storm_turn_speed_radians": (
+			float(ship_state["base_turn_speed"])
+			* float(weather_state["storm_turn_multiplier"])
+		),
+		"weather_storm_turn_speed_degrees": rad_to_deg(
+			float(ship_state["base_turn_speed"])
+			* float(weather_state["storm_turn_multiplier"])
+		),
+		"weather_control_modifier_exact": (
+			is_equal_approx(
+				float(weather_state["normal_turn_multiplier"]),
+				1.0,
+			)
+			and is_equal_approx(
+				float(weather_state["storm_turn_multiplier"]),
+				0.5,
+			)
+			and is_equal_approx(
+				float(ship_state["turn_speed"]),
+				float(ship_state["base_turn_speed"])
+					* float(weather_state["current_turn_multiplier"]),
+			)
+		),
+		"weather_changes_turn_rate_only": (
+			ship_state["weather_control_changes_turn_rate_only"]
+		),
+		"weather_ship_top_speed_unchanged": (
+			is_equal_approx(
+				float(ship_state["top_speed"]),
+				float(crew_state["effective_sailing_top_speed"]),
+			)
+		),
+		"weather_toggle_key": weather_state["toggle_key"],
+		"weather_toggle_available": _is_weather_toggle_available(),
+		"weather_toggle_held": _weather_toggle_held,
+		"weather_toggle_attempt_count": (
+			weather_state["toggle_attempt_count"]
+		),
+		"weather_toggle_success_count": (
+			weather_state["toggle_success_count"]
+		),
+		"weather_toggle_denied_count": (
+			weather_state["toggle_denied_count"]
+		),
+		"weather_held_input_count": weather_state["held_input_count"],
+		"weather_fresh_press_required": weather_state["fresh_press_required"],
+		"weather_last_toggle_evidence": weather_state["last_toggle_evidence"],
+		"weather_last_held_input_evidence": (
+			weather_state["last_held_toggle_evidence"]
+		),
+		"weather_clear_response_evidence": (
+			weather_state["clear_response_evidence"]
+		),
+		"weather_storm_outside_response_evidence": (
+			weather_state["storm_outside_response_evidence"]
+		),
+		"weather_storm_response_evidence": (
+			weather_state["storm_response_evidence"]
+		),
+		"weather_recovery_response_evidence": (
+			weather_state["recovery_response_evidence"]
+		),
+		"weather_clear_turn_input_evidence": (
+			weather_state["clear_turn_input_evidence"]
+		),
+		"weather_storm_turn_input_evidence": (
+			weather_state["storm_turn_input_evidence"]
+		),
+		"weather_recovery_turn_input_evidence": (
+			weather_state["recovery_turn_input_evidence"]
+		),
+		"weather_view_visible": weather_view.visible,
+		"weather_view_title": weather_title.text,
+		"weather_view_status": weather_status.text,
+		"weather_view_text": weather_view_text,
+		"weather_view_matches_state": (
+			weather_view_text.contains(
+				"WEATHER · %s" % weather_state["weather_state"]
+			)
+			and weather_view_text.contains("TURN RATE")
+		),
+		"weather_fishing_blocked": weather_state["fishing_blocked"],
+		"weather_uses_existing_ship_motion_owner": (
+			weather_state["ship_motion_owner_count"] == 1
+		),
+		"weather_uses_existing_ship_damage_owner": (
+			weather_state["uses_existing_ship_damage_owner"]
+		),
+		"weather_uses_existing_fishing_owner": (
+			weather_state["fishing_owner_count"] == 1
+		),
+		"weather_random_hull_damage_enabled": (
+			weather_state["storm_random_hull_damage_enabled"]
+		),
+		"weather_season_system_count": weather_state["season_system_count"],
+		"weather_detailed_forecast_system_count": (
+			weather_state["detailed_forecast_system_count"]
+		),
+		"weather_wind_simulation_enabled": (
+			weather_state["wind_simulation_enabled"]
+		),
+		"weather_random_cargo_loss_enabled": (
+			weather_state["random_cargo_loss_enabled"]
+		),
+		"weather_strange_or_cursed_storm_enabled": (
+			weather_state["strange_or_cursed_storm_enabled"]
+		),
+		"weather_day_night_system_count": (
+			weather_state["day_night_system_count"]
+		),
+		"weather_ruin_system_count": weather_state["ruin_system_count"],
+		"weather_tool_gate_system_count": (
+			weather_state["tool_gate_system_count"]
+		),
+		"weather_story_clue_system_count": (
+			weather_state["story_clue_system_count"]
+		),
+		"weather_monster_hunting_system_count": (
+			weather_state["monster_hunting_system_count"]
+		),
+		"weather_excluded_features": {
+			"seasons": weather_state["season_system_count"],
+			"detailed_forecast": (
+				weather_state["detailed_forecast_system_count"]
+			),
+			"wind_simulation": weather_state["wind_simulation_enabled"],
+			"random_cargo_loss": (
+				weather_state["random_cargo_loss_enabled"]
+			),
+			"strange_or_cursed_storms": (
+				weather_state["strange_or_cursed_storm_enabled"]
+			),
+			"day_and_night": weather_state["day_night_system_count"],
+			"ruin_exploration": weather_state["ruin_system_count"],
+			"tool_gates": weather_state["tool_gate_system_count"],
+			"story_clues": weather_state["story_clue_system_count"],
+			"monster_hunting": weather_state["monster_hunting_system_count"],
+		},
 		"fishing_system_count": fishing_state["system_count"],
 		"fishing_state_owner_count": fishing_state["owner_count"],
 		"fishing_area_count": fishing_state["area_count"],
@@ -10565,6 +10921,7 @@ func get_playtest_state() -> Dictionary:
 				interaction_prompt.text == "[E] CATCH ONE FISH LOT"
 				or interaction_prompt.text == "STOP SHIP TO FISH"
 				or interaction_prompt.text == "CAPTAIN MUST BE ABOARD TO FISH"
+				or interaction_prompt.text == "STORM · FISHING BLOCKED"
 			)
 		),
 		"fishing_prompt_text": (
@@ -10574,6 +10931,7 @@ func get_playtest_state() -> Dictionary:
 				interaction_prompt.text == "[E] CATCH ONE FISH LOT"
 				or interaction_prompt.text == "STOP SHIP TO FISH"
 				or interaction_prompt.text == "CAPTAIN MUST BE ABOARD TO FISH"
+				or interaction_prompt.text == "STORM · FISHING BLOCKED"
 			)
 			else ""
 		),
@@ -10599,6 +10957,44 @@ func get_playtest_state() -> Dictionary:
 		"fishing_last_choice_evidence": fishing_state["last_choice_evidence"],
 		"fishing_last_held_input_evidence": (
 			fishing_state["last_held_input_evidence"]
+		),
+		"fishing_storm_blocked_attempt_count": (
+			fishing_state["storm_blocked_attempt_count"]
+		),
+		"fishing_last_storm_blocked_evidence": (
+			fishing_state["last_storm_blocked_evidence"]
+		),
+		"fishing_weather_recovery_catch_count": (
+			fishing_state["weather_recovery_catch_count"]
+		),
+		"fishing_weather_recovery_pending": (
+			fishing_state["weather_recovery_pending"]
+		),
+		"fishing_last_weather_recovery_evidence": (
+			fishing_state["last_weather_recovery_evidence"]
+		),
+		"weather_fishing_effect_kind": fishing_state["weather_effect_kind"],
+		"weather_fishing_block_has_no_state_change": (
+			fishing_state["last_storm_blocked_evidence"].is_empty()
+			or (
+				bool(fishing_state["last_storm_blocked_evidence"].get(
+					"cargo_unchanged",
+					false,
+				))
+				and bool(fishing_state["last_storm_blocked_evidence"].get(
+					"fish_count_unchanged",
+					false,
+				))
+				and bool(fishing_state["last_storm_blocked_evidence"].get(
+					"no_fish_generated",
+					false,
+				))
+			)
+		),
+		"weather_fishing_accounting_holds": (
+			fishing_state["catch_accounting_holds"]
+			and accounted_cargo_total == expected_cargo_total
+			and money == expected_money
 		),
 		"fishing_fresh_press_required": fishing_state["fresh_press_required"],
 		"fishing_one_lot_per_fresh_press": (

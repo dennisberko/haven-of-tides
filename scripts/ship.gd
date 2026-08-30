@@ -95,6 +95,12 @@ var cargo_lots: Array[String] = [
 	"COVE MEDICINE LOT",
 	FOOD_LOT_NAME,
 ]
+var _weather_turn_multiplier := 1.0
+var _weather_control_effect_active := false
+var _weather_control_update_count := 0
+var _last_weather_control_evidence: Dictionary = {}
+var _turn_input_frame_count := 0
+var _last_turn_response_evidence: Dictionary = {}
 
 var _sea_bounds := Rect2()
 var _island_center := Vector2.ZERO
@@ -249,6 +255,48 @@ func get_top_speed() -> float:
 
 func get_base_top_speed() -> float:
 	return TOP_SPEED
+
+
+func get_turn_speed() -> float:
+	return TURN_SPEED * _weather_turn_multiplier
+
+
+func get_base_turn_speed() -> float:
+	return TURN_SPEED
+
+
+func set_weather_turn_multiplier(multiplier: float, effect_active: bool) -> void:
+	var multiplier_before := _weather_turn_multiplier
+	var effect_active_before := _weather_control_effect_active
+	var normalized_multiplier := clampf(multiplier, 0.25, 1.0)
+	if not effect_active:
+		normalized_multiplier = 1.0
+	_weather_turn_multiplier = normalized_multiplier
+	_weather_control_effect_active = effect_active
+	if (
+		not is_equal_approx(multiplier_before, _weather_turn_multiplier)
+		or effect_active_before != _weather_control_effect_active
+	):
+		_weather_control_update_count += 1
+		_last_weather_control_evidence = {
+			"effect_active_before": effect_active_before,
+			"effect_active_after": _weather_control_effect_active,
+			"turn_multiplier_before": multiplier_before,
+			"turn_multiplier_after": _weather_turn_multiplier,
+			"turn_speed_before": TURN_SPEED * multiplier_before,
+			"turn_speed_after": get_turn_speed(),
+			"base_turn_speed": TURN_SPEED,
+			"top_speed_after": get_top_speed(),
+			"only_turn_rate_changed": true,
+		}
+
+
+func get_turn_input_frame_count() -> int:
+	return _turn_input_frame_count
+
+
+func get_last_turn_response_evidence() -> Dictionary:
+	return _last_turn_response_evidence.duplicate(true)
 
 
 func are_broadside_firing_areas_active() -> bool:
@@ -1357,7 +1405,40 @@ func _physics_process(delta: float) -> void:
 	)
 
 	if _dock_exit_cleared:
-		rotation = wrapf(rotation + turn_input * TURN_SPEED * delta, -PI, PI)
+		var rotation_before := rotation
+		var applied_turn_speed := get_turn_speed()
+		var expected_rotation_delta := turn_input * applied_turn_speed * delta
+		rotation = wrapf(
+			rotation + expected_rotation_delta,
+			-PI,
+			PI,
+		)
+		if not is_zero_approx(turn_input):
+			_turn_input_frame_count += 1
+			var actual_rotation_delta := wrapf(
+				rotation - rotation_before,
+				-PI,
+				PI,
+			)
+			_last_turn_response_evidence = {
+				"frame_number": _turn_input_frame_count,
+				"turn_input": turn_input,
+				"delta_seconds": delta,
+				"rotation_before": rotation_before,
+				"rotation_after": rotation,
+				"expected_rotation_delta": expected_rotation_delta,
+				"actual_rotation_delta": actual_rotation_delta,
+				"applied_turn_speed_radians": applied_turn_speed,
+				"applied_turn_speed_degrees": rad_to_deg(applied_turn_speed),
+				"weather_turn_multiplier": _weather_turn_multiplier,
+				"weather_control_effect_active": (
+					_weather_control_effect_active
+				),
+				"response_matches_configured_turn_rate": is_equal_approx(
+					actual_rotation_delta,
+					expected_rotation_delta,
+				),
+			}
 	else:
 		# The ship must first move straight out of the damaged dock corridor.
 		rotation = DOCK_ROTATION
@@ -1654,7 +1735,19 @@ func get_playtest_state() -> Dictionary:
 		"top_speed": get_top_speed(),
 		"base_top_speed": TOP_SPEED,
 		"crew_condition": get_crew_condition_playtest_state(),
-		"turn_speed": TURN_SPEED,
+		"turn_speed": get_turn_speed(),
+		"base_turn_speed": TURN_SPEED,
+		"weather_turn_multiplier": _weather_turn_multiplier,
+		"weather_control_effect_active": _weather_control_effect_active,
+		"weather_control_update_count": _weather_control_update_count,
+		"last_weather_control_evidence": (
+			_last_weather_control_evidence.duplicate(true)
+		),
+		"weather_control_changes_turn_rate_only": true,
+		"turn_input_frame_count": _turn_input_frame_count,
+		"last_turn_response_evidence": (
+			_last_turn_response_evidence.duplicate(true)
+		),
 		"controls_enabled": controls_enabled,
 		"captain_aboard": captain_aboard,
 		"has_departed_dock": has_departed_dock,
