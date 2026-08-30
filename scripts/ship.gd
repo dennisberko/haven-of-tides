@@ -234,6 +234,10 @@ func get_forward_direction() -> Vector2:
 	return Vector2.UP.rotated(rotation)
 
 
+func get_top_speed() -> float:
+	return TOP_SPEED
+
+
 func are_broadside_firing_areas_active() -> bool:
 	return (
 		controls_enabled
@@ -326,6 +330,8 @@ func get_broadside_playtest_state() -> Dictionary:
 	)
 	state["left_control"] = "Q"
 	state["right_control"] = "F"
+	state["hull_target_control"] = "H"
+	state["sails_target_control"] = "K"
 	state["firing_areas_visible_before_shot"] = (
 		are_broadside_firing_areas_active()
 	)
@@ -1361,6 +1367,8 @@ func get_playtest_state() -> Dictionary:
 			"repair": "R",
 			"left_broadside": "Q",
 			"right_broadside": "F",
+			"target_hull": "H",
+			"target_sails": "K",
 		},
 	}
 

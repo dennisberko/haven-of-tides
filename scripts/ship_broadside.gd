@@ -3,7 +3,11 @@ extends RefCounted
 const SIDE_LEFT := "LEFT"
 const SIDE_RIGHT := "RIGHT"
 const VALID_SIDES := [SIDE_LEFT, SIDE_RIGHT]
+const ATTACK_HULL := "HULL"
+const ATTACK_SAILS := "SAILS"
+const ATTACK_CHOICES := [ATTACK_HULL, ATTACK_SAILS]
 const HULL_DAMAGE := 25
+const SAIL_DAMAGE := 25
 const RELOAD_DURATION := 0.9
 const SHOT_FLASH_DURATION := 0.28
 const AREA_NEAR_X := 62.0
@@ -59,11 +63,15 @@ func attempt_fire(
 		"reload_duration": RELOAD_DURATION,
 		"shot_count_before": shot_count_before,
 		"hull_damage": HULL_DAMAGE,
+		"sail_damage": SAIL_DAMAGE,
+		"attack_choices": ATTACK_CHOICES.duplicate(),
 		"ammunition_before": ammunition_units,
 		"ammunition_after": ammunition_units,
 		"ammunition_delta": 0,
 		"ammunition_consumed": false,
 		"uses_ammunition": true,
+		"normal_ammunition_cost": 1,
+		"same_cost_for_all_attack_choices": true,
 	}
 	if not VALID_SIDES.has(normalized_side):
 		unavailable_rejected_count += 1
@@ -122,11 +130,23 @@ func record_shot_result(result_evidence: Dictionary) -> Dictionary:
 		return last_attempt_evidence.duplicate(true)
 	if bool(result_evidence.get("target_hit", false)):
 		hit_count += 1
+		var attack_choice := String(
+			result_evidence.get("attack_choice", ATTACK_HULL)
+		)
 		if bool(result_evidence.get("target_disabled", false)):
 			last_result = "%s DISABLED %s · HULL 0/%d" % [
 				result_evidence.get("side", "UNKNOWN"),
 				result_evidence.get("target_name", "TARGET"),
 				result_evidence.get("target_hull_max", 0),
+			]
+		elif attack_choice == ATTACK_SAILS:
+			last_result = "%s HIT %s · -%d SAILS · SAILS %d/%d · SPEED %.0f" % [
+				result_evidence.get("side", "UNKNOWN"),
+				result_evidence.get("target_name", "TARGET"),
+				SAIL_DAMAGE,
+				result_evidence.get("target_sail_after", 0),
+				result_evidence.get("target_sail_max", 0),
+				result_evidence.get("target_speed_after", 0.0),
 			]
 		else:
 			last_result = "%s HIT %s · -%d · HULL %d/%d" % [
@@ -181,7 +201,10 @@ func get_playtest_state() -> Dictionary:
 		"left_side": SIDE_LEFT,
 		"right_side": SIDE_RIGHT,
 		"valid_sides": VALID_SIDES.duplicate(),
+		"attack_choices": ATTACK_CHOICES.duplicate(),
+		"attack_choice_count": ATTACK_CHOICES.size(),
 		"hull_damage": HULL_DAMAGE,
+		"sail_damage": SAIL_DAMAGE,
 		"reload_duration": RELOAD_DURATION,
 		"reload_remaining": reload_remaining,
 		"ready": is_zero_approx(reload_remaining),
@@ -211,7 +234,9 @@ func get_playtest_state() -> Dictionary:
 			last_reload_rejected_evidence.duplicate(true)
 		),
 		"uses_ammunition": true,
-		"sail_damage_system_count": 0,
+		"normal_ammunition_cost": 1,
+		"same_cost_for_all_attack_choices": true,
+		"sail_damage_system_count": 1,
 		"boarding_system_count": 0,
 		"prize_action_system_count": 0,
 		"heat_change_system_count": 0,
@@ -233,6 +258,8 @@ func _record_rejected(
 		"reload_started": false,
 		"target_hit": false,
 		"target_hull_delta": 0,
+		"target_sail_delta": 0,
+		"target_speed_delta": 0.0,
 		"result": last_result,
 	})
 	last_attempt_evidence = evidence.duplicate(true)

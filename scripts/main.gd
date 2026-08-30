@@ -89,6 +89,26 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var ammunition_title: Label = $Interface/AmmunitionView/AmmunitionTitle
 @onready var ammunition_status: Label = $Interface/AmmunitionView/AmmunitionStatus
 @onready var ammunition_cargo: Label = $Interface/AmmunitionView/AmmunitionCargo
+@onready var target_combat_view: ColorRect = $Interface/TargetCombatView
+@onready var target_combat_title: Label = (
+	$Interface/TargetCombatView/CombatTitle
+)
+@onready var attack_choices: Label = $Interface/TargetCombatView/AttackChoices
+@onready var target_hull_value: Label = (
+	$Interface/TargetCombatView/TargetHullValue
+)
+@onready var target_hull_meter: ProgressBar = (
+	$Interface/TargetCombatView/TargetHullMeter
+)
+@onready var target_sail_value: Label = (
+	$Interface/TargetCombatView/TargetSailValue
+)
+@onready var target_sail_meter: ProgressBar = (
+	$Interface/TargetCombatView/TargetSailMeter
+)
+@onready var target_speed: Label = $Interface/TargetCombatView/TargetSpeed
+@onready var target_route: Label = $Interface/TargetCombatView/TargetRoute
+@onready var catch_status: Label = $Interface/TargetCombatView/CatchStatus
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -123,7 +143,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · Q LEFT BROADSIDE · F RIGHT BROADSIDE · E ACTION · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · E ACTION · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
@@ -349,6 +369,13 @@ var _reload_rejected_broadside_evidence: Dictionary = {}
 var _inactive_rejected_broadside_evidence: Dictionary = {}
 var _zero_ammunition_rejected_broadside_evidence: Dictionary = {}
 var _held_rejected_broadside_evidence: Dictionary = {}
+var _selected_attack_choice := InspectableTargetShipState.ATTACK_HULL
+var _attack_choice_pressed_keys: Dictionary = {}
+var _attack_choice_selection_count := 0
+var _attack_choice_held_input_count := 0
+var _attack_choice_blocked_input_count := 0
+var _last_attack_choice_evidence: Dictionary = {}
+var _last_attacked_target_id := ""
 
 
 func _ready() -> void:
@@ -381,6 +408,7 @@ func _ready() -> void:
 	_update_target_inspection()
 	_update_broadside_view()
 	_update_ammunition_view()
+	_update_target_combat_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -399,6 +427,7 @@ func _ready() -> void:
 	target_inspection_view.hide()
 	broadside_view.hide()
 	ammunition_view.hide()
+	target_combat_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -439,6 +468,7 @@ func _physics_process(_delta: float) -> void:
 	_update_repair_view()
 	_update_broadside_view()
 	_update_ammunition_view()
+	_update_target_combat_view()
 	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
@@ -531,6 +561,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var released_broadside_side: String = _get_broadside_side(key_event)
 	if not key_event.pressed and not released_broadside_side.is_empty():
 		_broadside_pressed_keys.erase(released_broadside_side)
+	var requested_attack_choice: String = _get_attack_choice(key_event)
+	if not key_event.pressed and not requested_attack_choice.is_empty():
+		_attack_choice_pressed_keys.erase(requested_attack_choice)
+	if (
+		not requested_attack_choice.is_empty()
+		and _is_attack_choice_input_blocked()
+	):
+		_handle_blocked_attack_choice_input(key_event, requested_attack_choice)
+		get_viewport().set_input_as_handled()
+		return
 	if _journal_view_open:
 		_handle_trade_journal_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -616,6 +656,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if not _get_broadside_side(key_event).is_empty():
 		_handle_broadside_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if not requested_attack_choice.is_empty():
+		_handle_attack_choice_input(key_event, requested_attack_choice)
 		get_viewport().set_input_as_handled()
 		return
 	if _key_matches(key_event, KEY_R):
@@ -706,6 +750,9 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 			ship.get_broadside_playtest_state()
 		)
 		var held_target_hulls: Dictionary = _get_target_hull_snapshots()
+		var held_target_conditions: Dictionary = (
+			_get_target_condition_snapshots()
+		)
 		_last_broadside_result = (
 			"NO SHOT · RELEASE %s BROADSIDE KEY" % (
 				"Q" if side == "LEFT" else "F"
@@ -724,8 +771,14 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 			"shot_count_after": held_broadside_state["shot_count"],
 			"target_hulls_before": held_target_hulls,
 			"target_hulls_after": held_target_hulls.duplicate(true),
+			"target_conditions_before": held_target_conditions,
+			"target_conditions_after": (
+				held_target_conditions.duplicate(true)
+			),
+			"attack_choice": _selected_attack_choice,
 			"no_shot_no_ammunition_use": true,
 			"no_shot_no_target_damage": true,
+			"no_shot_no_condition_change": true,
 			"fresh_press_required": true,
 		}
 		_update_broadside_view()
@@ -733,6 +786,96 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 		return
 	_broadside_pressed_keys[side] = true
 	_attempt_broadside_attack(side)
+
+
+func _get_attack_choice(key_event: InputEventKey) -> String:
+	if _key_matches(key_event, KEY_H):
+		return InspectableTargetShipState.ATTACK_HULL
+	if _key_matches(key_event, KEY_K):
+		return InspectableTargetShipState.ATTACK_SAILS
+	return ""
+
+
+func _is_attack_choice_input_blocked() -> bool:
+	return (
+		not _player_aboard_ship
+		or ship.is_docked
+		or ship.navigation_input_blocked
+		or ship.navigation_release_pending
+		or waypoint_display.chart_visible
+		or _chart_release_pending
+		or _cargo_choice_open
+		or _cargo_choice_release_pending
+		or _storage_view_open
+		or _storage_release_pending
+		or _construction_view_open
+		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
+		or _dialogue_open
+	)
+
+
+func _handle_attack_choice_input(
+	key_event: InputEventKey,
+	attack_choice: String,
+) -> void:
+	if not key_event.pressed:
+		_attack_choice_pressed_keys.erase(attack_choice)
+		return
+	if (
+		key_event.echo
+		or bool(_attack_choice_pressed_keys.get(attack_choice, false))
+	):
+		_attack_choice_held_input_count += 1
+		_last_attack_choice_evidence = {
+			"success": false,
+			"result": "NO CHANGE · RELEASE ATTACK CHOICE KEY",
+			"rejection_reason": "HELD_KEY",
+			"requested_choice": attack_choice,
+			"selected_before": _selected_attack_choice,
+			"selected_after": _selected_attack_choice,
+			"fresh_press_required": true,
+		}
+		return
+	_attack_choice_pressed_keys[attack_choice] = true
+	var selected_before: String = _selected_attack_choice
+	_selected_attack_choice = attack_choice
+	_attack_choice_selection_count += 1
+	_last_attack_choice_evidence = {
+		"success": true,
+		"result": "SELECTED %s" % attack_choice,
+		"requested_choice": attack_choice,
+		"selected_before": selected_before,
+		"selected_after": _selected_attack_choice,
+		"fresh_press_required": true,
+		"modal_guard_passed": true,
+	}
+	_update_target_combat_view()
+
+
+func _handle_blocked_attack_choice_input(
+	key_event: InputEventKey,
+	attack_choice: String,
+) -> void:
+	if not key_event.pressed:
+		_attack_choice_pressed_keys.erase(attack_choice)
+		return
+	if key_event.echo:
+		return
+	_attack_choice_blocked_input_count += 1
+	_last_attack_choice_evidence = {
+		"success": false,
+		"result": "NO CHANGE · ATTACK CHOICE UNAVAILABLE",
+		"rejection_reason": "INACTIVE_OR_MODAL",
+		"requested_choice": attack_choice,
+		"selected_before": _selected_attack_choice,
+		"selected_after": _selected_attack_choice,
+		"fresh_press_required": true,
+		"modal_guard_passed": false,
+	}
 
 
 func _handle_trade_journal_input(key_event: InputEventKey) -> void:
@@ -2691,7 +2834,7 @@ func _update_target_inspection_view() -> void:
 		+ "ATTACK CHOICE ESTIMATE · %s" % choice_text
 	)
 	inspection_controls.text = (
-		"SAIL OUT OF RANGE TO CLOSE · [Q] LEFT · [F] RIGHT"
+		"[H] HULL · [K] SAILS · [Q] LEFT · [F] RIGHT · SAIL OUT TO CLOSE"
 	)
 	_last_inspection_view_text = "%s\n%s\n%s\n%s" % [
 		inspection_title.text,
@@ -2704,8 +2847,17 @@ func _update_target_inspection_view() -> void:
 
 func _attempt_broadside_attack(side: String) -> void:
 	var target_hulls_before: Dictionary = _get_target_hull_snapshots()
+	var target_conditions_before: Dictionary = _get_target_condition_snapshots()
+	var target_values_before: Dictionary = _get_target_condition_values()
 	var evidence: Dictionary = ship.attempt_broadside(side)
+	evidence["attack_choice"] = _selected_attack_choice
 	evidence["target_hulls_before"] = target_hulls_before.duplicate(true)
+	evidence["target_conditions_before"] = (
+		target_conditions_before.duplicate(true)
+	)
+	evidence["target_condition_values_before"] = (
+		target_values_before.duplicate(true)
+	)
 	evidence["selected_side_world_corners"] = (
 		ship.get_broadside_area_world_corners(side)
 	)
@@ -2717,14 +2869,29 @@ func _attempt_broadside_attack(side: String) -> void:
 	)
 	if not bool(evidence["shot_fired"]):
 		var rejected_hulls_after: Dictionary = _get_target_hull_snapshots()
+		var rejected_conditions_after: Dictionary = (
+			_get_target_condition_snapshots()
+		)
+		var rejected_values_after: Dictionary = _get_target_condition_values()
 		evidence["target_hulls_after"] = rejected_hulls_after.duplicate(true)
+		evidence["target_conditions_after"] = (
+			rejected_conditions_after.duplicate(true)
+		)
+		evidence["target_condition_values_after"] = (
+			rejected_values_after.duplicate(true)
+		)
 		evidence["target_hulls_unchanged"] = (
 			target_hulls_before == rejected_hulls_after
 		)
 		evidence["target_hit"] = false
 		evidence["target_hull_delta"] = 0
+		evidence["target_sail_delta"] = 0
+		evidence["target_speed_delta"] = 0.0
 		evidence["no_shot_no_target_damage"] = (
 			target_hulls_before == rejected_hulls_after
+		)
+		evidence["no_shot_no_condition_change"] = (
+			target_values_before == rejected_values_after
 		)
 		_last_broadside_attempt_evidence = ship.record_broadside_result(
 			evidence
@@ -2747,9 +2914,13 @@ func _attempt_broadside_attack(side: String) -> void:
 		_update_cargo_view()
 		_update_broadside_view()
 		_update_ammunition_view()
+		_update_target_combat_view()
 		return
 
-	var target: InspectableTargetShipState = _get_broadside_target(side)
+	var target: InspectableTargetShipState = _get_broadside_target(
+		side,
+		_selected_attack_choice,
+	)
 	if target == null:
 		evidence.merge({
 			"target_hit": false,
@@ -2760,18 +2931,34 @@ func _attempt_broadside_attack(side: String) -> void:
 			"target_hull_after": -1,
 			"target_hull_max": InspectableTargetShipState.HULL_MAX,
 			"target_hull_delta": 0,
+			"target_sail_before": -1,
+			"target_sail_after": -1,
+			"target_sail_max": InspectableTargetShipState.SAIL_MAX,
+			"target_sail_delta": 0,
+			"target_speed_before": -1.0,
+			"target_speed_after": -1.0,
+			"target_speed_delta": 0.0,
 			"target_disabled": false,
 			"hit_feedback_started": false,
 		})
 	else:
 		var target_hull_before: Dictionary = target.get_hull_state()
+		var target_sail_before: Dictionary = target.get_sail_state()
 		var target_local_position: Vector2 = ship.to_local(
 			target.global_position
 		)
-		var hit_evidence: Dictionary = target.apply_broadside_hull_damage(
-			int(evidence["hull_damage"]),
+		var selected_damage: int = (
+			int(evidence["sail_damage"])
+			if _selected_attack_choice
+				== InspectableTargetShipState.ATTACK_SAILS
+			else int(evidence["hull_damage"])
+		)
+		var hit_evidence: Dictionary = target.apply_broadside_damage(
+			_selected_attack_choice,
+			selected_damage,
 			side,
 		)
+		_last_attacked_target_id = target.target_id
 		evidence.merge({
 			"target_hit": bool(hit_evidence["success"]),
 			"target_id": target.target_id,
@@ -2786,6 +2973,15 @@ func _attempt_broadside_attack(side: String) -> void:
 			"target_hull_after": hit_evidence["hull_after"],
 			"target_hull_max": hit_evidence["hull_max"],
 			"target_hull_delta": hit_evidence["hull_delta"],
+			"target_sail_before": target_sail_before["sail_current"],
+			"target_sail_after": hit_evidence["sail_after"],
+			"target_sail_max": hit_evidence["sail_max"],
+			"target_sail_delta": hit_evidence["sail_delta"],
+			"target_speed_before": hit_evidence["speed_before"],
+			"target_speed_after": hit_evidence["speed_after"],
+			"target_speed_delta": hit_evidence["speed_delta"],
+			"target_speed_step_before": hit_evidence["speed_step_before"],
+			"target_speed_step_after": hit_evidence["speed_step_after"],
 			"target_disabled": hit_evidence["disabled"],
 			"hit_feedback_started": hit_evidence.get(
 				"hit_feedback_started",
@@ -2795,11 +2991,15 @@ func _attempt_broadside_attack(side: String) -> void:
 		})
 
 	var target_hulls_after: Dictionary = _get_target_hull_snapshots()
+	var target_conditions_after: Dictionary = _get_target_condition_snapshots()
+	var target_values_after: Dictionary = _get_target_condition_values()
 	var changed_target_ids: Array[String] = []
 	for target_id in target_hulls_before:
 		if target_hulls_before[target_id] != target_hulls_after[target_id]:
 			changed_target_ids.append(String(target_id))
 	evidence["target_hulls_after"] = target_hulls_after.duplicate(true)
+	evidence["target_conditions_after"] = target_conditions_after.duplicate(true)
+	evidence["target_condition_values_after"] = target_values_after.duplicate(true)
 	evidence["changed_target_ids"] = changed_target_ids.duplicate()
 	evidence["only_selected_target_hull_changed"] = (
 		(changed_target_ids.is_empty() and not bool(evidence["target_hit"]))
@@ -2815,8 +3015,28 @@ func _attempt_broadside_attack(side: String) -> void:
 	)
 	evidence["target_hull_damage_matches_fixed_amount"] = (
 		not bool(evidence["target_hit"])
-		or int(evidence["target_hull_delta"])
-			== -int(evidence["hull_damage"])
+		or _selected_attack_choice
+			!= InspectableTargetShipState.ATTACK_HULL
+		or int(evidence["target_hull_delta"]) == -int(evidence["hull_damage"])
+	)
+	evidence["target_sail_damage_matches_fixed_amount"] = (
+		not bool(evidence["target_hit"])
+		or _selected_attack_choice
+			!= InspectableTargetShipState.ATTACK_SAILS
+		or int(evidence["target_sail_delta"]) == -int(evidence["sail_damage"])
+	)
+	evidence["selected_condition_only_changed"] = (
+		not bool(evidence["target_hit"])
+		or (
+			_selected_attack_choice == InspectableTargetShipState.ATTACK_HULL
+			and int(evidence["target_hull_delta"]) < 0
+			and int(evidence["target_sail_delta"]) == 0
+		)
+		or (
+			_selected_attack_choice == InspectableTargetShipState.ATTACK_SAILS
+			and int(evidence["target_sail_delta"]) < 0
+			and int(evidence["target_hull_delta"]) == 0
+		)
 	)
 	_last_broadside_attempt_evidence = ship.record_broadside_result(evidence)
 	_successful_broadside_evidence = (
@@ -2828,13 +3048,17 @@ func _attempt_broadside_attack(side: String) -> void:
 	_update_cargo_view()
 	_update_broadside_view()
 	_update_ammunition_view()
+	_update_target_combat_view()
 
 
-func _get_broadside_target(side: String) -> InspectableTargetShipState:
+func _get_broadside_target(
+	side: String,
+	attack_choice: String,
+) -> InspectableTargetShipState:
 	var nearest_target: InspectableTargetShipState = null
 	var nearest_distance: float = INF
 	for target in inspection_targets:
-		if not target.can_receive_hull_damage():
+		if not target.can_receive_broadside_damage(attack_choice):
 			continue
 		if not ship.is_world_point_in_broadside(side, target.global_position):
 			continue
@@ -2854,6 +3078,26 @@ func _get_target_hull_snapshots() -> Dictionary:
 	return snapshots
 
 
+func _get_target_condition_snapshots() -> Dictionary:
+	var snapshots: Dictionary = {}
+	for target in inspection_targets:
+		snapshots[target.target_id] = target.get_condition_state().duplicate(true)
+	return snapshots
+
+
+func _get_target_condition_values() -> Dictionary:
+	var snapshots: Dictionary = {}
+	for target in inspection_targets:
+		var condition: Dictionary = target.get_condition_state()
+		snapshots[target.target_id] = {
+			"hull_current": condition["hull"]["hull_current"],
+			"sail_current": condition["sails"]["sail_current"],
+			"current_speed": condition["sails"]["current_speed"],
+			"disabled": condition["hull"]["disabled"],
+		}
+	return snapshots
+
+
 func _update_broadside_view() -> void:
 	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
 	if not bool(broadside_state["reload_ready"]):
@@ -2866,7 +3110,7 @@ func _update_broadside_view() -> void:
 		broadside_title.text = "BROADSIDE · READY"
 	if bool(broadside_state["firing_areas_active"]):
 		broadside_areas.text = (
-			"FIRING AREAS VISIBLE · [Q] LEFT · [F] RIGHT"
+			"TARGET %s · [Q] LEFT · [F] RIGHT" % _selected_attack_choice
 		)
 	else:
 		broadside_areas.text = "FIRING AREAS INACTIVE WHILE DOCKED OR ASHORE"
@@ -2888,6 +3132,88 @@ func _update_ammunition_view() -> void:
 		ammunition_state["loaded_lot_count"]
 	)
 	ammunition_view.visible = _player_aboard_ship and not ship.is_docked
+
+
+func _update_target_combat_view() -> void:
+	var target: InspectableTargetShipState = _get_target_combat_display_target()
+	if target == null:
+		target_combat_title.text = "TARGET · NO VISIBLE SHIP"
+		attack_choices.text = _get_attack_choices_text()
+		target_hull_value.text = "HULL · -- / --"
+		target_hull_meter.value = 0.0
+		target_sail_value.text = "SAILS · -- / --"
+		target_sail_meter.value = 0.0
+		target_speed.text = "SPEED · -- · STEP -- · PLAYER TOP %.0f" % (
+			ship.get_top_speed()
+		)
+		target_route.text = "AUTHORED ROUTE · NO VISIBLE TARGET"
+		catch_status.text = "CHASE · FIND A TARGET"
+		target_combat_view.visible = _player_aboard_ship and not ship.is_docked
+		return
+
+	var hull_state: Dictionary = target.get_hull_state()
+	var sail_state: Dictionary = target.get_sail_state()
+	target_combat_title.text = "TARGET · %s" % target.display_name
+	attack_choices.text = _get_attack_choices_text()
+	target_hull_value.text = "HULL · %d / %d" % [
+		hull_state["hull_current"],
+		hull_state["hull_max"],
+	]
+	target_hull_meter.max_value = float(hull_state["hull_max"])
+	target_hull_meter.value = float(hull_state["hull_current"])
+	target_sail_value.text = "SAILS · %d / %d" % [
+		sail_state["sail_current"],
+		sail_state["sail_max"],
+	]
+	target_sail_meter.max_value = float(sail_state["sail_max"])
+	target_sail_meter.value = float(sail_state["sail_current"])
+	target_speed.text = "SPEED · %.0f · STEP %d/4 · PLAYER TOP %.0f" % [
+		sail_state["current_speed"],
+		sail_state["speed_step"],
+		ship.get_top_speed(),
+	]
+	target_route.text = "AUTHORED ROUTE · %s · DISTANCE %.0f" % [
+		"MOVING" if bool(sail_state["moving"]) else "TURNING",
+		target.get_distance_to_player_ship(),
+	]
+	var catch_evidence: Dictionary = sail_state["catch_evidence"]
+	if bool(sail_state["caught_after_sail_damage"]):
+		catch_status.text = "CAUGHT · DISTANCE %.0f · HULL %d > 0" % [
+			catch_evidence["catch_distance"],
+			hull_state["hull_current"],
+		]
+	elif int(sail_state["sail_current"]) < int(sail_state["sail_max"]):
+		catch_status.text = "CHASE · SAILS DAMAGED · CLOSE TO %.0f" % (
+			InspectableTargetShipState.CATCH_RANGE
+		)
+	else:
+		catch_status.text = "CHASE · TARGET FASTER · DAMAGE SAILS TO CATCH"
+	target_combat_view.visible = _player_aboard_ship and not ship.is_docked
+
+
+func _get_attack_choices_text() -> String:
+	if _selected_attack_choice == InspectableTargetShipState.ATTACK_SAILS:
+		return "[H] HULL · [K] > SAILS <"
+	return "[H] > HULL < · [K] SAILS"
+
+
+func _get_target_combat_display_target() -> InspectableTargetShipState:
+	if not _last_attacked_target_id.is_empty():
+		for target in inspection_targets:
+			if target.target_id == _last_attacked_target_id and target.visible:
+				return target
+	if _active_inspection_target != null and _active_inspection_target.visible:
+		return _active_inspection_target
+	var nearest_target: InspectableTargetShipState = null
+	var nearest_distance := INF
+	for target in inspection_targets:
+		if not target.visible:
+			continue
+		var distance: float = target.get_distance_to_player_ship()
+		if distance < nearest_distance:
+			nearest_target = target
+			nearest_distance = distance
+	return nearest_target
 
 
 func _update_salvage_persistence() -> void:
@@ -4504,12 +4830,25 @@ func get_playtest_state() -> Dictionary:
 	var target_ship_states: Array[Dictionary] = []
 	var target_ship_ids: Array[String] = []
 	var target_hull_states: Dictionary = {}
+	var target_sail_states: Dictionary = {}
+	var target_condition_states: Dictionary = {}
+	var routed_target_ids: Array[String] = []
+	var caught_target_ids: Array[String] = []
 	var disabled_target_ids: Array[String] = []
 	for target in inspection_targets:
 		target_ship_states.append(target.get_playtest_state())
 		target_ship_ids.append(target.target_id)
 		var target_hull_state: Dictionary = target.get_hull_state()
+		var target_sail_state: Dictionary = target.get_sail_state()
 		target_hull_states[target.target_id] = target_hull_state.duplicate(true)
+		target_sail_states[target.target_id] = target_sail_state.duplicate(true)
+		target_condition_states[target.target_id] = (
+			target.get_condition_state().duplicate(true)
+		)
+		if bool(target_sail_state["route_enabled"]):
+			routed_target_ids.append(target.target_id)
+		if bool(target_sail_state["caught_after_sail_damage"]):
+			caught_target_ids.append(target.target_id)
 		if bool(target_hull_state["disabled"]):
 			disabled_target_ids.append(target.target_id)
 	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
@@ -4517,6 +4856,15 @@ func get_playtest_state() -> Dictionary:
 		broadside_title.text,
 		broadside_areas.text,
 		broadside_result.text,
+	]
+	var target_combat_view_text: String = "%s\n%s\n%s\n%s\n%s\n%s\n%s" % [
+		target_combat_title.text,
+		attack_choices.text,
+		target_hull_value.text,
+		target_sail_value.text,
+		target_speed.text,
+		target_route.text,
+		catch_status.text,
 	]
 	var active_inspection_estimate: Dictionary = (
 		_active_inspection_target.get_estimate_state()
@@ -4871,13 +5219,26 @@ func get_playtest_state() -> Dictionary:
 			and _damage_checkpoint_matches_hit(_damage_snapshot_return)
 			and _damage_checkpoint_matches_hit(_damage_snapshot_release)
 		),
-		"ship_sail_damage_system_count": 0,
+		"ship_sail_damage_system_count": 1,
 		"ship_crew_injury_system_count": 0,
 		"ship_naval_attack_system_count": 1,
 		"broadside_system_count": broadside_state["system_count"],
 		"broadside_left_control": broadside_state["left_control"],
 		"broadside_right_control": broadside_state["right_control"],
 		"broadside_valid_sides": broadside_state["valid_sides"],
+		"broadside_attack_choices": broadside_state["attack_choices"],
+		"broadside_attack_choice_count": broadside_state["attack_choice_count"],
+		"selected_attack_choice": _selected_attack_choice,
+		"attack_choice_hull_key": "H",
+		"attack_choice_sails_key": "K",
+		"attack_choice_selection_count": _attack_choice_selection_count,
+		"attack_choice_held_input_count": _attack_choice_held_input_count,
+		"attack_choice_blocked_input_count": _attack_choice_blocked_input_count,
+		"attack_choice_fresh_press_required": true,
+		"attack_choice_modal_guard": true,
+		"last_attack_choice_evidence": (
+			_last_attack_choice_evidence.duplicate(true)
+		),
 		"broadside_firing_areas_active": (
 			broadside_state["firing_areas_active"]
 		),
@@ -4894,6 +5255,7 @@ func get_playtest_state() -> Dictionary:
 		"broadside_area_far_x": broadside_state["area_far_x"],
 		"broadside_area_half_length": broadside_state["area_half_length"],
 		"broadside_hull_damage": broadside_state["hull_damage"],
+		"broadside_sail_damage": broadside_state["sail_damage"],
 		"broadside_reload_duration": broadside_state["reload_duration"],
 		"broadside_reload_remaining": broadside_state["reload_remaining"],
 		"broadside_ready": broadside_state["ready"],
@@ -4947,13 +5309,60 @@ func get_playtest_state() -> Dictionary:
 			or broadside_view_text.contains("BROADSIDE · NO AMMUNITION")
 		),
 		"target_hull_states": target_hull_states,
+		"target_sail_states": target_sail_states,
+		"target_condition_states": target_condition_states,
 		"target_hull_max": InspectableTargetShipState.HULL_MAX,
+		"target_sail_max": InspectableTargetShipState.SAIL_MAX,
+		"target_sail_state_owner_count_per_target": 1,
+		"target_full_sail_speed": InspectableTargetShipState.FULL_SAIL_SPEED,
+		"target_minimum_sail_speed": (
+			InspectableTargetShipState.MINIMUM_SAIL_SPEED
+		),
+		"target_speed_steps": [320.0, 240.0, 170.0, 100.0, 40.0],
+		"routed_target_ids": routed_target_ids,
+		"routed_target_count": routed_target_ids.size(),
+		"routed_target_faster_than_player_top_speed": (
+			InspectableTargetShipState.FULL_SAIL_SPEED
+				> float(ship_state["top_speed"])
+		),
+		"caught_target_ids": caught_target_ids,
+		"caught_target_count": caught_target_ids.size(),
 		"disabled_target_ids": disabled_target_ids,
 		"disabled_target_count": disabled_target_ids.size(),
 		"target_hit_feedback_duration": (
 			InspectableTargetShipState.HIT_FEEDBACK_DURATION
 		),
+		"target_combat_view_count": get_tree().get_nodes_in_group(
+			"target_combat_view"
+		).size(),
+		"target_combat_view_visible": target_combat_view.visible,
+		"target_combat_view_text": (
+			target_combat_view_text if target_combat_view.visible else ""
+		),
+		"target_combat_view_selected_state_visible": (
+			target_combat_view_text.contains("> HULL <")
+			or target_combat_view_text.contains("> SAILS <")
+		),
+		"target_combat_view_has_exact_hull_and_sails": (
+			target_combat_view_text.contains("HULL ·")
+			and target_combat_view_text.contains("SAILS ·")
+		),
+		"target_combat_view_has_speed_step": (
+			target_combat_view_text.contains("SPEED ·")
+			and target_combat_view_text.contains("STEP")
+		),
+		"target_combat_hull_meter_value": target_hull_meter.value,
+		"target_combat_hull_meter_max": target_hull_meter.max_value,
+		"target_combat_sail_meter_value": target_sail_meter.value,
+		"target_combat_sail_meter_max": target_sail_meter.max_value,
+		"target_combat_catch_status": catch_status.text,
 		"broadside_uses_ammunition": broadside_state["uses_ammunition"],
+		"broadside_normal_ammunition_cost": (
+			broadside_state["normal_ammunition_cost"]
+		),
+		"broadside_same_cost_for_both_attack_choices": (
+			broadside_state["same_cost_for_all_attack_choices"]
+		),
 		"broadside_ammunition_system_count": ammunition_state["system_count"],
 		"ammunition_system_count": ammunition_state["system_count"],
 		"ammunition_type_count": ammunition_state["ammunition_type_count"],
