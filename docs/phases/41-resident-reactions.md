@@ -2,6 +2,24 @@
 
 [Previous: Phase 40 - Ship module loadout](40-ship-module-loadout.md) | [Next: Phase 42 - Relationship progress](42-relationship-progress.md)
 
+## Work status
+
+**Phase status: COMPLETE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Record one important voyage event | DONE |
+| Add 2: Give one named resident a reaction | DONE |
+| Add 3: Show the reaction on the next talk | DONE |
+| Add 4: Show the reaction one time | DONE |
+| Add 5: Keep normal dialogue after the reaction | DONE |
+| Complete when: One resident reacts to one selected voyage event | DONE |
+| Test 1: Talk before the selected voyage event | DONE |
+| Test 2: Complete the event and return to the cove | DONE |
+| Test 3: Talk to the resident after the return | DONE |
+| Test 4: Confirm the reaction appears | DONE |
+| Test 5: Confirm the next talk uses normal dialogue | DONE |
+
 ## Goal
 
 Make one named resident remember an important voyage event.

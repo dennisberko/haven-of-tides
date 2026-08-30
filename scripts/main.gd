@@ -297,6 +297,7 @@ var _read_count := 0
 var _dialogue_open := false
 var _dialogue_line_index := -1
 var _dialogue_lines := PackedStringArray()
+var _dialogue_kind := ""
 var _request_state := RequestState.AVAILABLE
 var _last_leave_allowed := false
 var _available_dock_id := ""
@@ -1028,7 +1029,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_interact_held = false
 		return
 	if key_event.echo or _interact_held:
-		if _can_board_nearby_target():
+		if _dialogue_open or _player_near_resident:
+			resident.record_held_talk_input(_get_request_state_name())
+		elif _can_board_nearby_target():
 			_record_held_boarding_interaction("BOARD")
 		elif fishing_area.can_receive_fishing_press():
 			fishing_area.record_held_press(ship.get_cargo_lots())
@@ -4541,9 +4544,20 @@ func _update_monster_return_state() -> void:
 		(ship.is_docked and ship.current_dock_id == "cove")
 		or (not _player_aboard_ship and _player_shore_id == "cove")
 	)
-	monster_hunt.record_return_to_cove(
+	var returned_now := monster_hunt.record_return_to_cove(
 		ship.get_cargo_lots(),
 		at_cove,
+	)
+	if not returned_now:
+		return
+	var monster_state: Dictionary = monster_hunt.get_playtest_state(
+		ship.get_cargo_lots(),
+		cove_storage.get_cargo_lots(),
+	)
+	resident.record_important_voyage_event(
+		CoveResident.IMPORTANT_EVENT_ID,
+		CoveResident.IMPORTANT_EVENT_NAME,
+		monster_state["last_return_evidence"],
 	)
 
 
@@ -7797,11 +7811,20 @@ func _start_dialogue() -> void:
 		or _journal_release_pending
 	):
 		return
-	_dialogue_lines = _get_resident_dialogue()
-	if _dialogue_lines.is_empty():
+	var normal_dialogue := _get_resident_dialogue()
+	var talk_evidence: Dictionary = resident.begin_talk(
+		normal_dialogue,
+		_get_request_state_name(),
+	)
+	if not bool(talk_evidence.get("success", false)):
 		return
+	_dialogue_lines = talk_evidence["dialogue_lines"]
+	_dialogue_kind = String(talk_evidence["dialogue_kind"])
 
-	if _request_state == RequestState.AVAILABLE:
+	if (
+		_dialogue_kind == CoveResident.NORMAL_DIALOGUE_KIND
+		and _request_state == RequestState.AVAILABLE
+	):
 		_request_state = RequestState.ACTIVE
 		_update_request_view()
 
@@ -7825,10 +7848,15 @@ func _advance_dialogue() -> void:
 
 
 func _close_dialogue() -> void:
-	var finished_request := _request_state == RequestState.GOAL_COMPLETE
+	var finished_request := (
+		_dialogue_kind == CoveResident.NORMAL_DIALOGUE_KIND
+		and _request_state == RequestState.GOAL_COMPLETE
+	)
+	resident.finish_talk(_get_request_state_name())
 	_dialogue_open = false
 	_dialogue_line_index = -1
 	_dialogue_lines = PackedStringArray()
+	_dialogue_kind = ""
 	player.movement_enabled = true
 	dialogue_box.hide()
 	if finished_request:
@@ -7856,6 +7884,10 @@ func _get_resident_dialogue() -> PackedStringArray:
 			return resident.request_complete_dialogue
 
 	return PackedStringArray()
+
+
+func _get_request_state_name() -> String:
+	return RequestState.keys()[_request_state]
 
 
 func _update_request_view() -> void:
@@ -9193,6 +9225,7 @@ func get_playtest_state() -> Dictionary:
 		ship.get_cargo_lots(),
 		cove_storage.get_cargo_lots(),
 	)
+	var resident_state: Dictionary = resident.get_playtest_state()
 	var ship_module_view_text := "%s\n%s\n%s\n%s\n%s" % [
 		ship_module_title.text,
 		ship_module_status.text,
@@ -13168,9 +13201,129 @@ func get_playtest_state() -> Dictionary:
 		"read_count": _read_count,
 		"dialogue_open": _dialogue_open,
 		"dialogue_line_index": _dialogue_line_index,
+		"dialogue_kind": _dialogue_kind,
 		"speaker_name": speaker_name.text,
 		"dialogue_text": dialogue_text.text,
 		"request_state": RequestState.keys()[_request_state],
+		"resident_reaction_system_count": resident_state["system_count"],
+		"resident_reaction_owner_count": resident_state["owner_count"],
+		"resident_reaction_named_resident_count": (
+			resident_state["named_resident_count"]
+		),
+		"resident_reaction_resident_name": resident_state["resident_name"],
+		"resident_reaction_important_event_type_count": (
+			resident_state["important_event_type_count"]
+		),
+		"resident_reaction_important_event_id": (
+			resident_state["important_event_id"]
+		),
+		"resident_reaction_important_event_name": (
+			resident_state["important_event_name"]
+		),
+		"resident_reaction_important_event_source": (
+			resident_state["important_event_source"]
+		),
+		"resident_reaction_important_event_record_count": (
+			resident_state["important_event_record_count"]
+		),
+		"resident_reaction_records_exactly_one_event": (
+			resident_state["records_exactly_one_important_event"]
+		),
+		"resident_reaction_records_at_most_one_event": (
+			resident_state["records_at_most_one_important_event"]
+		),
+		"resident_reaction_last_event_evidence": (
+			resident_state["last_event_evidence"]
+		),
+		"resident_reaction_arm_count": resident_state["reaction_arm_count"],
+		"resident_reaction_pending": resident_state["reaction_pending"],
+		"resident_reaction_show_count": resident_state["reaction_show_count"],
+		"resident_reaction_finish_count": (
+			resident_state["reaction_finish_count"]
+		),
+		"resident_reaction_shows_one_time": (
+			resident_state["reaction_shows_one_time"]
+		),
+		"resident_reaction_is_next_talk_after_event": (
+			resident_state["reaction_is_next_talk_after_event"]
+		),
+		"resident_reaction_dialogue": resident_state["reaction_dialogue"],
+		"resident_reaction_visible": (
+			_dialogue_open
+			and _dialogue_kind == CoveResident.REACTION_DIALOGUE_KIND
+			and speaker_name.text == resident.display_name
+			and dialogue_text.text == CoveResident.REACTION_DIALOGUE_LINE
+		),
+		"resident_reaction_talk_attempt_count": (
+			resident_state["talk_attempt_count"]
+		),
+		"resident_reaction_held_input_count": (
+			resident_state["held_talk_input_count"]
+		),
+		"resident_reaction_fresh_press_required": (
+			resident_state["fresh_press_required"]
+		),
+		"resident_reaction_last_talk_evidence": (
+			resident_state["last_talk_evidence"]
+		),
+		"resident_reaction_last_talk_finish_evidence": (
+			resident_state["last_talk_finish_evidence"]
+		),
+		"resident_reaction_last_held_input_evidence": (
+			resident_state["last_held_talk_evidence"]
+		),
+		"resident_reaction_normal_talk_count": (
+			resident_state["normal_talk_count"]
+		),
+		"resident_reaction_normal_talk_after_count": (
+			resident_state["normal_talk_after_reaction_count"]
+		),
+		"resident_reaction_normal_dialogue_available": (
+			resident_state["normal_dialogue_available_after_reaction"]
+		),
+		"resident_reaction_normal_request_dialogue_unchanged": (
+			resident_state["normal_request_dialogue_unchanged"]
+		),
+		"resident_reaction_normal_dialogue_visible": (
+			_dialogue_open
+			and _dialogue_kind == CoveResident.NORMAL_DIALOGUE_KIND
+		),
+		"resident_reaction_request_state_preserved": (
+			resident_state["last_talk_finish_evidence"].is_empty()
+			or bool(resident_state["last_talk_finish_evidence"].get(
+				"request_state_unchanged_by_reaction",
+				false,
+			))
+		),
+		"resident_reaction_monster_return_required": (
+			int(resident_state["important_event_record_count"]) == 0
+			or (
+				monster_state["monster_defeat_count"] == 1
+				and monster_state["return_to_cove_count"] == 1
+			)
+		),
+		"resident_reaction_excluded_features": {
+			"relationship_values": resident_state["relationship_value_count"],
+			"relationship_points": resident_state["relationship_point_count"],
+			"relationship_increases": (
+				resident_state["relationship_increase_count"]
+			),
+			"relationship_thresholds": (
+				resident_state["relationship_threshold_count"]
+			),
+			"relationship_scenes": resident_state["relationship_scene_count"],
+			"relationship_saves": resident_state["relationship_save_count"],
+			"relationship_loads": resident_state["relationship_load_count"],
+			"romance": resident_state["romance_system_count"],
+			"unnamed_resident_opinions": (
+				resident_state["unnamed_resident_opinion_count"]
+			),
+			"reputation": resident_state["reputation_system_count"],
+			"daily_schedules": resident_state["daily_schedule_system_count"],
+			"reactions_to_every_action": (
+				resident_state["reaction_to_every_action_count"]
+			),
+		},
 		"request_view_visible": request_view.visible,
 		"request_title": request_title.text,
 		"request_status": request_status.text,
