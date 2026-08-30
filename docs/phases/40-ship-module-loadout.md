@@ -4,7 +4,7 @@
 
 ## Work status
 
-**Phase status: COMPLETE**
+**Phase status: DONE**
 
 | Work item | Status |
 | --- | --- |
