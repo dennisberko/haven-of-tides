@@ -20,6 +20,7 @@ const WeatherAreaState := preload("res://scripts/weather_area.gd")
 const RuinExplorationState := preload("res://scripts/ruin_exploration.gd")
 const StoryClueState := preload("res://scripts/story_clue.gd")
 const MonsterHuntState := preload("res://scripts/monster_hunt.gd")
+const ShipModuleLoadoutState := preload("res://scripts/ship_module_loadout.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -48,6 +49,9 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var ruin_exploration: RuinExplorationState = $RuinExploration
 @onready var story_clue: StoryClueState = $StoryClue
 @onready var monster_hunt: MonsterHuntState = $MonsterHunt
+@onready var ship_module_loadout: ShipModuleLoadoutState = (
+	$InteractiveObjects/ShipModuleBench
+)
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
@@ -202,32 +206,44 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var monster_hunt_result: Label = (
 	$Interface/MonsterHuntView/MonsterResult
 )
+@onready var ship_module_view: ColorRect = $Interface/ShipModuleView
+@onready var ship_module_title: Label = $Interface/ShipModuleView/ModuleTitle
+@onready var ship_module_status: Label = $Interface/ShipModuleView/ModuleStatus
+@onready var ship_module_details: Label = $Interface/ShipModuleView/ModuleDetails
+@onready var ship_module_result: Label = $Interface/ShipModuleView/ModuleResult
+@onready var ship_module_controls: Label = $Interface/ShipModuleView/ModuleControls
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · V HARPOON · E ACTION · T WEATHER · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · P PURSUIT · V HARPOON · E ACTION · T WEATHER · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CHART_STORY_CONTROLS_TEXT := (
 	"M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · 4 CLUE · X CLEAR"
 )
-const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
+const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 / 4 REPLACE CARGO SLOT"
 const FISHING_CARGO_CHOICE_CONTROLS_TEXT := (
-	"X DISCARD CAUGHT FISH · 1 / 2 / 3 REPLACE CARGO SLOT"
+	"X DISCARD CAUGHT FISH · 1 / 2 / 3 / 4 REPLACE CARGO SLOT"
 )
 const RUIN_CARGO_CHOICE_CONTROLS_TEXT := (
-	"X LEAVE TREASURE IN RUIN · 1 / 2 / 3 REPLACE CARGO SLOT"
+	"X LEAVE TREASURE IN RUIN · 1 / 2 / 3 / 4 REPLACE CARGO SLOT"
 )
 const STORY_CLUE_CARGO_CHOICE_CONTROLS_TEXT := (
-	"X LEAVE MAP FRAGMENT IN RUIN · 1 / 2 / 3 REPLACE CARGO SLOT"
+	"X LEAVE MAP FRAGMENT IN RUIN · 1 / 2 / 3 / 4 REPLACE CARGO SLOT"
 )
 const MONSTER_HUNT_CARGO_CHOICE_CONTROLS_TEXT := (
-	"1 / 2 / 3 REPLACE CARGO SLOT · MONSTER PART MUST BE KEPT"
+	"1 / 2 / 3 / 4 REPLACE CARGO SLOT · MONSTER PART MUST BE KEPT"
 )
-const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
-const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 1-6, M, WASD / ARROW KEYS"
+const MODULE_CONTROLS_TEXT := (
+	"1 CARGO RACKS · 2 LONG GUNS · 3 FISHING GEAR · X CLOSE"
+)
+const MODULE_RELEASE_CONTROLS_TEXT := (
+	"RELEASE E, X, 1-3, P, M, WASD / ARROW KEYS"
+)
+const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 / 0 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
+const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 0-6, M, WASD / ARROW KEYS"
 const CONSTRUCTION_READY_CONTROLS_TEXT := "E BUILD STORAGE SHED · X CLOSE"
 const CONSTRUCTION_UNAVAILABLE_CONTROLS_TEXT := "E BUILD UNAVAILABLE · X CLOSE"
 const CONSTRUCTION_COMPLETE_CONTROLS_TEXT := "X CLOSE · E CANNOT BUILD AGAIN"
@@ -244,7 +260,7 @@ const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
 const DEFEAT_RESULT_CONTROLS_TEXT := "X CONTINUE TO RECOVERY"
 const DEFEAT_RELEASE_CONTROLS_TEXT := (
-	"RELEASE X, E, M, J, R, Q, F, V, H, K, SPACE, 1-6, WASD / ARROW KEYS"
+	"RELEASE X, E, M, J, R, Q, F, V, P, H, K, SPACE, 1-6, WASD / ARROW KEYS"
 )
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const BOARDING_DECK_CONTROLS_TEXT := (
@@ -274,6 +290,7 @@ var _player_near_cove_storage := false
 var _player_near_construction_site := false
 var _player_near_port_trader := false
 var _player_near_cove_buyer := false
+var _player_near_ship_module_bench := false
 var _player_aboard_ship := false
 var _interact_held := false
 var _read_count := 0
@@ -384,6 +401,7 @@ var _trade_bought_lot_count := 0
 var _trade_sold_lot_count := 0
 var _fish_sale_attempt_count := 0
 var _fish_sold_lot_count := 0
+var _fish_sold_unit_count := 0
 var _fish_sale_denied_count := 0
 var _fish_money_earned := 0
 var _treasure_sale_attempt_count := 0
@@ -559,6 +577,13 @@ var _defeat_release_cleanup_evidence: Dictionary = {}
 var _defeat_start_input_cleanup_evidence: Dictionary = {}
 var _harpoon_pressed := false
 var _last_monster_attack_evidence: Dictionary = {}
+var _module_pressed_keys: Dictionary = {}
+var _pursuit_pressed := false
+var _last_pursuit_target_id := ""
+var _last_pursuit_attack_evidence: Dictionary = {}
+var _module_initial_departure_started := false
+var _cove_module_departure_release_observed := false
+var _last_module_departure_flow_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -611,6 +636,8 @@ func _ready() -> void:
 	_update_defeat_result_view()
 	_update_weather_view()
 	_update_monster_hunt_view()
+	_update_ship_module_view()
+	ship.set_module_departure_ready(false)
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -634,6 +661,7 @@ func _ready() -> void:
 	defeat_result_view.hide()
 	weather_view.hide()
 	monster_hunt_view.hide()
+	ship_module_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -646,6 +674,8 @@ func _ready() -> void:
 	port_trader.body_exited.connect(_on_port_trader_body_exited)
 	cove_buyer.body_entered.connect(_on_cove_buyer_body_entered)
 	cove_buyer.body_exited.connect(_on_cove_buyer_body_exited)
+	ship_module_loadout.body_entered.connect(_on_ship_module_bench_body_entered)
+	ship_module_loadout.body_exited.connect(_on_ship_module_bench_body_exited)
 	ship_entry.body_entered.connect(_on_ship_entry_body_entered)
 	ship_entry.body_exited.connect(_on_ship_entry_body_exited)
 	damaged_dock_goal.body_entered.connect(_on_damaged_dock_goal_body_entered)
@@ -653,6 +683,9 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	ship_module_loadout.update_timers(delta)
+	_update_ship_module_release_pending()
+	_update_cove_module_departure_after_exit()
 	_update_defeat_release_guard()
 	_update_chart_release_pending()
 	_update_cargo_choice_release_pending()
@@ -693,6 +726,7 @@ func _physics_process(delta: float) -> void:
 	_update_defeat_result_view()
 	_update_weather_view()
 	_update_monster_hunt_view()
+	_update_ship_module_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
@@ -707,6 +741,9 @@ func _physics_process(delta: float) -> void:
 	elif _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
+		if ship.has_departed_dock and not _module_initial_departure_started:
+			_module_initial_departure_started = true
+			_begin_cove_module_voyage("INITIAL_COVE_DEPARTURE")
 		var leave_allowed: bool = ship.can_leave_at_damaged_dock()
 		var available_dock_id: String = ship.get_available_dock_id()
 		var ship_docked: bool = ship.is_docked
@@ -799,12 +836,32 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_weather_toggle_held = false
 	if _key_matches(key_event, KEY_V) and not key_event.pressed:
 		_harpoon_pressed = false
+	if _key_matches(key_event, KEY_P) and not key_event.pressed:
+		_pursuit_pressed = false
 	if _defeat_recovery.is_result_open():
 		_handle_defeat_result_input(key_event)
 		get_viewport().set_input_as_handled()
 		return
 	if _defeat_recovery.is_release_guard_pending():
 		_handle_defeat_release_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if ship_module_loadout.is_selection_open():
+		_handle_ship_module_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if ship_module_loadout.is_release_pending():
+		if key_event.pressed and not key_event.echo:
+			ship_module_loadout.record_release_guard_input(
+				_key_event_name(key_event),
+				ship.get_cargo_lots().size(),
+			)
+		if not key_event.pressed:
+			var released_module_key := _get_ship_module_key(key_event)
+			if released_module_key != 0:
+				_module_pressed_keys.erase(released_module_key)
+			if _key_matches(key_event, KEY_E):
+				_interact_held = false
 		get_viewport().set_input_as_handled()
 		return
 	if _key_matches(key_event, KEY_R) and not key_event.pressed:
@@ -945,6 +1002,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_handle_monster_harpoon_input(key_event)
 		get_viewport().set_input_as_handled()
 		return
+	if _key_matches(key_event, KEY_P):
+		_handle_pursuit_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
 	if not _get_broadside_side(key_event).is_empty():
 		_handle_broadside_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -1044,6 +1105,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 
+	if _can_open_ship_module_bench():
+		_open_ship_module_bench()
+		get_viewport().set_input_as_handled()
+		return
+
 	if _player_near_resident:
 		_start_dialogue()
 		get_viewport().set_input_as_handled()
@@ -1113,6 +1179,9 @@ func _clear_defeat_held_key_state(
 	elif _key_matches(key_event, KEY_V):
 		key_name = "V"
 		_harpoon_pressed = false
+	elif _key_matches(key_event, KEY_P):
+		key_name = "P"
+		_pursuit_pressed = false
 	else:
 		var broadside_side := _get_broadside_side(key_event)
 		if not broadside_side.is_empty():
@@ -1148,6 +1217,7 @@ func _clear_all_defeat_held_action_state(context: String) -> void:
 	_interact_held = false
 	_repair_key_held = false
 	_harpoon_pressed = false
+	_pursuit_pressed = false
 	_broadside_pressed_keys.clear()
 	_attack_choice_pressed_keys.clear()
 	_defeat_start_input_cleanup_evidence = {
@@ -1164,6 +1234,7 @@ func _get_defeat_held_action_state() -> Dictionary:
 		"E": _interact_held,
 		"R": _repair_key_held,
 		"V": _harpoon_pressed,
+		"P": _pursuit_pressed,
 		"Q": bool(_broadside_pressed_keys.get("LEFT", false)),
 		"F": bool(_broadside_pressed_keys.get("RIGHT", false)),
 		"H": bool(_attack_choice_pressed_keys.get(
@@ -1185,6 +1256,7 @@ func _has_stale_defeat_action_key_state() -> bool:
 		or bool(held_state["F"])
 		or bool(held_state["H"])
 		or bool(held_state["K"])
+		or bool(held_state["P"])
 	)
 
 
@@ -1448,6 +1520,135 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 		return
 	_broadside_pressed_keys[side] = true
 	_attempt_broadside_attack(side)
+
+
+func _handle_pursuit_input(key_event: InputEventKey) -> void:
+	if not key_event.pressed:
+		_pursuit_pressed = false
+		return
+	var target_sails := _get_target_condition_values()
+	if key_event.echo or _pursuit_pressed:
+		ship_module_loadout.record_held_pursuit(
+			ship.get_ammunition_units(),
+			target_sails,
+		)
+		_update_target_combat_view()
+		return
+	_pursuit_pressed = true
+	_attempt_long_guns_pursuit_attack()
+
+
+func _attempt_long_guns_pursuit_attack() -> void:
+	var target: InspectableTargetShipState = _get_pursuit_target()
+	var target_id := ""
+	var target_name := ""
+	var target_distance := INF
+	var target_forward_dot := -1.0
+	if target != null:
+		target_id = target.target_id
+		target_name = target.display_name
+		var target_offset: Vector2 = target.global_position - ship.global_position
+		target_distance = target_offset.length()
+		if not target_offset.is_zero_approx():
+			target_forward_dot = ship.get_forward_direction().dot(
+				target_offset.normalized()
+			)
+	var preflight: Dictionary = ship_module_loadout.try_begin_pursuit_attack(
+		_is_pursuit_input_available(),
+		ship.get_ammunition_units(),
+		target_id,
+		target_name,
+		target_distance,
+		target_forward_dot,
+	)
+	if not bool(preflight.get("success", false)):
+		_update_target_combat_view()
+		_update_ammunition_view()
+		return
+	var ammunition_evidence: Dictionary = ship.consume_ammunition_for_long_guns()
+	var target_evidence: Dictionary = {}
+	var heat_evidence: Dictionary = {}
+	if bool(ammunition_evidence.get("success", false)) and target != null:
+		target_evidence = target.apply_broadside_damage(
+			InspectableTargetShipState.ATTACK_SAILS,
+			ShipModuleLoadoutState.PURSUIT_SAIL_DAMAGE,
+			"PURSUIT_LONG_GUNS",
+		)
+		if bool(target_evidence.get("success", false)):
+			heat_evidence = _world_heat.record_successful_hit(
+				target.target_id,
+				target.peaceful,
+				target.estimated_heat_cost,
+			)
+			_last_attacked_target_id = target.target_id
+			_last_pursuit_target_id = target.target_id
+	_last_pursuit_attack_evidence = ship_module_loadout.resolve_pursuit_attack(
+		preflight,
+		ammunition_evidence,
+		target_evidence,
+		heat_evidence,
+	)
+	_update_cargo_view()
+	_update_ammunition_view()
+	_update_target_combat_view()
+	_update_heat_view()
+	_update_target_inspection()
+	_update_interaction_prompt()
+
+
+func _is_pursuit_input_available() -> bool:
+	return (
+		_player_aboard_ship
+		and ship.controls_enabled
+		and ship.captain_aboard
+		and not ship.is_docked
+		and not _player_on_target_deck
+		and not _defeat_recovery.is_result_open()
+		and not _defeat_recovery.is_release_guard_pending()
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not ship_module_loadout.is_selection_open()
+		and not ship_module_loadout.is_release_pending()
+		and not _target_inspection_view_open
+		and not ship.navigation_input_blocked
+		and not ship.navigation_release_pending
+	)
+
+
+func _get_pursuit_target() -> InspectableTargetShipState:
+	var nearest_target: InspectableTargetShipState = null
+	var nearest_distance := INF
+	for target in inspection_targets:
+		if not target.visible or not target.can_receive_sail_damage():
+			continue
+		var sail_state: Dictionary = target.get_sail_state()
+		if not bool(sail_state.get("route_enabled", false)):
+			continue
+		var offset: Vector2 = target.global_position - ship.global_position
+		var distance := offset.length()
+		if distance > ShipModuleLoadoutState.PURSUIT_RANGE:
+			continue
+		if offset.is_zero_approx():
+			continue
+		var forward_dot: float = ship.get_forward_direction().dot(
+			offset.normalized()
+		)
+		if forward_dot < ShipModuleLoadoutState.PURSUIT_MIN_FORWARD_DOT:
+			continue
+		if distance < nearest_distance:
+			nearest_target = target
+			nearest_distance = distance
+	return nearest_target
 
 
 func _get_attack_choice(key_event: InputEventKey) -> String:
@@ -2493,15 +2694,27 @@ func _attempt_trade_sale() -> void:
 	_successful_sale_evidence = _last_trade_attempt_evidence.duplicate(true)
 
 
-func _get_fish_money_preview(money_before: int) -> Dictionary:
+func _get_fish_money_preview(
+	money_before: int,
+	lot_name: String = FishingAreaState.FISH_LOT_NAME,
+) -> Dictionary:
+	var unit_count := (
+		FishingAreaState.LARGE_CATCH_FISH_UNITS
+		if lot_name == FishingAreaState.LARGE_FISH_LOT_NAME
+		else 1
+	)
+	var sale_price := TradeContact.NORMAL_PRICE * unit_count
 	return {
 		"money_before": money_before,
-		"money_after": money_before + TradeContact.NORMAL_PRICE,
-		"money_delta": TradeContact.NORMAL_PRICE,
+		"money_after": money_before + sale_price,
+		"money_delta": sale_price,
 		"price_state": String(
 			TradeContact.PriceState.keys()[TradeContact.PriceState.NORMAL]
 		),
-		"fixed_price": TradeContact.NORMAL_PRICE,
+		"fixed_price": sale_price,
+		"unit_fixed_price": TradeContact.NORMAL_PRICE,
+		"fish_units": unit_count,
+		"lot_name": lot_name,
 	}
 
 
@@ -2668,26 +2881,35 @@ func _attempt_fish_sale() -> void:
 
 	_trade_sale_attempt_count += 1
 	_fish_sale_attempt_count += 1
-	_last_trade_action = "SELL_ONE_%s" % FishingAreaState.FISH_LOT_NAME.replace(
+	var fish_lot_name := (
+		FishingAreaState.LARGE_FISH_LOT_NAME
+		if ship.get_cargo_lots().has(FishingAreaState.LARGE_FISH_LOT_NAME)
+		else FishingAreaState.FISH_LOT_NAME
+	)
+	_last_trade_action = "SELL_ONE_%s" % fish_lot_name.replace(
 		" ",
 		"_",
 	)
 	var money_before := money
+	var sold_fish_units_before := _fish_sold_unit_count
 	var cargo_before: Array[String] = ship.get_cargo_lots()
 	var mark_state_before: Dictionary = (
 		_active_trade_contact.get_mark_state(completed_voyages)
 	)
-	var money_preview := _get_fish_money_preview(money_before)
-	var success := cargo_before.has(FishingAreaState.FISH_LOT_NAME)
+	var money_preview := _get_fish_money_preview(money_before, fish_lot_name)
+	var success := cargo_before.has(fish_lot_name)
 	if success:
-		success = ship.remove_cargo_lot(FishingAreaState.FISH_LOT_NAME)
+		success = ship.remove_cargo_lot(fish_lot_name)
 	if success:
 		money += int(money_preview["money_delta"])
 		_fish_sold_lot_count += 1
+		_fish_sold_unit_count += int(money_preview["fish_units"])
 		_fish_money_earned += int(money_preview["money_delta"])
-		_last_trade_result = "SOLD 1 FISH LOT · NORMAL · RECEIVED %d COINS" % (
-			money_preview["fixed_price"]
-		)
+		_last_trade_result = "SOLD 1 %s · %d FISH · RECEIVED %d COINS" % [
+			fish_lot_name,
+			money_preview["fish_units"],
+			money_preview["fixed_price"],
+		]
 	else:
 		_fish_sale_denied_count += 1
 		_last_trade_result = "FISH SALE DENIED · NO FISH LOT IN SHIP CARGO"
@@ -2700,14 +2922,20 @@ func _attempt_fish_sale() -> void:
 		"success": success,
 		"action": _last_trade_action,
 		"result": _last_trade_result,
-		"fish_lot_name": FishingAreaState.FISH_LOT_NAME,
+		"fish_lot_name": fish_lot_name,
+		"fish_units": money_preview["fish_units"],
+		"sold_fish_units_before": sold_fish_units_before,
+		"sold_fish_units_after": _fish_sold_unit_count,
+		"sold_fish_unit_delta": (
+			_fish_sold_unit_count - sold_fish_units_before
+		),
 		"price_state": money_preview["price_state"],
 		"fixed_sale_price": money_preview["fixed_price"],
 		"canonical_normal_price": TradeContact.NORMAL_PRICE,
 		"fixed_price_map": TradeContact.get_fixed_price_map(),
 		"uses_canonical_normal_fixed_price": (
 			FishingAreaState.FISH_PRICE_STATE == money_preview["price_state"]
-			and int(money_preview["fixed_price"])
+			and int(money_preview["unit_fixed_price"])
 				== TradeContact.NORMAL_PRICE
 			and int(TradeContact.get_fixed_price_map()["NORMAL"])
 				== TradeContact.NORMAL_PRICE
@@ -2722,8 +2950,8 @@ func _attempt_fish_sale() -> void:
 		"cargo_after": cargo_after,
 		"cargo_delta": cargo_after.size() - cargo_before.size(),
 		"fish_count_delta": (
-			cargo_after.count(FishingAreaState.FISH_LOT_NAME)
-			- cargo_before.count(FishingAreaState.FISH_LOT_NAME)
+			cargo_after.count(fish_lot_name)
+			- cargo_before.count(fish_lot_name)
 		),
 		"cove_spice_mark_before": mark_state_before,
 		"cove_spice_mark_after": mark_state_after,
@@ -2743,10 +2971,12 @@ func _attempt_fish_sale() -> void:
 		"transaction_atomic": (
 			(
 				success
-				and money - money_before == TradeContact.NORMAL_PRICE
+				and money - money_before == int(money_preview["money_delta"])
+				and _fish_sold_unit_count - sold_fish_units_before
+					== int(money_preview["fish_units"])
 				and cargo_after.size() == cargo_before.size() - 1
-				and cargo_after.count(FishingAreaState.FISH_LOT_NAME)
-					== cargo_before.count(FishingAreaState.FISH_LOT_NAME) - 1
+				and cargo_after.count(fish_lot_name)
+					== cargo_before.count(fish_lot_name) - 1
 				and _trade_mark_resources_equal(
 					mark_state_before,
 					mark_state_after,
@@ -2755,6 +2985,7 @@ func _attempt_fish_sale() -> void:
 			or (
 				not success
 				and money == money_before
+				and _fish_sold_unit_count == sold_fish_units_before
 				and cargo_after == cargo_before
 				and _trade_mark_resources_equal(
 					mark_state_before,
@@ -3091,6 +3322,8 @@ func _handle_storage_input(key_event: InputEventKey) -> void:
 			_store_ship_cargo_slot(1)
 		KEY_3:
 			_store_ship_cargo_slot(2)
+		KEY_0:
+			_store_ship_cargo_slot(3)
 		KEY_4:
 			_withdraw_cove_storage_slot(0)
 		KEY_5:
@@ -3100,6 +3333,8 @@ func _handle_storage_input(key_event: InputEventKey) -> void:
 
 
 func _get_storage_key(key_event: InputEventKey) -> int:
+	if _key_matches(key_event, KEY_0):
+		return KEY_0
 	if _key_matches(key_event, KEY_1):
 		return KEY_1
 	if _key_matches(key_event, KEY_2):
@@ -3119,6 +3354,8 @@ func _get_storage_key(key_event: InputEventKey) -> int:
 
 func _storage_key_name(key: int) -> String:
 	match key:
+		KEY_0:
+			return "0"
 		KEY_1:
 			return "1"
 		KEY_2:
@@ -3132,6 +3369,187 @@ func _storage_key_name(key: int) -> String:
 		KEY_6:
 			return "6"
 	return "X"
+
+
+func _handle_ship_module_input(key_event: InputEventKey) -> void:
+	var module_key := _get_ship_module_key(key_event)
+	if not key_event.pressed:
+		if module_key != 0:
+			_module_pressed_keys.erase(module_key)
+		if _key_matches(key_event, KEY_E):
+			_interact_held = false
+		return
+	if module_key == 0:
+		ship_module_loadout.record_blocked_input(
+			_key_event_name(key_event),
+			ship.get_cargo_lots().size(),
+		)
+		_update_ship_module_view()
+		return
+	if key_event.echo or bool(_module_pressed_keys.get(module_key, false)):
+		if module_key != KEY_X:
+			ship_module_loadout.record_held_selection(
+				_get_ship_module_id_for_key(module_key),
+				ship.get_cargo_lots().size(),
+			)
+		_update_ship_module_view()
+		return
+	_module_pressed_keys[module_key] = true
+	if module_key == KEY_X:
+		_close_ship_module_bench()
+		return
+	var module_id := _get_ship_module_id_for_key(module_key)
+	ship_module_loadout.select_module(module_id, ship.get_cargo_lots().size())
+	_update_ship_module_view()
+	_update_cargo_view()
+
+
+func _get_ship_module_key(key_event: InputEventKey) -> int:
+	if _key_matches(key_event, KEY_1):
+		return KEY_1
+	if _key_matches(key_event, KEY_2):
+		return KEY_2
+	if _key_matches(key_event, KEY_3):
+		return KEY_3
+	if _key_matches(key_event, KEY_X):
+		return KEY_X
+	return 0
+
+
+func _get_ship_module_id_for_key(module_key: int) -> String:
+	match module_key:
+		KEY_1:
+			return ShipModuleLoadoutState.MODULE_CARGO_RACKS
+		KEY_2:
+			return ShipModuleLoadoutState.MODULE_LONG_GUNS
+		KEY_3:
+			return ShipModuleLoadoutState.MODULE_FISHING_GEAR
+	return ShipModuleLoadoutState.MODULE_NONE
+
+
+func _key_event_name(key_event: InputEventKey) -> String:
+	var keycode := key_event.physical_keycode
+	if keycode == 0:
+		keycode = key_event.keycode
+	return OS.get_keycode_string(keycode)
+
+
+func _can_open_ship_module_bench() -> bool:
+	return (
+		not _player_aboard_ship
+		and (_player_shore_id.is_empty() or _player_shore_id == "cove")
+		and _player_near_ship_module_bench
+		and not _dialogue_open
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not ship_module_loadout.is_selection_open()
+		and not ship_module_loadout.is_release_pending()
+	)
+
+
+func _open_ship_module_bench() -> void:
+	if not _can_open_ship_module_bench():
+		return
+	if not ship_module_loadout.open_selection(ship.get_cargo_lots().size()):
+		return
+	_module_pressed_keys.clear()
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(true)
+	controls_help.text = MODULE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_ship_module_view()
+	_update_cargo_view()
+
+
+func _close_ship_module_bench() -> void:
+	if not ship_module_loadout.close_selection():
+		return
+	player.movement_enabled = false
+	ship.set_navigation_input_blocked(false)
+	controls_help.text = MODULE_RELEASE_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_ship_module_view()
+
+
+func _update_ship_module_release_pending() -> void:
+	if not ship_module_loadout.is_release_pending():
+		return
+	if _is_any_ship_module_guard_key_pressed():
+		return
+	ship_module_loadout.release_guard()
+	_module_pressed_keys.clear()
+	_interact_held = false
+	player.movement_enabled = true
+	controls_help.text = _get_context_controls_text()
+	_update_ship_module_view()
+	_update_interaction_prompt()
+
+
+func _prepare_ship_module_for_cove_departure() -> bool:
+	var activation: Dictionary = ship_module_loadout.prepare_for_cove_departure(
+		ship.get_cargo_lots().size()
+	)
+	if not bool(activation.get("success", false)):
+		ship.set_module_departure_ready(false)
+		_update_ship_module_view()
+		return false
+	var limit_change: Dictionary = ship.set_cargo_limit(
+		ship_module_loadout.get_active_cargo_limit()
+	)
+	var ready := bool(limit_change.get("success", false))
+	ship.set_module_departure_ready(ready)
+	_update_ship_module_view()
+	_update_cargo_view()
+	return ready
+
+
+func _update_ship_module_view() -> void:
+	ship_module_title.text = "SHIP MODULE BENCH · ONE SLOT"
+	ship_module_status.text = "ACTIVE · %s · NEXT · %s" % [
+		ship_module_loadout.get_active_module_name(),
+		ship_module_loadout.get_pending_module_name(),
+	]
+	var cargo_racks_marker := " >" if (
+		ship_module_loadout.get_pending_module()
+			== ShipModuleLoadoutState.MODULE_CARGO_RACKS
+	) else ""
+	var long_guns_marker := " >" if (
+		ship_module_loadout.get_pending_module()
+			== ShipModuleLoadoutState.MODULE_LONG_GUNS
+	) else ""
+	var fishing_gear_marker := " >" if (
+		ship_module_loadout.get_pending_module()
+			== ShipModuleLoadoutState.MODULE_FISHING_GEAR
+	) else ""
+	ship_module_details.text = (
+		"[1]%s CARGO RACKS · CARGO LIMIT 4\n"
+		+ "[2]%s LONG GUNS · [P] FORWARD PURSUIT SAIL ATTACK\n"
+		+ "[3]%s FISHING GEAR · ONE LARGE CATCH NEXT COVE VOYAGE\n\n"
+		+ "SHIP CARGO · %d/%d · ONE SLOT · ONE CHOICE"
+	) % [
+		cargo_racks_marker,
+		long_guns_marker,
+		fishing_gear_marker,
+		ship.get_cargo_lots().size(),
+		ship.get_cargo_limit(),
+	]
+	ship_module_result.text = ship_module_loadout.get_selection_result()
+	ship_module_controls.text = (
+		MODULE_RELEASE_CONTROLS_TEXT
+		if ship_module_loadout.is_release_pending()
+		else "[1] CARGO RACKS · [2] LONG GUNS · [3] FISHING GEAR · [X] CLOSE"
+	)
+	ship_module_view.visible = ship_module_loadout.is_selection_open()
 
 
 func _can_open_cove_storage() -> bool:
@@ -3445,6 +3863,8 @@ func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
 		_replace_cargo_with_pending_lot(1)
 	elif _key_matches(key_event, KEY_3):
 		_replace_cargo_with_pending_lot(2)
+	elif _key_matches(key_event, KEY_4):
+		_replace_cargo_with_pending_lot(3)
 
 
 func _handle_chart_input(key_event: InputEventKey) -> bool:
@@ -3497,6 +3917,8 @@ func _set_chart_visible(visible: bool) -> void:
 		or _trade_release_pending
 		or _journal_view_open
 		or _journal_release_pending
+		or ship_module_loadout.is_selection_open()
+		or ship_module_loadout.is_release_pending()
 	):
 		return
 	waypoint_display.set_chart_visible(visible)
@@ -3655,6 +4077,21 @@ func _is_any_cargo_choice_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_E)
 		or Input.is_key_pressed(KEY_M)
 		or Input.is_key_pressed(KEY_V)
+		or Input.is_key_pressed(KEY_P)
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+		or Input.is_key_pressed(KEY_4)
+	)
+
+
+func _is_any_ship_module_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_P)
 		or Input.is_key_pressed(KEY_X)
 		or Input.is_key_pressed(KEY_1)
 		or Input.is_key_pressed(KEY_2)
@@ -3674,6 +4111,7 @@ func _is_any_storage_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_4)
 		or Input.is_key_pressed(KEY_5)
 		or Input.is_key_pressed(KEY_6)
+		or Input.is_key_pressed(KEY_0)
 	)
 
 
@@ -3731,6 +4169,7 @@ func _is_any_defeat_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_J)
 		or Input.is_key_pressed(KEY_R)
 		or Input.is_key_pressed(KEY_V)
+		or Input.is_key_pressed(KEY_P)
 		or Input.is_key_pressed(KEY_Q)
 		or Input.is_key_pressed(KEY_F)
 		or Input.is_key_pressed(KEY_H)
@@ -3756,6 +4195,10 @@ func _get_context_controls_text() -> String:
 			if _prize_actions.screen_open
 			else BOARDING_DECK_CONTROLS_TEXT
 		)
+	if ship_module_loadout.is_selection_open():
+		return MODULE_CONTROLS_TEXT
+	if ship_module_loadout.is_release_pending():
+		return MODULE_RELEASE_CONTROLS_TEXT
 	if _journal_view_open:
 		return JOURNAL_CONTROLS_TEXT
 	if _journal_release_pending:
@@ -3837,6 +4280,10 @@ func _update_wreck_opportunity() -> void:
 
 
 func _update_fishing_area() -> void:
+	fishing_area.configure_fishing_gear(
+		ship_module_loadout.is_fishing_gear_active(),
+		ship_module_loadout.get_active_voyage_serial(),
+	)
 	var world_input_available: bool = (
 		_player_aboard_ship
 		and ship.controls_enabled
@@ -4311,6 +4758,23 @@ func _begin_ship_defeat(damage_evidence: Dictionary) -> void:
 		DefeatRecoveryState.FIXED_AMMUNITION_UNIT_LOSS,
 		DefeatRecoveryState.MINIMUM_RETAINED_CARGO_LOTS,
 	)
+	var cove_departure_observed_before_defeat := (
+		_cove_module_departure_release_observed
+	)
+	_cove_module_departure_release_observed = false
+	return_evidence.merge({
+		"main_cove_departure_observed_before_defeat": (
+			cove_departure_observed_before_defeat
+		),
+		"main_cove_departure_observed_after_defeat": (
+			_cove_module_departure_release_observed
+		),
+		"all_pending_module_departure_state_cleared": (
+			not ship.is_module_departure_ready()
+			and not ship.is_module_departure_exit_pending()
+			and not _cove_module_departure_release_observed
+		),
+	}, true)
 	var cove_storage_after: Array[String] = cove_storage.get_cargo_lots()
 	var cove_storage_slots_after: Array[String] = cove_storage.get_storage_slots()
 	var defeat_evidence: Dictionary = _defeat_recovery.begin_defeat(
@@ -5342,9 +5806,14 @@ func _update_prize_view() -> void:
 
 
 func _get_attack_choices_text() -> String:
+	var pursuit_text := (
+		" · [P] PURSUIT SAIL ATTACK"
+		if ship_module_loadout.is_long_guns_active()
+		else " · PURSUIT REQUIRES LONG GUNS"
+	)
 	if _selected_attack_choice == InspectableTargetShipState.ATTACK_SAILS:
-		return "[H] HULL · [K] > SAILS <"
-	return "[H] > HULL < · [K] SAILS"
+		return "[H] HULL · [K] > SAILS <" + pursuit_text
+	return "[H] > HULL < · [K] SAILS" + pursuit_text
 
 
 func _get_target_combat_display_target() -> InspectableTargetShipState:
@@ -5616,7 +6085,7 @@ func _fish_in_area() -> void:
 
 	_cargo_kept_count += 1
 	_last_cargo_action = "KEEP_CAUGHT_FISH"
-	_last_cargo_result = "KEPT_ONE_FISH_LOT"
+	_last_cargo_result = "KEPT_ONE_%s" % _cargo_result_name(fish_lot)
 	_update_cargo_view()
 	_update_interaction_prompt()
 
@@ -5695,7 +6164,7 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 	if (
 		cargo_source == CARGO_SOURCE_FISHING
 		and (
-			cargo_lot != FishingAreaState.FISH_LOT_NAME
+			not fishing_area.is_fish_cargo_lot(cargo_lot)
 			or not fishing_area.record_choice_required()
 		)
 	):
@@ -5917,6 +6386,10 @@ func _update_cargo_view() -> void:
 			ship.get_cargo_limit(),
 			ship.get_cargo_limit() - cargo_lots.size(),
 		],
+		"MODULE SLOT · %s · NEXT %s" % [
+			ship_module_loadout.get_active_module_name(),
+			ship_module_loadout.get_pending_module_name(),
+		],
 	])
 	for slot_index in range(ship.get_cargo_limit()):
 		var slot_text := "EMPTY"
@@ -5939,6 +6412,7 @@ func _update_cargo_view() -> void:
 		or _construction_view_open
 		or _trade_view_open
 		or _journal_view_open
+		or ship_module_loadout.is_selection_open()
 	):
 		cargo_view.hide()
 	else:
@@ -5967,7 +6441,9 @@ func _update_cargo_view() -> void:
 		)
 	elif _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT:
 		choice_lines.append(
-			"CHOOSE 1, 2, OR 3 · %s CANNOT BE LEFT" % _pending_cargo_lot
+			"CHOOSE A NUMBERED CARGO SLOT · %s CANNOT BE LEFT" % (
+				_pending_cargo_lot
+			)
 		)
 	else:
 		choice_lines.append(
@@ -5992,8 +6468,9 @@ func _update_storage_view() -> void:
 		var ship_lot_name := "EMPTY"
 		if slot_index < ship_lots.size():
 			ship_lot_name = ship_lots[slot_index]
-		lines.append("[%d] SLOT %d  %s" % [
-			slot_index + 1,
+		var ship_slot_key := "0" if slot_index == 3 else str(slot_index + 1)
+		lines.append("[%s] SLOT %d  %s" % [
+			ship_slot_key,
 			slot_index + 1,
 			ship_lot_name,
 		])
@@ -6392,7 +6869,15 @@ func _update_trade_view() -> void:
 		var price_state: String = String(contact_state["current_price_state"])
 		var fixed_price: int = int(contact_state["current_fixed_price"])
 		var money_preview: Dictionary = _active_trade_contact.get_money_preview(money)
-		var fish_money_preview := _get_fish_money_preview(money)
+		var fish_sale_lot_name := (
+			FishingAreaState.LARGE_FISH_LOT_NAME
+			if cargo_lots.has(FishingAreaState.LARGE_FISH_LOT_NAME)
+			else FishingAreaState.FISH_LOT_NAME
+		)
+		var fish_money_preview := _get_fish_money_preview(
+			money,
+			fish_sale_lot_name,
+		)
 		var treasure_money_preview := _get_treasure_money_preview(money)
 		var money_delta: int = int(money_preview["money_delta"])
 		var money_delta_text := (
@@ -6527,7 +7012,7 @@ func _update_trade_view() -> void:
 				+ "FISH CATCH SALE · SEPARATE FROM SPICE DEMAND\n"
 				+ "%s · %s · %d COINS · HELD %d\n"
 				+ "FISH SELL PREVIEW · %d -> %d (+%d)\n"
-				+ "[F] SELL ONE FISH LOT"
+				+ "[F] SELL ONE %s"
 			) % [
 				TradeContact.GOOD_NAME,
 				price_state,
@@ -6543,13 +7028,14 @@ func _update_trade_view() -> void:
 				TradeContact.GOOD_NAME,
 				cargo_lots.count(TradeContact.GOOD_NAME),
 				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE",
-				FishingAreaState.FISH_LOT_NAME,
+				fish_sale_lot_name,
 				FishingAreaState.FISH_PRICE_STATE,
-				TradeContact.NORMAL_PRICE,
-				cargo_lots.count(FishingAreaState.FISH_LOT_NAME),
+				fish_money_preview["fixed_price"],
+				cargo_lots.count(fish_sale_lot_name),
 				fish_money_preview["money_before"],
 				fish_money_preview["money_after"],
 				fish_money_preview["money_delta"],
+				fish_sale_lot_name,
 			]
 			trade_controls.text = (
 				"[E] SELL SPICE · [F] SELL FISH · [X] CLOSE"
@@ -6667,6 +7153,20 @@ func _on_cove_buyer_body_exited(body: Node2D) -> void:
 	_update_interaction_prompt()
 
 
+func _on_ship_module_bench_body_entered(body: Node2D) -> void:
+	if body != player:
+		return
+	_player_near_ship_module_bench = true
+	_update_interaction_prompt()
+
+
+func _on_ship_module_bench_body_exited(body: Node2D) -> void:
+	if body != player:
+		return
+	_player_near_ship_module_bench = false
+	_update_interaction_prompt()
+
+
 func _on_ship_entry_body_entered(body: Node2D) -> void:
 	if body != player or _player_aboard_ship:
 		return
@@ -6701,6 +7201,8 @@ func _read_sign() -> void:
 		or _trade_release_pending
 		or _journal_view_open
 		or _journal_release_pending
+		or ship_module_loadout.is_selection_open()
+		or ship_module_loadout.is_release_pending()
 	):
 		return
 	_read_count += 1
@@ -6723,6 +7225,9 @@ func _enter_ship() -> void:
 	):
 		return
 
+	if not _prepare_ship_module_for_cove_departure():
+		_update_interaction_prompt()
+		return
 	_player_aboard_ship = true
 	ship.set_captain_aboard(true)
 	ship.set_controls_enabled(true)
@@ -6783,6 +7288,18 @@ func _dock_ship() -> void:
 	var dock_id: String = ship.dock_at_available()
 	if dock_id.is_empty():
 		return
+	if dock_id == "cove" and _cove_module_departure_release_observed:
+		_cove_module_departure_release_observed = false
+		_last_module_departure_flow_evidence = {
+			"success": false,
+			"context": "COVE_DEPARTURE_ABORTED_BY_REDOCK",
+			"result": "COVE DEPARTURE ABORTED · MODULE CHOICE NOT STARTED",
+			"ship_is_docked": ship.is_docked,
+			"at_damaged_dock": ship.at_damaged_dock,
+			"departure_ready": ship.is_module_departure_ready(),
+			"exit_pending": ship.is_module_departure_exit_pending(),
+			"same_dock_abort_safe": true,
+		}
 	var heat_after := _world_heat.get_current_heat()
 	var target_conditions_after := _get_target_condition_snapshots()
 	var crew_after: Dictionary = ship.get_crew_condition_playtest_state()
@@ -6857,8 +7374,131 @@ func _dock_ship() -> void:
 func _record_voyage_departure(dock_id: String) -> void:
 	if dock_id.is_empty():
 		return
+	if dock_id == "cove":
+		if (
+			_voyage_departure_dock_id == "cove"
+			and bool(_last_module_departure_flow_evidence.get(
+				"departure_token_consumed_after_exit",
+				false,
+			))
+		):
+			_cove_module_departure_release_observed = false
+			return
+		_cove_module_departure_release_observed = true
+		_last_module_departure_flow_evidence = {
+			"success": true,
+			"context": "DOCKED_COVE_RELEASE_OBSERVED",
+			"result": "COVE RELEASED · MODULE TOKEN HELD THROUGH EXIT",
+			"departure_ready": ship.is_module_departure_ready(),
+			"exit_pending": ship.is_module_departure_exit_pending(),
+			"at_damaged_dock": ship.at_damaged_dock,
+			"module_begin_deferred_until_exit": true,
+		}
+		if (
+			not ship.is_module_departure_ready()
+			or not ship.is_module_departure_exit_pending()
+		):
+			ship.set_controls_enabled(false)
+			ship.clear_module_departure_state("COVE_RELEASE_INVALID")
+			_cove_module_departure_release_observed = false
+			_last_module_departure_flow_evidence["success"] = false
+			_last_module_departure_flow_evidence["result"] = (
+				"COVE RELEASE INVALID · SHIP CONTROLS STOPPED"
+			)
+			_last_module_departure_flow_evidence[
+				"failure_stopped_ship_controls"
+			] = not ship.controls_enabled
+		return
 	_voyage_departure_dock_id = dock_id
 	_voyage_departure_count += 1
+
+
+func _update_cove_module_departure_after_exit() -> void:
+	if not ship.is_module_departure_exit_pending():
+		return
+	if ship.is_docked:
+		_cove_module_departure_release_observed = false
+		return
+	if ship.at_damaged_dock:
+		return
+	var success := _begin_cove_module_voyage("DOCKED_COVE_EXIT")
+	_cove_module_departure_release_observed = false
+	if not success:
+		return
+	_voyage_departure_dock_id = "cove"
+	_voyage_departure_count += 1
+	_last_module_departure_flow_evidence[
+		"voyage_departure_recorded_after_exit"
+	] = true
+	_last_module_departure_flow_evidence["voyage_departure_count"] = (
+		_voyage_departure_count
+	)
+
+
+func _begin_cove_module_voyage(context: String) -> bool:
+	var departure_ready_before: bool = ship.is_module_departure_ready()
+	var exit_pending_before: bool = ship.is_module_departure_exit_pending()
+	var at_damaged_dock_before: bool = ship.at_damaged_dock
+	if not departure_ready_before or at_damaged_dock_before:
+		ship.set_controls_enabled(false)
+		if exit_pending_before:
+			ship.clear_module_departure_state("MODULE_START_PREFLIGHT_FAILED")
+		_last_module_departure_flow_evidence = {
+			"success": false,
+			"context": context,
+			"result": (
+				"MODULE START BLOCKED · DEPARTURE TOKEN NOT READY"
+				if not departure_ready_before
+				else "MODULE START BLOCKED · COVE EXIT NOT CLEAR"
+			),
+			"departure_ready_before": departure_ready_before,
+			"exit_pending_before": exit_pending_before,
+			"at_damaged_dock_before": at_damaged_dock_before,
+			"failure_stopped_ship_controls": not ship.controls_enabled,
+		}
+		return false
+	var start_evidence: Dictionary = ship_module_loadout.begin_cove_voyage()
+	var success := bool(start_evidence.get("success", false))
+	var clear_reason := (
+		"%s_MODULE_START" % context
+		if success
+		else "%s_MODULE_START_FAILED" % context
+	)
+	var token_evidence: Dictionary = ship.clear_module_departure_state(
+		clear_reason
+	)
+	if not success:
+		ship.set_controls_enabled(false)
+	_last_module_departure_flow_evidence = start_evidence.duplicate(true)
+	_last_module_departure_flow_evidence.merge({
+		"context": context,
+		"departure_ready_before": departure_ready_before,
+		"exit_pending_before": exit_pending_before,
+		"at_damaged_dock_before": at_damaged_dock_before,
+		"departure_ready_after": ship.is_module_departure_ready(),
+		"exit_pending_after": ship.is_module_departure_exit_pending(),
+		"departure_token_consumed": (
+			success
+			and departure_ready_before
+			and not ship.is_module_departure_ready()
+		),
+		"departure_token_consumed_after_exit": (
+			success
+			and not at_damaged_dock_before
+			and bool(token_evidence.get("token_consumed_after_exit", false))
+		),
+		"token_cleared_on_failed_start": (
+			not success
+			and departure_ready_before
+			and not ship.is_module_departure_ready()
+		),
+		"token_evidence": token_evidence.duplicate(true),
+		"failure_stopped_ship_controls": (
+			success or not ship.controls_enabled
+		),
+	}, true)
+	_update_fishing_area()
+	return success
 
 
 func _complete_voyage_on_arrival(dock_id: String) -> void:
@@ -7113,6 +7753,10 @@ func _return_to_ship() -> void:
 		return
 
 	var returning_shore_id := _player_shore_id
+	if returning_shore_id == "cove":
+		if not _prepare_ship_module_for_cove_departure():
+			_update_interaction_prompt()
+			return
 	_player_aboard_ship = true
 	_player_shore_id = ""
 	_player_near_ship_return = false
@@ -7318,7 +7962,14 @@ func _update_interaction_prompt() -> void:
 		return
 
 	if not _player_shore_id.is_empty() and _player_near_ship_return:
-		interaction_prompt.text = "[E] RETURN TO SHIP"
+		interaction_prompt.text = (
+			"SHIP NEEDS A MODULE · USE THE COVE BENCH"
+			if (
+				_player_shore_id == "cove"
+				and not ship_module_loadout.has_pending_selection()
+			)
+			else "[E] RETURN TO SHIP"
+		)
 		interaction_prompt.show()
 		return
 
@@ -7339,13 +7990,22 @@ func _update_interaction_prompt() -> void:
 		interaction_prompt.show()
 		return
 
+	if _can_open_ship_module_bench():
+		interaction_prompt.text = ship_module_loadout.get_interaction_prompt()
+		interaction_prompt.show()
+		return
+
 	if _player_near_resident:
 		interaction_prompt.text = "[E] TALK TO %s" % resident.display_name.to_upper()
 		interaction_prompt.show()
 		return
 
 	if _player_near_ship_entry:
-		interaction_prompt.text = "[E] ENTER SHIP"
+		interaction_prompt.text = (
+			"SHIP NEEDS A MODULE · USE THE COVE BENCH"
+			if not ship_module_loadout.has_pending_selection()
+			else "[E] ENTER SHIP"
+		)
 		interaction_prompt.show()
 		return
 
@@ -8533,6 +9193,20 @@ func get_playtest_state() -> Dictionary:
 		ship.get_cargo_lots(),
 		cove_storage.get_cargo_lots(),
 	)
+	var ship_module_view_text := "%s\n%s\n%s\n%s\n%s" % [
+		ship_module_title.text,
+		ship_module_status.text,
+		ship_module_details.text,
+		ship_module_result.text,
+		ship_module_controls.text,
+	]
+	var module_state: Dictionary = ship_module_loadout.get_playtest_state(
+		ship.get_cargo_lots().size(),
+		ship.get_cargo_limit(),
+		ship_module_view.visible,
+		ship_module_view_text if ship_module_view.visible else "",
+		_player_near_ship_module_bench,
+	)
 	var story_physical_state: Dictionary = (
 		_get_story_fragment_physical_state()
 	)
@@ -8665,6 +9339,10 @@ func get_playtest_state() -> Dictionary:
 	if _active_trade_contact != null:
 		active_trade_preview = _active_trade_contact.get_money_preview(money)
 	var fish_money_preview := _get_fish_money_preview(money)
+	var large_fish_money_preview := _get_fish_money_preview(
+		money,
+		FishingAreaState.LARGE_FISH_LOT_NAME,
+	)
 	var treasure_money_preview := _get_treasure_money_preview(money)
 	var food_view_full_text := "%s\n%s\n%s" % [
 		food_title.text,
@@ -8765,7 +9443,7 @@ func get_playtest_state() -> Dictionary:
 		+ _trade_sold_lot_count * TradeContact.VALUABLE_PRICE
 		- _ammunition_supply_money_spent
 		+ _prize_cannon_money_earned
-		+ _fish_sold_lot_count * TradeContact.NORMAL_PRICE
+		+ _fish_money_earned
 		+ _treasure_sold_lot_count * TradeContact.NORMAL_PRICE
 	)
 	var ammunition_load_state: Dictionary = ammunition_state["last_load_evidence"]
@@ -9275,6 +9953,29 @@ func get_playtest_state() -> Dictionary:
 		"phase_33_forced_safe_return_count": (
 			defeat_state["forced_safe_return_count"]
 		),
+		"defeat_last_ship_return_evidence": (
+			(ship_state["last_defeat_return_evidence"] as Dictionary).duplicate(true)
+		),
+		"defeat_return_clears_module_departure_ready": (
+			(ship_state["last_defeat_return_evidence"] as Dictionary).is_empty()
+			or bool((ship_state["last_defeat_return_evidence"] as Dictionary).get(
+				"fresh_cove_selection_required_after_defeat",
+				false,
+			))
+		),
+		"defeat_return_clears_all_module_departure_state": (
+			(ship_state["last_defeat_return_evidence"] as Dictionary).is_empty()
+			or (
+				bool((ship_state["last_defeat_return_evidence"] as Dictionary).get(
+					"fresh_cove_selection_required_after_defeat",
+					false,
+				))
+				and bool((ship_state["last_defeat_return_evidence"] as Dictionary).get(
+					"module_departure_pending_exit_cleared",
+					false,
+				))
+			)
+		),
 		"phase_33_defeat_cargo_loss_count": (
 			defeat_state["cargo_lot_loss_count"]
 		),
@@ -9336,6 +10037,7 @@ func get_playtest_state() -> Dictionary:
 			"chart": defeat_result_view.visible
 				and not waypoint_state["chart_visible"],
 			"attack": defeat_result_view.visible,
+			"pursuit": defeat_result_view.visible,
 			"boarding": defeat_result_view.visible,
 			"world_interaction": defeat_result_view.visible,
 			"walking": defeat_result_view.visible
@@ -9349,6 +10051,11 @@ func get_playtest_state() -> Dictionary:
 			_last_defeat_modal_input_evidence.duplicate(true)
 		),
 		"defeat_held_action_state": _get_defeat_held_action_state(),
+		"defeat_pursuit_input_clear": not _pursuit_pressed,
+		"defeat_release_controls_include_pursuit": (
+			not defeat_state["release_guard_pending"]
+			or DEFEAT_RELEASE_CONTROLS_TEXT.contains(", P,")
+		),
 		"defeat_release_cleanup_count": _defeat_release_cleanup_count,
 		"defeat_release_cleanup_evidence": (
 			_defeat_release_cleanup_evidence.duplicate(true)
@@ -9375,6 +10082,215 @@ func get_playtest_state() -> Dictionary:
 			defeat_state["existing_repair_recovery_used"]
 		),
 		"ship_controls": ship_state["controls"],
+		"ship_module_system_count": module_state["system_count"],
+		"ship_module_owner_count": module_state["owner_count"],
+		"ship_module_slot_count": module_state["module_slot_count"],
+		"ship_module_choice_count": module_state["module_choice_count"],
+		"ship_module_ids": module_state["module_ids"],
+		"ship_module_names": module_state["module_names"],
+		"ship_module_pending": module_state["pending_module"],
+		"ship_module_pending_name": module_state["pending_module_name"],
+		"ship_module_active": module_state["active_module"],
+		"ship_module_active_name": module_state["active_module_name"],
+		"ship_module_has_pending_selection": (
+			module_state["has_pending_selection"]
+		),
+		"ship_module_has_active_selection": (
+			module_state["has_active_selection"]
+		),
+		"ship_module_fresh_selection_required_for_next_cove_voyage": (
+			module_state["fresh_selection_required_for_next_cove_voyage"]
+		),
+		"ship_module_cove_boarding_requires_prepared_selection": (
+			module_state["cove_boarding_requires_prepared_selection"]
+		),
+		"ship_module_mutual_exclusivity_holds": (
+			module_state["mutual_exclusivity_holds"]
+		),
+		"ship_module_exactly_one_active_when_selected": (
+			module_state["exactly_one_active_when_selected"]
+		),
+		"ship_module_view_count": get_tree().get_nodes_in_group(
+			"ship_module_view"
+		).size(),
+		"ship_module_view_visible": module_state["view_visible"],
+		"ship_module_view_text": module_state["view_text"],
+		"ship_module_player_near_bench": module_state["player_near_station"],
+		"ship_module_selection_open": module_state["selection_open"],
+		"ship_module_release_pending": (
+			module_state["selection_release_pending"]
+		),
+		"ship_module_selection_attempt_count": (
+			module_state["selection_attempt_count"]
+		),
+		"ship_module_selection_success_count": (
+			module_state["selection_success_count"]
+		),
+		"ship_module_selection_denied_count": (
+			module_state["selection_denied_count"]
+		),
+		"ship_module_selection_held_input_count": (
+			module_state["selection_held_input_count"]
+		),
+		"ship_module_blocked_input_count": module_state["blocked_input_count"],
+		"ship_module_release_guard_input_count": (
+			module_state["release_guard_input_count"]
+		),
+		"ship_module_last_release_guard_evidence": (
+			module_state["last_release_guard_evidence"]
+		),
+		"ship_module_release_guard_blocks_world_input": (
+			not module_state["selection_release_pending"]
+			or (
+				not player_state["movement_enabled"]
+				and not waypoint_state["chart_visible"]
+				and not ship_state["navigation_input_blocked"]
+			)
+		),
+		"ship_module_fresh_selection_press_required": (
+			module_state["fresh_selection_press_required"]
+		),
+		"ship_module_last_selection_evidence": (
+			module_state["last_selection_evidence"]
+		),
+		"ship_module_last_held_selection_evidence": (
+			module_state["last_held_selection_evidence"]
+		),
+		"ship_module_activation_count": module_state["activation_count"],
+		"ship_module_prepared_for_cove_departure": (
+			module_state["prepared_for_cove_departure"]
+		),
+		"ship_module_last_activation_evidence": (
+			module_state["last_activation_evidence"]
+		),
+		"ship_module_active_voyage_serial": (
+			module_state["active_voyage_serial"]
+		),
+		"ship_module_cove_voyage_start_count": (
+			module_state["cove_voyage_start_count"]
+		),
+		"ship_module_last_voyage_start_evidence": (
+			module_state["last_voyage_start_evidence"]
+		),
+		"ship_module_last_departure_flow_evidence": (
+			_last_module_departure_flow_evidence.duplicate(true)
+		),
+		"ship_module_departure_ready": ship_state["module_departure_ready"],
+		"ship_module_departure_exit_pending": (
+			ship_state["module_departure_exit_pending"]
+		),
+		"ship_module_departure_release_observed": (
+			_cove_module_departure_release_observed
+		),
+		"ship_module_departure_exit_release_count": (
+			ship_state["module_departure_exit_release_count"]
+		),
+		"ship_module_departure_token_consumed_count": (
+			ship_state["module_departure_token_consumed_count"]
+		),
+		"ship_module_departure_exit_abort_count": (
+			ship_state["module_departure_exit_abort_count"]
+		),
+		"ship_module_last_departure_exit_evidence": (
+			ship_state["last_module_departure_exit_evidence"]
+		),
+		"ship_module_departure_exit_state_consistent": (
+			ship_state["module_departure_exit_state_consistent"]
+		),
+		"ship_module_token_held_until_damaged_dock_clear": (
+			ship_state["module_departure_token_held_until_damaged_dock_clear"]
+		),
+		"ship_module_token_consumed_after_exit_holds": (
+			_last_module_departure_flow_evidence.is_empty()
+			or not bool(_last_module_departure_flow_evidence.get(
+				"success",
+				false,
+			))
+			or (
+				String(_last_module_departure_flow_evidence.get(
+					"context",
+					"",
+				)) == "DOCKED_COVE_RELEASE_OBSERVED"
+				and ship_state["module_departure_ready"]
+				and ship_state["module_departure_exit_pending"]
+			)
+			or bool(_last_module_departure_flow_evidence.get(
+				"departure_token_consumed_after_exit",
+				false,
+			))
+		),
+		"ship_module_cargo_racks_active": module_state["cargo_racks_active"],
+		"ship_module_long_guns_active": module_state["long_guns_active"],
+		"ship_module_fishing_gear_active": module_state["fishing_gear_active"],
+		"ship_module_base_cargo_limit": module_state["base_cargo_limit"],
+		"ship_module_cargo_rack_limit": module_state["cargo_rack_limit"],
+		"ship_module_cargo_rack_bonus_slots": (
+			module_state["cargo_rack_bonus_slots"]
+		),
+		"ship_module_cargo_limit_matches_active": (
+			module_state["cargo_limit_matches_active_module"]
+		),
+		"ship_module_cargo_capacity_safe": (
+			module_state["cargo_capacity_safe"]
+		),
+		"ship_module_cargo_racks_add_space": (
+			module_state["cargo_racks_add_space"]
+		),
+		"ship_module_long_guns_add_no_cargo_space": (
+			module_state["long_guns_add_no_cargo_space"]
+		),
+		"ship_module_fishing_gear_adds_no_cargo_space": (
+			module_state["fishing_gear_adds_no_cargo_space"]
+		),
+		"ship_module_pursuit_attack_option_count": (
+			module_state["pursuit_attack_option_count"]
+		),
+		"ship_module_pursuit_attack_key": module_state["pursuit_attack_key"],
+		"ship_module_pursuit_attack_available": (
+			module_state["pursuit_attack_available"]
+		),
+		"ship_module_pursuit_fixed_sail_damage": (
+			module_state["pursuit_fixed_sail_damage"]
+		),
+		"ship_module_pursuit_reload_remaining": (
+			module_state["pursuit_reload_remaining"]
+		),
+		"ship_module_pursuit_attempt_count": (
+			module_state["pursuit_attempt_count"]
+		),
+		"ship_module_pursuit_shot_count": module_state["pursuit_shot_count"],
+		"ship_module_pursuit_hit_count": module_state["pursuit_hit_count"],
+		"ship_module_pursuit_held_input_count": (
+			module_state["pursuit_held_input_count"]
+		),
+		"ship_module_last_pursuit_result": module_state["last_pursuit_result"],
+		"ship_module_last_pursuit_evidence": (
+			module_state["last_pursuit_evidence"]
+		),
+		"ship_module_last_held_pursuit_evidence": (
+			module_state["last_held_pursuit_evidence"]
+		),
+		"ship_module_last_pursuit_target_id": _last_pursuit_target_id,
+		"ship_module_last_pursuit_attack_evidence": (
+			_last_pursuit_attack_evidence.duplicate(true)
+		),
+		"ship_module_selected_visible_in_ship_view": (
+			cargo_details.text.contains(
+				"MODULE SLOT · %s" % module_state["active_module_name"]
+			)
+		),
+		"ship_module_excluded_features": {
+			"more_module_slots": module_state["extra_module_slot_count"],
+			"module_levels": module_state["module_levels_count"],
+			"large_upgrade_tree": module_state["large_upgrade_tree_count"],
+			"passive_percentage_bonuses": (
+				module_state["passive_percentage_bonus_count"]
+			),
+			"ship_cosmetics": module_state["ship_cosmetic_count"],
+			"more_owned_ships": module_state["more_owned_ship_count"],
+			"resident_reactions": module_state["resident_reaction_count"],
+			"relationship_progress": module_state["relationship_progress_count"],
+		},
 		"ship_controls_enabled": ship_state["controls_enabled"],
 		"ship_captain_aboard": ship_state["captain_aboard"],
 		"cargo_limit": ship_state["cargo_limit"],
@@ -11973,6 +12889,10 @@ func get_playtest_state() -> Dictionary:
 		"fish_money_earned": _fish_money_earned,
 		"fish_sale_attempt_count": _fish_sale_attempt_count,
 		"fish_sold_lot_count": _fish_sold_lot_count,
+		"fish_sold_unit_count": _fish_sold_unit_count,
+		"fish_sale_expected_money_earned": (
+			_fish_sold_unit_count * TradeContact.NORMAL_PRICE
+		),
 		"fish_sale_denied_count": _fish_sale_denied_count,
 		"last_fish_sale_evidence": _last_fish_sale_evidence.duplicate(true),
 		"successful_fish_sale_evidence": (
@@ -11980,7 +12900,7 @@ func get_playtest_state() -> Dictionary:
 		),
 		"fish_sale_money_accounting_holds": (
 			_fish_money_earned
-			== _fish_sold_lot_count * TradeContact.NORMAL_PRICE
+			== _fish_sold_unit_count * TradeContact.NORMAL_PRICE
 		),
 		"ship_trade_lot_count": (
 			ship.get_cargo_lots().count(TradeContact.GOOD_NAME)
@@ -12739,7 +13659,7 @@ func get_playtest_state() -> Dictionary:
 				else ""
 			),
 			"leave_control": "X",
-			"replacement_controls": ["1", "2", "3"],
+			"replacement_controls": ["1", "2", "3", "4"],
 			"last_resolution": ruin_state["last_choice_evidence"],
 		},
 		"ruin_existing_cargo_choice_sources_supported": (
@@ -12929,7 +13849,7 @@ func get_playtest_state() -> Dictionary:
 				else ""
 			),
 			"leave_control": "X",
-			"replacement_controls": ["1", "2", "3"],
+			"replacement_controls": ["1", "2", "3", "4"],
 			"last_resolution": story_state["last_choice_evidence"],
 		},
 		"story_fragment_existing_cargo_choice_sources_supported": [
@@ -13497,7 +14417,7 @@ func get_playtest_state() -> Dictionary:
 			"leave_control": "UNAVAILABLE",
 			"blocked_leave_control": "X",
 			"replacement_required": true,
-			"replacement_controls": ["1", "2", "3"],
+			"replacement_controls": ["1", "2", "3", "4"],
 			"last_resolution": monster_state["last_part_choice_evidence"],
 		},
 		"monster_return_to_cove_count": monster_state["return_to_cove_count"],
@@ -13563,6 +14483,8 @@ func get_playtest_state() -> Dictionary:
 			interaction_prompt.visible
 			and (
 				interaction_prompt.text == "[E] CATCH ONE FISH LOT"
+				or interaction_prompt.text
+					== "[E] FISHING GEAR · CATCH ONE LARGE FISH LOT"
 				or interaction_prompt.text == "STOP SHIP TO FISH"
 				or interaction_prompt.text == "CAPTAIN MUST BE ABOARD TO FISH"
 				or interaction_prompt.text == "STORM · FISHING BLOCKED"
@@ -13573,6 +14495,8 @@ func get_playtest_state() -> Dictionary:
 			if interaction_prompt.visible
 			and (
 				interaction_prompt.text == "[E] CATCH ONE FISH LOT"
+				or interaction_prompt.text
+					== "[E] FISHING GEAR · CATCH ONE LARGE FISH LOT"
 				or interaction_prompt.text == "STOP SHIP TO FISH"
 				or interaction_prompt.text == "CAPTAIN MUST BE ABOARD TO FISH"
 				or interaction_prompt.text == "STORM · FISHING BLOCKED"
@@ -13580,10 +14504,19 @@ func get_playtest_state() -> Dictionary:
 			else ""
 		),
 		"fish_lot_name": fishing_state["fish_lot_name"],
+		"large_fish_lot_name": fishing_state["large_fish_lot_name"],
+		"large_catch_fish_units": fishing_state["large_catch_fish_units"],
 		"fish_type_count": fishing_state["fish_type_count"],
+		"fishing_catch_size_count": fishing_state["catch_size_count"],
 		"fish_price_state": fishing_state["fish_price_state"],
 		"fish_cargo_lot_count": (
 			ship.get_cargo_lots().count(FishingAreaState.FISH_LOT_NAME)
+			+ ship.get_cargo_lots().count(
+				FishingAreaState.LARGE_FISH_LOT_NAME
+			)
+		),
+		"large_fish_cargo_lot_count": ship.get_cargo_lots().count(
+			FishingAreaState.LARGE_FISH_LOT_NAME
 		),
 		"fish_uses_normal_cargo_slots": true,
 		"fish_each_lot_uses_one_slot": ship_state["each_cargo_lot_uses_one_slot"],
@@ -13596,6 +14529,17 @@ func get_playtest_state() -> Dictionary:
 		"fishing_discarded_catch_count": fishing_state["discarded_catch_count"],
 		"fishing_replacement_keep_count": fishing_state["replacement_keep_count"],
 		"fishing_pending_catch_count": fishing_state["pending_catch_count"],
+		"fishing_pending_lot_name": fishing_state["pending_fish_lot_name"],
+		"fishing_module_voyage_serial": fishing_state["module_voyage_serial"],
+		"fishing_larger_catch_available": (
+			fishing_state["larger_catch_available"]
+		),
+		"fishing_larger_catch_count": fishing_state["larger_catch_count"],
+		"fishing_normal_catch_count": fishing_state["normal_catch_count"],
+		"fishing_one_larger_catch_per_cove_voyage": (
+			fishing_state["one_larger_catch_per_cove_voyage"]
+		),
+		"fishing_last_module_evidence": fishing_state["last_module_evidence"],
 		"fishing_last_catch_result": fishing_state["last_catch_result"],
 		"fishing_last_catch_evidence": fishing_state["last_catch_evidence"],
 		"fishing_last_choice_evidence": fishing_state["last_choice_evidence"],
@@ -13676,7 +14620,7 @@ func get_playtest_state() -> Dictionary:
 				and ship_state["navigation_input_blocked"]
 			),
 			"discard_control": "X",
-			"replacement_controls": ["1", "2", "3"],
+			"replacement_controls": ["1", "2", "3", "4"],
 			"last_resolution": fishing_state["last_choice_evidence"],
 		},
 		"fishing_sale": {
@@ -13686,6 +14630,7 @@ func get_playtest_state() -> Dictionary:
 			"price_state": fishing_state["fish_price_state"],
 			"fixed_price": TradeContact.NORMAL_PRICE,
 			"money_preview": fish_money_preview.duplicate(true),
+			"large_catch_money_preview": large_fish_money_preview.duplicate(true),
 			"uses_canonical_normal_fixed_price": (
 				fishing_state["fish_price_state"] == "NORMAL"
 				and TradeContact.NORMAL_PRICE
@@ -13693,7 +14638,15 @@ func get_playtest_state() -> Dictionary:
 			),
 			"attempt_count": _fish_sale_attempt_count,
 			"sold_lot_count": _fish_sold_lot_count,
+			"sold_fish_unit_count": _fish_sold_unit_count,
 			"money_earned": _fish_money_earned,
+			"expected_money_earned": (
+				_fish_sold_unit_count * TradeContact.NORMAL_PRICE
+			),
+			"exact_money_accounting_holds": (
+				_fish_money_earned
+				== _fish_sold_unit_count * TradeContact.NORMAL_PRICE
+			),
 			"last_evidence": _last_fish_sale_evidence.duplicate(true),
 			"successful_evidence": (
 				_successful_fish_sale_evidence.duplicate(true)
@@ -13709,6 +14662,8 @@ func get_playtest_state() -> Dictionary:
 			"caught": fishing_state["successful_catch_count"],
 			"in_ship": ship.get_cargo_lots().count(
 				FishingAreaState.FISH_LOT_NAME
+			) + ship.get_cargo_lots().count(
+				FishingAreaState.LARGE_FISH_LOT_NAME
 			),
 			"pending": fishing_state["pending_catch_count"],
 			"discarded_new_fish": fishing_state["discarded_catch_count"],

@@ -1,4 +1,4 @@
-[gd_scene load_steps=35 format=3]
+[gd_scene load_steps=36 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -22,6 +22,7 @@
 [ext_resource type="Script" path="res://scripts/ruin_exploration.gd" id="19_ruin"]
 [ext_resource type="Script" path="res://scripts/story_clue.gd" id="20_story_clue"]
 [ext_resource type="Script" path="res://scripts/monster_hunt.gd" id="21_monster_hunt"]
+[ext_resource type="Script" path="res://scripts/ship_module_loadout.gd" id="22_ship_module"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -277,6 +278,16 @@ mark_capacity = 1
 [node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/CoveBuyer"]
 shape = SubResource("CircleShape2D_trade_contact")
 
+[node name="ShipModuleBench" type="Area2D" parent="InteractiveObjects" groups=["ship_module_bench", "interactive"]]
+z_index = 1
+position = Vector2(675, 550)
+collision_layer = 0
+collision_mask = 1
+script = ExtResource("22_ship_module")
+
+[node name="InteractionRange" type="CollisionShape2D" parent="InteractiveObjects/ShipModuleBench"]
+shape = SubResource("CircleShape2D_cove_storage")
+
 [node name="PortTrader" type="Area2D" parent="InteractiveObjects" groups=["interactive", "port_trader"]]
 z_index = 1
 position = Vector2(2760, 480)
@@ -358,7 +369,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 39 · Monster Hunting"
+text = "Phase 40 · Ship Module Loadout"
 
 [node name="WeatherView" type="ColorRect" parent="Interface" groups=["weather_view"]]
 visible = false
@@ -1085,7 +1096,7 @@ offset_right = 838.0
 offset_bottom = 443.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 17
-text = "[1 / 2 / 3] SHIP → STORAGE · [4 / 5 / 6] STORAGE → SHIP · [X] CLOSE"
+text = "[1 / 2 / 3 / 0] SHIP → STORAGE · [4 / 5 / 6] STORAGE → SHIP · [X] CLOSE"
 horizontal_alignment = 1
 
 [node name="ConstructionView" type="ColorRect" parent="Interface"]
@@ -1278,6 +1289,67 @@ offset_bottom = 472.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 19
 text = "[X] CONTINUE TO RECOVERY"
+horizontal_alignment = 1
+
+[node name="ShipModuleView" type="ColorRect" parent="Interface" groups=["ship_module_view"]]
+visible = false
+offset_left = 166.0
+offset_top = 102.0
+offset_right = 986.0
+offset_bottom = 540.0
+mouse_filter = 0
+color = Color(0.0313726, 0.109804, 0.133333, 0.99)
+
+[node name="ModuleTitle" type="Label" parent="Interface/ShipModuleView"]
+offset_left = 28.0
+offset_top = 20.0
+offset_right = 792.0
+offset_bottom = 56.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 25
+text = "SHIP MODULE BENCH · ONE SLOT"
+horizontal_alignment = 1
+
+[node name="ModuleStatus" type="Label" parent="Interface/ShipModuleView"]
+offset_left = 40.0
+offset_top = 68.0
+offset_right = 780.0
+offset_bottom = 102.0
+theme_override_colors/font_color = Color(0.556863, 0.941176, 0.658824, 1)
+theme_override_font_sizes/font_size = 19
+text = "ACTIVE · NO MODULE SELECTED · NEXT · NO MODULE SELECTED"
+horizontal_alignment = 1
+
+[node name="ModuleDetails" type="Label" parent="Interface/ShipModuleView"]
+offset_left = 52.0
+offset_top = 120.0
+offset_right = 768.0
+offset_bottom = 300.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_constants/line_spacing = 9
+theme_override_font_sizes/font_size = 18
+text = "[1] CARGO RACKS · CARGO LIMIT 4\n[2] LONG GUNS · [P] FORWARD PURSUIT SAIL ATTACK\n[3] FISHING GEAR · ONE LARGE CATCH NEXT VOYAGE\n\nONE SLOT · ONE CHOICE · ACTIVE WHEN CAPTAIN BOARDS"
+horizontal_alignment = 1
+
+[node name="ModuleResult" type="Label" parent="Interface/ShipModuleView"]
+offset_left = 44.0
+offset_top = 322.0
+offset_right = 776.0
+offset_bottom = 362.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 17
+text = "SELECT ONE MODULE FOR THE NEXT COVE VOYAGE"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="ModuleControls" type="Label" parent="Interface/ShipModuleView"]
+offset_left = 32.0
+offset_top = 390.0
+offset_right = 788.0
+offset_bottom = 422.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 17
+text = "[1] CARGO RACKS · [2] LONG GUNS · [3] FISHING GEAR · [X] CLOSE"
 horizontal_alignment = 1
 
 [node name="SignMessage" type="Label" parent="Interface"]

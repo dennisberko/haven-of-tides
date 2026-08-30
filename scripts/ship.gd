@@ -22,7 +22,8 @@ const COVE_ENTRANCE_RADIUS := 110.0
 const DOCK_DISTANCE_THRESHOLD := 70.0
 const DOCK_MAX_SPEED := 12.0
 const DOCK_MIN_ALIGNMENT := 0.92
-const CARGO_LIMIT := 3
+const BASE_CARGO_LIMIT := 3
+const MAX_MODULE_CARGO_LIMIT := 4
 const TIMBER_LOT_NAME := "TIMBER LOT"
 const REPAIR_COST_LOT_NAME := TIMBER_LOT_NAME
 const REPAIR_COST_LOT_COUNT := 1
@@ -95,6 +96,18 @@ var cargo_lots: Array[String] = [
 	"COVE MEDICINE LOT",
 	FOOD_LOT_NAME,
 ]
+var _cargo_limit := BASE_CARGO_LIMIT
+var _module_departure_ready := false
+var _module_departure_exit_pending := false
+var _module_departure_block_latched := false
+var _module_departure_blocked_count := 0
+var _last_module_departure_evidence: Dictionary = {}
+var _module_departure_exit_release_count := 0
+var _module_departure_token_consumed_count := 0
+var _module_departure_exit_abort_count := 0
+var _last_module_departure_exit_evidence: Dictionary = {}
+var _cargo_limit_change_count := 0
+var _last_cargo_limit_change_evidence: Dictionary = {}
 var _weather_turn_multiplier := 1.0
 var _weather_control_effect_active := false
 var _weather_control_update_count := 0
@@ -228,6 +241,83 @@ func set_captain_aboard(aboard: bool) -> void:
 		_departure_input_armed = false
 		set_controls_enabled(false)
 	queue_redraw()
+
+
+func set_module_departure_ready(ready: bool) -> void:
+	if not ready:
+		clear_module_departure_state("SET_MODULE_DEPARTURE_NOT_READY")
+		return
+	_module_departure_ready = true
+	_module_departure_exit_pending = false
+	_module_departure_block_latched = false
+	queue_redraw()
+
+
+func is_module_departure_ready() -> bool:
+	return _module_departure_ready
+
+
+func is_module_departure_exit_pending() -> bool:
+	return _module_departure_exit_pending
+
+
+func clear_module_departure_state(reason: String) -> Dictionary:
+	var ready_before := _module_departure_ready
+	var exit_pending_before := _module_departure_exit_pending
+	var consumed_after_exit := (
+		ready_before
+		and not at_damaged_dock
+		and reason.ends_with("MODULE_START")
+	)
+	if consumed_after_exit:
+		_module_departure_token_consumed_count += 1
+	elif exit_pending_before:
+		_module_departure_exit_abort_count += 1
+	_module_departure_ready = false
+	_module_departure_exit_pending = false
+	_module_departure_block_latched = false
+	_last_module_departure_exit_evidence = {
+		"action": "CLEAR_MODULE_DEPARTURE_STATE",
+		"reason": reason,
+		"ready_before": ready_before,
+		"ready_after": _module_departure_ready,
+		"exit_pending_before": exit_pending_before,
+		"exit_pending_after": _module_departure_exit_pending,
+		"at_damaged_dock": at_damaged_dock,
+		"ship_is_docked": is_docked,
+		"token_consumed_after_exit": consumed_after_exit,
+		"pending_exit_aborted": exit_pending_before and not consumed_after_exit,
+		"token_changed_true_to_false": (
+			ready_before and not _module_departure_ready
+		),
+	}
+	queue_redraw()
+	return _last_module_departure_exit_evidence.duplicate(true)
+
+
+func set_cargo_limit(new_limit: int) -> Dictionary:
+	var limit_before := _cargo_limit
+	var cargo_used := cargo_lots.size()
+	var accepted := (
+		new_limit >= BASE_CARGO_LIMIT
+		and new_limit <= MAX_MODULE_CARGO_LIMIT
+		and cargo_used <= new_limit
+	)
+	if accepted:
+		_cargo_limit = new_limit
+		_cargo_limit_change_count += 1
+	_record_cargo_usage()
+	_last_cargo_limit_change_evidence = {
+		"success": accepted,
+		"requested_limit": new_limit,
+		"cargo_limit_before": limit_before,
+		"cargo_limit_after": _cargo_limit,
+		"cargo_used": cargo_used,
+		"cargo_capacity_safe": cargo_used <= _cargo_limit,
+		"no_state_change_on_denial": accepted or limit_before == _cargo_limit,
+	}
+	queue_redraw()
+	return _last_cargo_limit_change_evidence.duplicate(true)
 
 
 func can_leave_at_damaged_dock() -> bool:
@@ -420,6 +510,18 @@ func consume_ammunition_for_harpoon() -> Dictionary:
 	return evidence
 
 
+func consume_ammunition_for_long_guns() -> Dictionary:
+	var evidence: Dictionary = (
+		_ammunition_state.consume_for_accepted_long_guns(cargo_lots)
+	)
+	if bool(evidence.get("success", false)):
+		_sync_cargo_state()
+	evidence["action"] = "CONSUME_AMMUNITION_FOR_LONG_GUNS"
+	evidence["uses_existing_ammunition_owner"] = true
+	queue_redraw()
+	return evidence
+
+
 func load_ammunition_at_port() -> Dictionary:
 	var evidence: Dictionary = _ammunition_state.attempt_port_load(
 		cargo_lots,
@@ -443,7 +545,7 @@ func add_salvaged_timber_lot() -> bool:
 
 
 func can_keep_cargo_lot() -> bool:
-	return cargo_lots.size() < CARGO_LIMIT
+	return cargo_lots.size() < _cargo_limit
 
 
 func keep_cargo_lot(lot_name: String) -> bool:
@@ -495,7 +597,7 @@ func remove_cargo_lot(lot_name: String) -> bool:
 func restore_cargo_slot_from_storage(slot_index: int, lot_name: String) -> bool:
 	if (
 		lot_name.is_empty()
-		or cargo_lots.size() >= CARGO_LIMIT
+		or cargo_lots.size() >= _cargo_limit
 		or slot_index < 0
 		or slot_index > cargo_lots.size()
 	):
@@ -510,7 +612,7 @@ func get_cargo_lots() -> Array[String]:
 
 
 func get_cargo_limit() -> int:
-	return CARGO_LIMIT
+	return _cargo_limit
 
 
 func get_food_units() -> int:
@@ -805,6 +907,7 @@ func return_to_cove_after_defeat(
 	var damage_before: Dictionary = get_damage_playtest_state()
 	var crew_before: Dictionary = get_crew_condition_playtest_state()
 	var return_count_before := _defeat_return_count
+	var module_departure_ready_before := _module_departure_ready
 	if (
 		not captain_aboard
 		or is_docked
@@ -822,6 +925,8 @@ func return_to_cove_after_defeat(
 			"cargo_after": cargo_before.duplicate(),
 			"ammunition_before": ammunition_before,
 			"ammunition_after": ammunition_before,
+			"module_departure_ready_before": module_departure_ready_before,
+			"module_departure_ready_after": _module_departure_ready,
 			"no_state_change": true,
 		}
 		return _last_defeat_return_evidence.duplicate(true)
@@ -859,6 +964,9 @@ func return_to_cove_after_defeat(
 	current_dock_id = "cove"
 	last_dock_id = "cove"
 	at_damaged_dock = true
+	var module_departure_clear_evidence := clear_module_departure_state(
+		"DEFEAT_RETURN"
+	)
 	_dock_exit_cleared = false
 	_departure_input_armed = false
 	last_collision_response = "DEFEAT_RETURN_COVE"
@@ -927,6 +1035,27 @@ func return_to_cove_after_defeat(
 			and is_equal_approx(rotation, float(cove_definition["snap_rotation"]))
 		),
 		"captain_aboard": captain_aboard,
+		"module_departure_ready_before": module_departure_ready_before,
+		"module_departure_ready_after": _module_departure_ready,
+		"module_departure_exit_pending_before": (
+			module_departure_clear_evidence["exit_pending_before"]
+		),
+		"module_departure_exit_pending_after": (
+			module_departure_clear_evidence["exit_pending_after"]
+		),
+		"module_departure_pending_exit_cleared": (
+			not _module_departure_exit_pending
+		),
+		"module_departure_clear_evidence": (
+			module_departure_clear_evidence.duplicate(true)
+		),
+		"module_departure_ready_cleared": not _module_departure_ready,
+		"fresh_cove_selection_required_after_defeat": (
+			not _module_departure_ready
+		),
+		"module_departure_reset_changed_state": (
+			module_departure_ready_before and not _module_departure_ready
+		),
 		"main_ship_retained": true,
 		"port_access_retained": DOCK_DEFINITIONS.has("port"),
 		"normal_safe_dock_restoration_still_available": true,
@@ -1309,7 +1438,7 @@ func _sync_cargo_state() -> void:
 func _record_cargo_usage() -> void:
 	_max_used_slots_observed = maxi(_max_used_slots_observed, cargo_lots.size())
 	_cargo_limit_never_exceeded = (
-		_cargo_limit_never_exceeded and cargo_lots.size() <= CARGO_LIMIT
+		_cargo_limit_never_exceeded and cargo_lots.size() <= _cargo_limit
 	)
 
 
@@ -1384,6 +1513,8 @@ func dock_at_available() -> String:
 	current_dock_id = dock_id
 	last_dock_id = dock_id
 	at_damaged_dock = dock_id == "cove"
+	if dock_id == "cove":
+		clear_module_departure_state("COVE_DOCK_ARRIVAL")
 	_dock_exit_cleared = dock_id != "cove"
 	_departure_input_armed = false
 	last_collision_response = "DOCKED_%s" % dock_id.to_upper()
@@ -1478,6 +1609,22 @@ func _release_current_dock() -> void:
 	if departing_dock_id == "cove":
 		at_damaged_dock = true
 		_dock_exit_cleared = false
+		_module_departure_exit_pending = _module_departure_ready
+		_module_departure_exit_release_count += 1
+		_last_module_departure_exit_evidence = {
+			"action": "COVE_DOCK_RELEASE",
+			"ready_before": _module_departure_ready,
+			"ready_after": _module_departure_ready,
+			"exit_pending_before": false,
+			"exit_pending_after": _module_departure_exit_pending,
+			"at_damaged_dock": at_damaged_dock,
+			"ship_is_docked": is_docked,
+			"token_held_for_dock_exit": (
+				_module_departure_ready
+				and _module_departure_exit_pending
+				and at_damaged_dock
+			),
+		}
 	else:
 		at_damaged_dock = false
 		_dock_exit_cleared = true
@@ -1518,18 +1665,36 @@ func _physics_process(delta: float) -> void:
 	var throttle_pressed := (
 		Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP)
 	)
+	if not throttle_pressed:
+		_module_departure_block_latched = false
 	if is_docked:
 		current_speed = 0.0
 		sailing_velocity = Vector2.ZERO
 		if captain_aboard:
 			if not throttle_pressed:
 				_departure_input_armed = true
+			elif (
+				current_dock_id == "cove"
+				and not _module_departure_ready
+			):
+				if not _module_departure_block_latched:
+					_record_module_departure_block("DOCKED_COVE")
+				_module_departure_block_latched = true
+				_departure_input_armed = false
 			elif _departure_input_armed:
 				_departure_input_armed = false
 				_release_current_dock()
 		return
 
 	if not controls_enabled:
+		return
+
+	if at_damaged_dock and not _module_departure_ready and throttle_pressed:
+		if not _module_departure_block_latched:
+			_record_module_departure_block("DAMAGED_COVE_DOCK")
+		_module_departure_block_latched = true
+		current_speed = 0.0
+		sailing_velocity = Vector2.ZERO
 		return
 
 	var brake_pressed := (
@@ -1606,6 +1771,21 @@ func _is_any_movement_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_DOWN)
 		or Input.is_key_pressed(KEY_RIGHT)
 	)
+
+
+func _record_module_departure_block(context: String) -> void:
+	_module_departure_blocked_count += 1
+	_last_module_departure_evidence = {
+		"success": false,
+		"result": "DEPARTURE BLOCKED · SELECT SHIP MODULE AT COVE",
+		"context": context,
+		"cargo_used": cargo_lots.size(),
+		"cargo_limit": _cargo_limit,
+		"position": global_position,
+		"speed": current_speed,
+		"no_movement": is_zero_approx(current_speed),
+		"fresh_press_required": true,
+	}
 
 
 func _move_with_sailing_limits(delta: float) -> void:
@@ -1733,6 +1913,21 @@ func _update_dock_exit_state() -> void:
 	if at_damaged_dock and outward_separation > DOCK_DEPARTURE_DISTANCE:
 		has_departed_dock = true
 		at_damaged_dock = false
+		if _module_departure_exit_pending:
+			_last_module_departure_exit_evidence = {
+				"action": "COVE_DOCK_EXIT_CLEARED",
+				"ready_before": _module_departure_ready,
+				"ready_after": _module_departure_ready,
+				"exit_pending_before": true,
+				"exit_pending_after": _module_departure_exit_pending,
+				"at_damaged_dock": at_damaged_dock,
+				"ship_is_docked": is_docked,
+				"token_still_ready_at_exit_clear": (
+					_module_departure_ready
+					and _module_departure_exit_pending
+					and not at_damaged_dock
+				),
+			}
 		queue_redraw()
 
 	if not _dock_exit_cleared and global_position.y >= DOCK_EXIT_CLEAR_Y:
@@ -1931,19 +2126,54 @@ func get_playtest_state() -> Dictionary:
 		"departure_input_armed": _departure_input_armed,
 		"navigation_input_blocked": navigation_input_blocked,
 		"navigation_release_pending": navigation_release_pending,
-		"cargo_limit": CARGO_LIMIT,
+		"cargo_limit": _cargo_limit,
+		"base_cargo_limit": BASE_CARGO_LIMIT,
+		"max_module_cargo_limit": MAX_MODULE_CARGO_LIMIT,
+		"cargo_limit_change_count": _cargo_limit_change_count,
+		"last_cargo_limit_change_evidence": (
+			_last_cargo_limit_change_evidence.duplicate(true)
+		),
 		"cargo_used_slots": cargo_lots.size(),
-		"cargo_free_slots": CARGO_LIMIT - cargo_lots.size(),
+		"cargo_free_slots": _cargo_limit - cargo_lots.size(),
 		"cargo_lots": get_cargo_lots(),
 		"starting_cargo_lots": STARTING_CARGO_LOTS.duplicate(),
 		"starting_cargo_used_slots": _starting_used_slots,
 		"all_but_one_slot_full_at_start": (
-			_starting_used_slots == CARGO_LIMIT - 1
+			_starting_used_slots == BASE_CARGO_LIMIT - 1
 		),
 		"each_cargo_lot_uses_one_slot": true,
 		"cargo_slot_lot_counts": _get_cargo_slot_lot_counts(),
 		"max_used_slots_observed": _max_used_slots_observed,
 		"cargo_limit_never_exceeded": _cargo_limit_never_exceeded,
+		"module_departure_ready": _module_departure_ready,
+		"module_departure_exit_pending": _module_departure_exit_pending,
+		"module_departure_exit_release_count": (
+			_module_departure_exit_release_count
+		),
+		"module_departure_token_consumed_count": (
+			_module_departure_token_consumed_count
+		),
+		"module_departure_exit_abort_count": (
+			_module_departure_exit_abort_count
+		),
+		"module_departure_exit_state_consistent": (
+			not _module_departure_exit_pending
+			or (
+				_module_departure_ready
+				and not is_docked
+			)
+		),
+		"module_departure_token_held_until_damaged_dock_clear": (
+			not _module_departure_exit_pending
+			or _module_departure_ready
+		),
+		"last_module_departure_exit_evidence": (
+			_last_module_departure_exit_evidence.duplicate(true)
+		),
+		"module_departure_blocked_count": _module_departure_blocked_count,
+		"last_module_departure_evidence": (
+			_last_module_departure_evidence.duplicate(true)
+		),
 		"timber_lots": timber_lots,
 		"has_salvaged_timber": timber_lots > 0,
 		"food_state_owner_count": food_state["owner_count"],
@@ -2070,6 +2300,7 @@ func get_playtest_state() -> Dictionary:
 			"left_broadside": "Q",
 			"right_broadside": "F",
 			"monster_harpoon": "V",
+			"long_guns_pursuit": "P",
 			"target_hull": "H",
 			"target_sails": "K",
 		},

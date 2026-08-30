@@ -3,6 +3,8 @@ extends Node2D
 
 const AREA_ID := "shoal_fishing_area"
 const FISH_LOT_NAME := "FISH LOT"
+const LARGE_FISH_LOT_NAME := "FISH LOT · LARGE CATCH"
+const LARGE_CATCH_FISH_UNITS := 2
 const FISH_PRICE_STATE := "NORMAL"
 const FISHING_RANGE := 155.0
 const FISHING_MAX_SPEED := 0.1
@@ -41,6 +43,13 @@ var _last_held_input_evidence: Dictionary = {}
 var _last_storm_blocked_evidence: Dictionary = {}
 var _last_weather_recovery_evidence: Dictionary = {}
 var _pending_cargo_snapshot: Array[String] = []
+var _pending_fish_lot_name := ""
+var _fishing_gear_active := false
+var _module_voyage_serial := 0
+var _larger_catch_available := false
+var _larger_catch_count := 0
+var _normal_catch_count := 0
+var _last_module_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -91,6 +100,25 @@ func update_state(
 	visible = _sailing_view_active
 
 
+func configure_fishing_gear(active: bool, voyage_serial: int) -> void:
+	var active_before := _fishing_gear_active
+	var serial_before := _module_voyage_serial
+	_fishing_gear_active = active
+	if voyage_serial != _module_voyage_serial:
+		_module_voyage_serial = voyage_serial
+		_larger_catch_available = active and voyage_serial > 0
+	elif not active:
+		_larger_catch_available = false
+	_last_module_evidence = {
+		"active_before": active_before,
+		"active_after": _fishing_gear_active,
+		"voyage_serial_before": serial_before,
+		"voyage_serial_after": _module_voyage_serial,
+		"larger_catch_available": _larger_catch_available,
+		"one_larger_catch_per_cove_voyage": true,
+	}
+
+
 func is_fishing_eligible() -> bool:
 	return _fishing_eligible
 
@@ -101,6 +129,10 @@ func can_receive_fishing_press() -> bool:
 
 func has_pending_catch() -> bool:
 	return _pending_catch_count == 1
+
+
+func is_fish_cargo_lot(lot_name: String) -> bool:
+	return lot_name == FISH_LOT_NAME or lot_name == LARGE_FISH_LOT_NAME
 
 
 func get_interaction_prompt() -> String:
@@ -118,6 +150,8 @@ func get_interaction_prompt() -> String:
 		return "STOP SHIP TO FISH"
 	if _weather_blocked:
 		return "STORM · FISHING BLOCKED"
+	if _larger_catch_available:
+		return "[E] FISHING GEAR · CATCH ONE LARGE FISH LOT"
 	return "[E] CATCH ONE FISH LOT"
 
 
@@ -158,14 +192,32 @@ func try_catch_fish_lot(cargo_before: Array[String]) -> String:
 		}
 		return ""
 
+	var caught_lot_name := (
+		LARGE_FISH_LOT_NAME if _larger_catch_available else FISH_LOT_NAME
+	)
 	_successful_catch_count += 1
 	_pending_catch_count = 1
+	_pending_fish_lot_name = caught_lot_name
 	_pending_cargo_snapshot = cargo_before.duplicate()
-	_last_catch_result = "CAUGHT_ONE_FISH_LOT"
+	if caught_lot_name == LARGE_FISH_LOT_NAME:
+		_larger_catch_available = false
+		_larger_catch_count += 1
+		_last_catch_result = "CAUGHT_ONE_LARGE_FISH_LOT"
+	else:
+		_normal_catch_count += 1
+		_last_catch_result = "CAUGHT_ONE_FISH_LOT"
 	_last_catch_evidence = {
 		"success": true,
 		"result": _last_catch_result,
-		"fish_lot_name": FISH_LOT_NAME,
+		"fish_lot_name": caught_lot_name,
+		"fish_units": (
+			LARGE_CATCH_FISH_UNITS
+			if caught_lot_name == LARGE_FISH_LOT_NAME
+			else 1
+		),
+		"larger_catch": caught_lot_name == LARGE_FISH_LOT_NAME,
+		"fishing_gear_active": _fishing_gear_active,
+		"module_voyage_serial": _module_voyage_serial,
 		"cargo_before": cargo_before.duplicate(),
 		"fresh_press_required": true,
 		"generated_lot_count": 1,
@@ -180,9 +232,12 @@ func try_catch_fish_lot(cargo_before: Array[String]) -> String:
 			"cargo_before": cargo_before.duplicate(),
 			"successful_catch_count_after": _successful_catch_count,
 			"generated_lot_count": 1,
-			"normal_fish_lot_returned": true,
+			"normal_fish_lot_returned": caught_lot_name == FISH_LOT_NAME,
+			"larger_fish_lot_returned": (
+				caught_lot_name == LARGE_FISH_LOT_NAME
+			),
 		}
-	return FISH_LOT_NAME
+	return caught_lot_name
 
 
 func get_last_catch_result() -> String:
@@ -206,6 +261,7 @@ func record_held_press(cargo_lots: Array[String]) -> void:
 func resolve_direct_keep(cargo_after: Array[String]) -> bool:
 	if not has_pending_catch():
 		return false
+	var resolved_lot_name := _pending_fish_lot_name
 	_pending_catch_count = 0
 	_direct_keep_count += 1
 	_last_catch_result = "KEPT_ONE_FISH_LOT"
@@ -214,16 +270,18 @@ func resolve_direct_keep(cargo_after: Array[String]) -> bool:
 		"cargo_after": cargo_after.duplicate(),
 		"cargo_delta": cargo_after.size() - _pending_cargo_snapshot.size(),
 		"fish_count_delta": (
-			cargo_after.count(FISH_LOT_NAME)
-			- _pending_cargo_snapshot.count(FISH_LOT_NAME)
+			cargo_after.count(resolved_lot_name)
+			- _pending_cargo_snapshot.count(resolved_lot_name)
 		),
 		"one_normal_cargo_slot_added": (
 			cargo_after.size() == _pending_cargo_snapshot.size() + 1
-			and cargo_after.count(FISH_LOT_NAME)
-				== _pending_cargo_snapshot.count(FISH_LOT_NAME) + 1
+			and cargo_after.count(resolved_lot_name)
+				== _pending_cargo_snapshot.count(resolved_lot_name) + 1
 		),
+		"resolved_lot_name": resolved_lot_name,
 	}, true)
 	_pending_cargo_snapshot.clear()
+	_pending_fish_lot_name = ""
 	return true
 
 
@@ -235,7 +293,7 @@ func record_choice_required() -> bool:
 	_last_choice_evidence = {
 		"resolution": "PENDING",
 		"result": _last_catch_result,
-		"pending_lot": FISH_LOT_NAME,
+		"pending_lot": _pending_fish_lot_name,
 		"cargo_before": _pending_cargo_snapshot.duplicate(),
 		"cargo_after": _pending_cargo_snapshot.duplicate(),
 		"cargo_unchanged_before_choice": true,
@@ -258,6 +316,7 @@ func resolve_discard(cargo_after: Array[String]) -> bool:
 		"state_loss": cargo_after != _pending_cargo_snapshot,
 	}
 	_pending_cargo_snapshot.clear()
+	_pending_fish_lot_name = ""
 	return true
 
 
@@ -267,6 +326,7 @@ func resolve_replacement(
 ) -> bool:
 	if not has_pending_catch() or discarded_lot.is_empty():
 		return false
+	var resolved_lot_name := _pending_fish_lot_name
 	_pending_catch_count = 0
 	_replacement_keep_count += 1
 	_displaced_cargo_discard_count += 1
@@ -277,18 +337,19 @@ func resolve_replacement(
 		"resolution": "REPLACE_CARGO_SLOT",
 		"result": _last_catch_result,
 		"discarded_lot": discarded_lot,
-		"kept_lot": FISH_LOT_NAME,
+		"kept_lot": resolved_lot_name,
 		"cargo_before": _pending_cargo_snapshot.duplicate(),
 		"cargo_after": cargo_after.duplicate(),
 		"cargo_slot_count_unchanged": (
 			cargo_after.size() == _pending_cargo_snapshot.size()
 		),
 		"fish_kept": (
-			cargo_after.count(FISH_LOT_NAME)
-				== _pending_cargo_snapshot.count(FISH_LOT_NAME) + 1
+			cargo_after.count(resolved_lot_name)
+				== _pending_cargo_snapshot.count(resolved_lot_name) + 1
 		),
 	}
 	_pending_cargo_snapshot.clear()
+	_pending_fish_lot_name = ""
 	return true
 
 
@@ -311,7 +372,10 @@ func get_playtest_state() -> Dictionary:
 		"sailing_view_active": _sailing_view_active,
 		"sailing_viewport_world_rect": _sailing_viewport_world_rect,
 		"fish_lot_name": FISH_LOT_NAME,
+		"large_fish_lot_name": LARGE_FISH_LOT_NAME,
+		"large_catch_fish_units": LARGE_CATCH_FISH_UNITS,
 		"fish_type_count": 1,
+		"catch_size_count": 2,
 		"fish_price_state": FISH_PRICE_STATE,
 		"fishing_range": FISHING_RANGE,
 		"fishing_max_speed": FISHING_MAX_SPEED,
@@ -347,6 +411,14 @@ func get_playtest_state() -> Dictionary:
 		"weather_recovery_catch_count": _weather_recovery_catch_count,
 		"weather_recovery_pending": _weather_recovery_pending,
 		"pending_catch_count": _pending_catch_count,
+		"pending_fish_lot_name": _pending_fish_lot_name,
+		"fishing_gear_active": _fishing_gear_active,
+		"module_voyage_serial": _module_voyage_serial,
+		"larger_catch_available": _larger_catch_available,
+		"larger_catch_count": _larger_catch_count,
+		"normal_catch_count": _normal_catch_count,
+		"one_larger_catch_per_cove_voyage": true,
+		"last_module_evidence": _last_module_evidence.duplicate(true),
 		"last_catch_result": _last_catch_result,
 		"last_catch_evidence": _last_catch_evidence.duplicate(true),
 		"last_choice_evidence": _last_choice_evidence.duplicate(true),

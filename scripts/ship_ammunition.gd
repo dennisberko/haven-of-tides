@@ -171,6 +171,14 @@ func consume_for_accepted_harpoon(cargo_lots: Array[String]) -> Dictionary:
 	return evidence
 
 
+func consume_for_accepted_long_guns(cargo_lots: Array[String]) -> Dictionary:
+	var evidence := consume_for_accepted_broadside(cargo_lots)
+	evidence["consumer"] = "LONG_GUNS_PURSUIT_ATTACK"
+	evidence["uses_same_loaded_ammunition_units"] = true
+	last_consumption_evidence = evidence.duplicate(true)
+	return evidence
+
+
 func apply_limited_defeat_loss(
 	cargo_lots: Array[String],
 	unit_loss: int,
