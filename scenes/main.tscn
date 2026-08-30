@@ -300,7 +300,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 29 · Prize actions"
+text = "Phase 30 · Heat"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -375,6 +375,43 @@ theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 18
 text = "MONEY · 25 COINS"
+
+[node name="HeatView" type="ColorRect" parent="Interface" groups=["world_heat_view"]]
+offset_left = 408.0
+offset_top = 108.0
+offset_right = 744.0
+offset_bottom = 198.0
+mouse_filter = 2
+color = Color(0.0470588, 0.145098, 0.180392, 0.94)
+
+[node name="HeatTitle" type="Label" parent="Interface/HeatView"]
+offset_left = 16.0
+offset_top = 8.0
+offset_right = 320.0
+offset_bottom = 30.0
+theme_override_colors/font_color = Color(1, 0.733333, 0.556863, 1)
+theme_override_font_sizes/font_size = 16
+text = "WORLD HEAT · 0"
+horizontal_alignment = 1
+
+[node name="HeatMeter" type="ProgressBar" parent="Interface/HeatView"]
+offset_left = 16.0
+offset_top = 34.0
+offset_right = 320.0
+offset_bottom = 52.0
+max_value = 10.0
+show_percentage = false
+
+[node name="HeatStatus" type="Label" parent="Interface/HeatView"]
+offset_left = 16.0
+offset_top = 58.0
+offset_right = 320.0
+offset_bottom = 82.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 12
+text = "WORLD HEAT CALM"
+horizontal_alignment = 1
+autowrap_mode = 2
 
 [node name="FoodView" type="ColorRect" parent="Interface" groups=["ship_food_view"]]
 visible = false
@@ -546,7 +583,7 @@ offset_bottom = 410.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
 theme_override_constants/line_spacing = 4
 theme_override_font_sizes/font_size = 14
-text = "ALL VALUES BELOW ARE ESTIMATES\nOWNER ESTIMATE · FREE ISLES TRADERS\nFLAG ESTIMATE · AMBER GULL\nSHIP CLASS ESTIMATE · COASTAL SLOOP\nLIKELY SPEED ESTIMATE · FAST\nGENERAL CARGO TYPE ESTIMATE · FOOD AND CLOTH\nTHREAT ESTIMATE · LOW\nPEACEFUL ESTIMATE · YES\nHEAT COST ESTIMATE · +2 · NOT APPLIED\nATTACK CHOICE ESTIMATE · LOW RISK · HEAT EXPECTED"
+text = "ALL VALUES BELOW ARE ESTIMATES\nOWNER ESTIMATE · FREE ISLES TRADERS\nFLAG ESTIMATE · AMBER GULL\nSHIP CLASS ESTIMATE · COASTAL SLOOP\nLIKELY SPEED ESTIMATE · FAST\nGENERAL CARGO TYPE ESTIMATE · FOOD AND CLOTH\nTHREAT ESTIMATE · LOW\nPEACEFUL ESTIMATE · YES\nHEAT COST ESTIMATE · +2 · FIRST SUCCESSFUL HIT\nWORLD HEAT PREVIEW · 0 -> 2 (+2) · NOT APPLIED\nATTACK CHOICE ESTIMATE · LOW RISK · HEAT EXPECTED"
 autowrap_mode = 2
 
 [node name="InspectionControls" type="Label" parent="Interface/TargetInspectionView"]

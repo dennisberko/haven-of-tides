@@ -12,6 +12,7 @@ const TargetBoardingDeckState := preload(
 	"res://scripts/target_boarding_deck.gd"
 )
 const PrizeActionState := preload("res://scripts/prize_actions.gd")
+const WorldHeatState := preload("res://scripts/world_heat.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -59,6 +60,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var cargo_details: Label = $Interface/CargoView/CargoDetails
 @onready var money_view: ColorRect = $Interface/MoneyView
 @onready var money_details: Label = $Interface/MoneyView/MoneyDetails
+@onready var heat_view: ColorRect = $Interface/HeatView
+@onready var heat_title: Label = $Interface/HeatView/HeatTitle
+@onready var heat_meter: ProgressBar = $Interface/HeatView/HeatMeter
+@onready var heat_status: Label = $Interface/HeatView/HeatStatus
 @onready var food_view: ColorRect = $Interface/FoodView
 @onready var food_title: Label = $Interface/FoodView/FoodTitle
 @onready var food_status: Label = $Interface/FoodView/FoodStatus
@@ -185,6 +190,11 @@ const PRIZE_CONTROLS_TEXT := (
 const SHORE_RETURN_DISTANCE := 64.0
 const STARTING_MONEY := 25
 const PRIZE_CANNON_CARGO_SALE_PRICE := 15
+const HEAT_PERSISTENCE_PATH := "user://haven_of_tides_phase30_heat.cfg"
+const HEAT_PERSISTENCE_SECTION := "phase30_heat"
+const HEAT_PERSISTENCE_KEY := "payload"
+const HEAT_PERSISTENCE_FORMAT := "HAVEN_OF_TIDES_PHASE30_HEAT"
+const HEAT_PERSISTENCE_VERSION := 1
 
 var _player_near_sign := false
 var _player_near_resident := false
@@ -430,6 +440,19 @@ var _prize_target_resolution_evidence: Dictionary = {}
 var _prize_cannon_sale_count := 0
 var _prize_cannon_money_earned := 0
 var _last_prize_cannon_sale_evidence: Dictionary = {}
+var _world_heat = WorldHeatState.new()
+var _last_inspection_heat_preview: Dictionary = {}
+var _heat_before_last_ammunition_load := 0
+var _heat_after_last_ammunition_load := 0
+var _heat_persistence_save_count := 0
+var _heat_persistence_load_count := 0
+var _heat_persistence_cleanup_count := 0
+var _heat_persistence_startup_load_attempted := false
+var _heat_persistence_startup_restored := false
+var _last_heat_persistence_payload: Dictionary = {}
+var _last_heat_file_save_evidence: Dictionary = {}
+var _last_heat_file_load_evidence: Dictionary = {}
+var _last_heat_file_cleanup_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -451,11 +474,13 @@ func _ready() -> void:
 		cove_dock["approach_position"],
 		port_dock["approach_position"],
 	)
+	_load_world_heat_persistence("STARTUP")
 	_update_wreck_opportunity()
 	_update_cargo_view()
 	_update_storage_view()
 	_update_construction_view()
 	_update_money_view()
+	_update_heat_view()
 	_update_food_view()
 	_update_hull_view()
 	_update_repair_view()
@@ -521,6 +546,7 @@ func _physics_process(delta: float) -> void:
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_money_view()
+	_update_heat_view()
 	_update_food_view()
 	_update_hull_view()
 	_update_repair_view()
@@ -1021,6 +1047,9 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 			"ammunition_delta": 0,
 			"shot_count_before": held_broadside_state["shot_count"],
 			"shot_count_after": held_broadside_state["shot_count"],
+			"world_heat_before": _world_heat.get_current_heat(),
+			"world_heat_after": _world_heat.get_current_heat(),
+			"world_heat_delta": 0,
 			"target_hulls_before": held_target_hulls,
 			"target_hulls_after": held_target_hulls.duplicate(true),
 			"target_conditions_before": held_target_conditions,
@@ -1031,6 +1060,7 @@ func _handle_broadside_input(key_event: InputEventKey) -> void:
 			"no_shot_no_ammunition_use": true,
 			"no_shot_no_target_damage": true,
 			"no_shot_no_condition_change": true,
+			"no_shot_no_heat_change": true,
 			"fresh_press_required": true,
 		}
 		_update_broadside_view()
@@ -1403,6 +1433,8 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 				"cargo_after": held_cargo.duplicate(),
 				"ammunition_before": held_ammunition,
 				"ammunition_after": held_ammunition,
+				"world_heat_before": _world_heat.get_current_heat(),
+				"world_heat_after": _world_heat.get_current_heat(),
 				"spice_mark_before": held_spice_mark,
 				"spice_mark_after": held_spice_mark.duplicate(true),
 				"no_state_change": true,
@@ -1825,10 +1857,12 @@ func _attempt_ammunition_load() -> void:
 
 	_last_trade_action = "LOAD_AMMUNITION_AT_PORT"
 	var money_before: int = money
+	_heat_before_last_ammunition_load = _world_heat.get_current_heat()
 	var spice_mark_before: Dictionary = (
 		_active_trade_contact.get_mark_state(completed_voyages)
 	)
 	var evidence: Dictionary = ship.load_ammunition_at_port()
+	_heat_after_last_ammunition_load = _world_heat.get_current_heat()
 	var spice_mark_after: Dictionary = (
 		_active_trade_contact.get_mark_state(completed_voyages)
 	)
@@ -1844,6 +1878,8 @@ func _attempt_ammunition_load() -> void:
 			and bool(evidence["one_source_lot_converted"])
 			and money == money_before
 			and spice_state_unchanged
+			and _heat_before_last_ammunition_load
+				== _heat_after_last_ammunition_load
 		)
 		or (
 			not bool(evidence["success"])
@@ -1852,6 +1888,8 @@ func _attempt_ammunition_load() -> void:
 				== int(evidence["ammunition_after"])
 			and money == money_before
 			and spice_state_unchanged
+			and _heat_before_last_ammunition_load
+				== _heat_after_last_ammunition_load
 		)
 	)
 	evidence.merge({
@@ -1864,6 +1902,12 @@ func _attempt_ammunition_load() -> void:
 		"spice_marks_and_price_state_unchanged": spice_state_unchanged,
 		"conversion_is_cargo_neutral": bool(
 			evidence["cargo_slot_count_unchanged"]
+		),
+		"world_heat_before": _heat_before_last_ammunition_load,
+		"world_heat_after": _heat_after_last_ammunition_load,
+		"world_heat_unchanged": (
+			_heat_before_last_ammunition_load
+				== _heat_after_last_ammunition_load
 		),
 		"transaction_atomic": load_transaction_atomic,
 	}, true)
@@ -3369,6 +3413,7 @@ func _capture_boarding_conservation_snapshot(
 	target: InspectableTargetShipState,
 ) -> Dictionary:
 	var condition: Dictionary = target.get_condition_state()
+	var heat_state: Dictionary = _world_heat.get_playtest_state()
 	return {
 		"money": money,
 		"cargo_lots": ship.get_cargo_lots(),
@@ -3389,7 +3434,8 @@ func _capture_boarding_conservation_snapshot(
 				"prize_trade_records_update_count"
 			]
 		),
-		"heat_change_count": 0,
+		"world_heat": heat_state["current_heat"],
+		"heat_change_count": heat_state["first_peaceful_hit_count"],
 	}
 
 
@@ -3428,8 +3474,9 @@ func _boarding_return_state_holds(
 			== state_before["trade_sold_lot_count"]
 		and state_after["port_trade_mark"] == state_before["port_trade_mark"]
 		and state_after["cove_trade_mark"] == state_before["cove_trade_mark"]
-		and state_after["heat_change_count"] == 0
-		and state_before["heat_change_count"] == 0
+		and state_after["world_heat"] == state_before["world_heat"]
+		and state_after["heat_change_count"]
+			== state_before["heat_change_count"]
 		and journal_holds
 	)
 
@@ -3444,8 +3491,11 @@ func _open_target_inspection() -> void:
 	var target_id: String = _active_inspection_target.target_id
 	if not _inspected_target_ids.has(target_id):
 		_inspected_target_ids.append(target_id)
-	_last_inspection_estimate = (
-		_active_inspection_target.get_estimate_state().duplicate(true)
+	_last_inspection_estimate = _get_target_inspection_estimate(
+		_active_inspection_target
+	)
+	_last_inspection_heat_preview = (
+		(_last_inspection_estimate["heat_preview"] as Dictionary).duplicate(true)
 	)
 	interaction_prompt.hide()
 	_update_target_inspection_view()
@@ -3472,11 +3522,24 @@ func _update_target_inspection_view() -> void:
 	if not _target_inspection_view_open or _active_inspection_target == null:
 		target_inspection_view.hide()
 		return
-	var estimate: Dictionary = _active_inspection_target.get_estimate_state()
+	var estimate: Dictionary = _get_target_inspection_estimate(
+		_active_inspection_target
+	)
 	_last_inspection_estimate = estimate.duplicate(true)
+	_last_inspection_heat_preview = (
+		(estimate["heat_preview"] as Dictionary).duplicate(true)
+	)
 	var peaceful_text := "YES" if bool(estimate["peaceful_estimate"]) else "NO"
-	var heat_cost := int(estimate["estimated_heat_cost"])
+	var heat_preview: Dictionary = estimate["heat_preview"]
+	var heat_cost := int(heat_preview["estimated_heat_increase"])
 	var heat_text := "+%d" % heat_cost
+	var heat_rule_text := "NOT PEACEFUL"
+	if bool(estimate["peaceful_estimate"]):
+		heat_rule_text = (
+			"FIRST HIT ALREADY COUNTED"
+			if bool(heat_preview["first_hit_already_recorded"])
+			else "FIRST SUCCESSFUL HIT"
+		)
 	var choice_text := "%s RISK · %s" % [
 		estimate["threat_estimate"],
 		(
@@ -3500,7 +3563,15 @@ func _update_target_inspection_view() -> void:
 		)
 		+ "THREAT ESTIMATE · %s\n" % estimate["threat_estimate"]
 		+ "PEACEFUL ESTIMATE · %s\n" % peaceful_text
-		+ "HEAT COST ESTIMATE · %s · NOT APPLIED\n" % heat_text
+		+ "HEAT COST ESTIMATE · %s · %s\n" % [
+			heat_text,
+			heat_rule_text,
+		]
+		+ "WORLD HEAT PREVIEW · %d -> %d (%s) · NOT APPLIED\n" % [
+			heat_preview["heat_before"],
+			heat_preview["heat_after"],
+			heat_text,
+		]
 		+ "ATTACK CHOICE ESTIMATE · %s" % choice_text
 	)
 	inspection_controls.text = (
@@ -3515,7 +3586,26 @@ func _update_target_inspection_view() -> void:
 	target_inspection_view.show()
 
 
+func _get_target_inspection_estimate(
+	target: InspectableTargetShipState,
+) -> Dictionary:
+	var estimate: Dictionary = target.get_estimate_state().duplicate(true)
+	var heat_preview: Dictionary = _world_heat.get_attack_preview(
+		target.target_id,
+		bool(estimate["peaceful_estimate"]),
+		int(estimate["estimated_heat_cost"]),
+	)
+	estimate["heat_preview"] = heat_preview.duplicate(true)
+	estimate["estimated_heat_increase"] = heat_preview[
+		"estimated_heat_increase"
+	]
+	estimate["world_heat_before_attack"] = heat_preview["heat_before"]
+	estimate["world_heat_after_attack"] = heat_preview["heat_after"]
+	return estimate
+
+
 func _attempt_broadside_attack(side: String) -> void:
+	var world_heat_before := _world_heat.get_current_heat()
 	var target_hulls_before: Dictionary = _get_target_hull_snapshots()
 	var target_conditions_before: Dictionary = _get_target_condition_snapshots()
 	var target_values_before: Dictionary = _get_target_condition_values()
@@ -3563,6 +3653,10 @@ func _attempt_broadside_attack(side: String) -> void:
 		evidence["no_shot_no_condition_change"] = (
 			target_values_before == rejected_values_after
 		)
+		evidence["world_heat_before"] = world_heat_before
+		evidence["world_heat_after"] = _world_heat.get_current_heat()
+		evidence["world_heat_delta"] = 0
+		evidence["no_shot_no_heat_change"] = true
 		_last_broadside_attempt_evidence = ship.record_broadside_result(
 			evidence
 		)
@@ -3585,8 +3679,17 @@ func _attempt_broadside_attack(side: String) -> void:
 		_update_broadside_view()
 		_update_ammunition_view()
 		_update_target_combat_view()
+		_update_heat_view()
 		return
 
+	var heat_evidence: Dictionary = {
+		"success": false,
+		"result": "NO SUCCESSFUL TARGET HIT · HEAT UNCHANGED",
+		"successful_target_hit": false,
+		"heat_before": world_heat_before,
+		"heat_after": world_heat_before,
+		"heat_delta": 0,
+	}
 	var target: InspectableTargetShipState = _get_broadside_target(
 		side,
 		_selected_attack_choice,
@@ -3628,6 +3731,12 @@ func _attempt_broadside_attack(side: String) -> void:
 			selected_damage,
 			side,
 		)
+		if bool(hit_evidence["success"]):
+			heat_evidence = _world_heat.record_successful_hit(
+				target.target_id,
+				target.peaceful,
+				target.estimated_heat_cost,
+			)
 		_last_attacked_target_id = target.target_id
 		evidence.merge({
 			"target_hit": bool(hit_evidence["success"]),
@@ -3670,6 +3779,20 @@ func _attempt_broadside_attack(side: String) -> void:
 	evidence["target_hulls_after"] = target_hulls_after.duplicate(true)
 	evidence["target_conditions_after"] = target_conditions_after.duplicate(true)
 	evidence["target_condition_values_after"] = target_values_after.duplicate(true)
+	evidence["heat_evidence"] = heat_evidence.duplicate(true)
+	evidence["world_heat_before"] = world_heat_before
+	evidence["world_heat_after"] = _world_heat.get_current_heat()
+	evidence["world_heat_delta"] = (
+		_world_heat.get_current_heat() - world_heat_before
+	)
+	evidence["heat_changes_only_on_successful_peaceful_hit"] = (
+		int(evidence["world_heat_delta"]) == 0
+		or (
+			bool(evidence["target_hit"])
+			and bool(heat_evidence.get("peaceful", false))
+			and bool(heat_evidence.get("first_successful_hit", false))
+		)
+	)
 	evidence["changed_target_ids"] = changed_target_ids.duplicate()
 	evidence["only_selected_target_hull_changed"] = (
 		(changed_target_ids.is_empty() and not bool(evidence["target_hit"]))
@@ -3709,16 +3832,27 @@ func _attempt_broadside_attack(side: String) -> void:
 		)
 	)
 	_last_broadside_attempt_evidence = ship.record_broadside_result(evidence)
-	_successful_broadside_evidence = (
-		_last_broadside_attempt_evidence.duplicate(true)
-	)
 	_last_broadside_result = String(
 		_last_broadside_attempt_evidence["result"]
+	)
+	if bool(evidence["target_hit"]) and bool(
+		heat_evidence.get("peaceful", false)
+	):
+		if int(evidence["world_heat_delta"]) > 0:
+			_last_broadside_result += " · HEAT +%d" % (
+				evidence["world_heat_delta"]
+			)
+		else:
+			_last_broadside_result += " · HEAT UNCHANGED · FIRST HIT COUNTED"
+		_last_broadside_attempt_evidence["result"] = _last_broadside_result
+	_successful_broadside_evidence = (
+		_last_broadside_attempt_evidence.duplicate(true)
 	)
 	_update_cargo_view()
 	_update_broadside_view()
 	_update_ammunition_view()
 	_update_target_combat_view()
+	_update_heat_view()
 	_update_target_inspection()
 	_update_interaction_prompt()
 
@@ -4290,6 +4424,20 @@ func _update_money_view() -> void:
 		money_view.hide()
 	else:
 		money_view.show()
+
+
+func _update_heat_view() -> void:
+	var heat_state: Dictionary = _world_heat.get_playtest_state()
+	var current_heat := int(heat_state["current_heat"])
+	heat_meter.min_value = 0.0
+	heat_meter.max_value = float(maxi(
+		int(heat_state["display_max_heat"]),
+		current_heat,
+	))
+	heat_meter.value = float(current_heat)
+	heat_title.text = "WORLD HEAT · %d" % current_heat
+	heat_status.text = String(heat_state["last_result"])
+	heat_view.show()
 
 
 func _update_food_view() -> void:
@@ -4921,6 +5069,8 @@ func _dock_ship() -> void:
 	_last_leave_allowed = false
 	_last_ship_docked = true
 	_complete_voyage_on_arrival(dock_id)
+	if bool(_last_completed_voyage_evidence.get("counted", false)):
+		_save_world_heat_persistence("COMPLETED_VOYAGE_DOCK")
 	if dock_id == "cove" and ship.timber_lots == 1:
 		_cove_docked_after_salvage = true
 		_timber_lots_at_cove_dock = ship.timber_lots
@@ -4952,6 +5102,7 @@ func _record_voyage_departure(dock_id: String) -> void:
 
 
 func _complete_voyage_on_arrival(dock_id: String) -> void:
+	var world_heat_before_arrival := _world_heat.get_current_heat()
 	var origin_dock_id := _voyage_departure_dock_id
 	_voyage_departure_dock_id = ""
 	if origin_dock_id.is_empty():
@@ -4967,6 +5118,11 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 			),
 			"port_condition_after": (
 				_port_condition.get_playtest_state(completed_voyages)
+			),
+			"world_heat_before": world_heat_before_arrival,
+			"world_heat_after": _world_heat.get_current_heat(),
+			"world_heat_unchanged": (
+				world_heat_before_arrival == _world_heat.get_current_heat()
 			),
 			"reason": "NO_RECORDED_DEPARTURE",
 		}
@@ -4986,6 +5142,11 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 			"port_condition_after": (
 				_port_condition.get_playtest_state(completed_voyages)
 			),
+			"world_heat_before": world_heat_before_arrival,
+			"world_heat_after": _world_heat.get_current_heat(),
+			"world_heat_unchanged": (
+				world_heat_before_arrival == _world_heat.get_current_heat()
+			),
 			"reason": "SAME_DOCK_ARRIVAL",
 		}
 		return
@@ -5000,6 +5161,9 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 		_port_condition.get_playtest_state(completed_voyage_before)
 	)
 	completed_voyages += 1
+	var heat_transition: Dictionary = _world_heat.record_completed_voyage(
+		completed_voyages
+	)
 	var port_marks_before: Dictionary = (
 		port_trader.get_mark_state(completed_voyage_before)
 	)
@@ -5072,6 +5236,16 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 		"cove_marks_before": cove_marks_before,
 		"cove_marks_after": cove_buyer.get_mark_state(completed_voyages),
 		"cove_marks_returned": cove_marks_returned,
+		"world_heat_before": world_heat_before_arrival,
+		"world_heat_after": _world_heat.get_current_heat(),
+		"world_heat_transition": heat_transition.duplicate(true),
+		"world_heat_held_when_voyage_had_peaceful_attack": (
+			not bool(heat_transition[
+				"peaceful_attack_during_completed_voyage"
+			])
+			or int(heat_transition["heat_before"])
+				== int(heat_transition["heat_after"])
+		),
 	}
 	var journal_raw_after_completion := _trade_journal.get_entry_snapshot()
 	if record_remote_journal_evidence:
@@ -5101,6 +5275,7 @@ func _complete_voyage_on_arrival(dock_id: String) -> void:
 				== TradeJournalState.OLD_STATUS
 		)
 		_journal_return_market_refresh_recorded = false
+	_update_heat_view()
 	_update_trade_journal_view()
 
 
@@ -5385,6 +5560,485 @@ func _update_interaction_prompt() -> void:
 	interaction_prompt.hide()
 
 
+func save_world_heat_persistence() -> Dictionary:
+	return _save_world_heat_persistence("PUBLIC_GAME_SAVE")
+
+
+func load_world_heat_persistence() -> Dictionary:
+	return _load_world_heat_persistence("PUBLIC_GAME_LOAD")
+
+
+func cleanup_world_heat_persistence_for_mcp() -> Dictionary:
+	var file_existed_before := FileAccess.file_exists(HEAT_PERSISTENCE_PATH)
+	var remove_error := OK
+	if file_existed_before:
+		remove_error = DirAccess.remove_absolute(
+			ProjectSettings.globalize_path(HEAT_PERSISTENCE_PATH)
+		)
+	var file_exists_after := FileAccess.file_exists(HEAT_PERSISTENCE_PATH)
+	var success := remove_error == OK and not file_exists_after
+	if success and file_existed_before:
+		_heat_persistence_cleanup_count += 1
+	_last_heat_file_cleanup_evidence = {
+		"success": success,
+		"result": (
+			"PHASE 30 HEAT FILE REMOVED"
+			if success and file_existed_before
+			else (
+				"PHASE 30 HEAT FILE ALREADY ABSENT"
+				if success
+				else "PHASE 30 HEAT FILE REMOVE FAILED"
+			)
+		),
+		"path": HEAT_PERSISTENCE_PATH,
+		"only_exact_heat_file_targeted": true,
+		"file_existed_before": file_existed_before,
+		"file_exists_after": file_exists_after,
+		"remove_error": remove_error,
+		"cleanup_count": _heat_persistence_cleanup_count,
+	}
+	return _last_heat_file_cleanup_evidence.duplicate(true)
+
+
+func _save_world_heat_persistence(reason: String) -> Dictionary:
+	var heat_snapshot: Dictionary = _world_heat.get_save_data()
+	var stable_dock: bool = (
+		ship.is_docked
+		and not ship.current_dock_id.is_empty()
+		and _voyage_departure_dock_id.is_empty()
+		and not bool(heat_snapshot["peaceful_attack_in_current_voyage"])
+	)
+	if not stable_dock:
+		_last_heat_file_save_evidence = {
+			"success": false,
+			"result": "WORLD HEAT FILE SAVE DENIED",
+			"reason": "NOT_AT_STABLE_POST_VOYAGE_DOCK",
+			"path": HEAT_PERSISTENCE_PATH,
+			"save_reason": reason,
+			"state_before": heat_snapshot,
+			"file_exists_after": FileAccess.file_exists(
+				HEAT_PERSISTENCE_PATH
+			),
+			"save_count": _heat_persistence_save_count,
+		}
+		return _last_heat_file_save_evidence.duplicate(true)
+
+	var payload := {
+		"format": HEAT_PERSISTENCE_FORMAT,
+		"version": HEAT_PERSISTENCE_VERSION,
+		"saved_at_stable_dock": true,
+		"saved_completed_voyage": completed_voyages,
+		"saved_dock_id": ship.current_dock_id,
+		"world_heat": heat_snapshot.duplicate(true),
+	}
+	var validation: Dictionary = _validate_heat_persistence_payload(payload)
+	if not bool(validation["valid"]):
+		_last_heat_file_save_evidence = {
+			"success": false,
+			"result": "WORLD HEAT FILE SAVE DENIED",
+			"reason": validation["reason"],
+			"path": HEAT_PERSISTENCE_PATH,
+			"save_reason": reason,
+			"state_before": heat_snapshot,
+			"file_exists_after": FileAccess.file_exists(
+				HEAT_PERSISTENCE_PATH
+			),
+			"save_count": _heat_persistence_save_count,
+		}
+		return _last_heat_file_save_evidence.duplicate(true)
+
+	var config := ConfigFile.new()
+	config.set_value(
+		HEAT_PERSISTENCE_SECTION,
+		HEAT_PERSISTENCE_KEY,
+		payload.duplicate(true),
+	)
+	var save_error := config.save(HEAT_PERSISTENCE_PATH)
+	var verification: Dictionary = _read_heat_persistence_file()
+	var success := save_error == OK and bool(verification["valid"])
+	if success:
+		_heat_persistence_save_count += 1
+		_last_heat_persistence_payload = payload.duplicate(true)
+	_last_heat_file_save_evidence = {
+		"success": success,
+		"result": (
+			"WORLD HEAT FILE SAVED"
+			if success
+			else "WORLD HEAT FILE SAVE FAILED"
+		),
+		"reason": (
+			"SAVED"
+			if success
+			else (
+				"CONFIG_SAVE_ERROR_%d" % save_error
+				if save_error != OK
+				else verification["reason"]
+			)
+		),
+		"path": HEAT_PERSISTENCE_PATH,
+		"save_reason": reason,
+		"save_error": save_error,
+		"file_exists_after": FileAccess.file_exists(HEAT_PERSISTENCE_PATH),
+		"written_payload": payload.duplicate(true),
+		"verified_payload": verification.get("payload", {}).duplicate(true),
+		"full_file_validation": verification.duplicate(true),
+		"stable_post_voyage_dock": stable_dock,
+		"world_heat_at_save": heat_snapshot["current_heat"],
+		"peaceful_target_ids_at_save": (
+			(heat_snapshot["peaceful_target_ids_hit"] as Array).duplicate()
+		),
+		"current_voyage_attack_flag_at_save": (
+			heat_snapshot["peaceful_attack_in_current_voyage"]
+		),
+		"saved_completed_voyage": completed_voyages,
+		"saved_dock_id": ship.current_dock_id,
+		"save_count": _heat_persistence_save_count,
+		"external_save_file_count": (
+			1 if FileAccess.file_exists(HEAT_PERSISTENCE_PATH) else 0
+		),
+	}
+	return _last_heat_file_save_evidence.duplicate(true)
+
+
+func _load_world_heat_persistence(reason: String) -> Dictionary:
+	if reason == "STARTUP":
+		_heat_persistence_startup_load_attempted = true
+	var heat_before: Dictionary = _world_heat.get_save_data()
+	var unrelated_before: Dictionary = _capture_non_heat_persistence_state()
+	var safe_restore_boundary: bool = (
+		reason == "STARTUP"
+		or (
+			ship.is_docked
+			and not ship.current_dock_id.is_empty()
+			and _voyage_departure_dock_id.is_empty()
+			and not bool(heat_before[
+				"peaceful_attack_in_current_voyage"
+			])
+		)
+	)
+	if not safe_restore_boundary:
+		_last_heat_file_load_evidence = {
+			"success": false,
+			"result": "WORLD HEAT FILE LOAD DENIED",
+			"reason": "UNSAFE_LIVE_RESTORE_BOUNDARY",
+			"path": HEAT_PERSISTENCE_PATH,
+			"load_reason": reason,
+			"world_heat_before": heat_before,
+			"world_heat_after": _world_heat.get_save_data(),
+			"world_heat_unchanged": heat_before == _world_heat.get_save_data(),
+			"unrelated_state_before": unrelated_before,
+			"unrelated_state_after": _capture_non_heat_persistence_state(),
+			"unrelated_state_unchanged": (
+				unrelated_before == _capture_non_heat_persistence_state()
+			),
+			"load_count": _heat_persistence_load_count,
+		}
+		return _last_heat_file_load_evidence.duplicate(true)
+	var file_read: Dictionary = _read_heat_persistence_file()
+	if not bool(file_read["valid"]):
+		_last_heat_file_load_evidence = {
+			"success": false,
+			"result": "WORLD HEAT FILE NOT LOADED",
+			"reason": file_read["reason"],
+			"path": HEAT_PERSISTENCE_PATH,
+			"load_reason": reason,
+			"file_read": file_read.duplicate(true),
+			"world_heat_before": heat_before,
+			"world_heat_after": _world_heat.get_save_data(),
+			"world_heat_unchanged": heat_before == _world_heat.get_save_data(),
+			"unrelated_state_before": unrelated_before,
+			"unrelated_state_after": _capture_non_heat_persistence_state(),
+			"unrelated_state_unchanged": (
+				unrelated_before == _capture_non_heat_persistence_state()
+			),
+			"load_count": _heat_persistence_load_count,
+		}
+		return _last_heat_file_load_evidence.duplicate(true)
+
+	var payload: Dictionary = file_read["payload"]
+	var saved_heat: Dictionary = payload["world_heat"]
+	var heat_load_evidence: Dictionary = _world_heat.load_save_data(
+		saved_heat,
+		_get_known_peaceful_target_ids(),
+		completed_voyages,
+	)
+	if not bool(heat_load_evidence["success"]):
+		_last_heat_file_load_evidence = {
+			"success": false,
+			"result": "WORLD HEAT FILE LOAD DENIED",
+			"reason": heat_load_evidence["reason"],
+			"path": HEAT_PERSISTENCE_PATH,
+			"load_reason": reason,
+			"file_read": file_read.duplicate(true),
+			"world_heat_before": heat_before,
+			"world_heat_after": _world_heat.get_save_data(),
+			"world_heat_owner_load_evidence": heat_load_evidence,
+			"world_heat_unchanged": heat_before == _world_heat.get_save_data(),
+			"unrelated_state_before": unrelated_before,
+			"unrelated_state_after": _capture_non_heat_persistence_state(),
+			"unrelated_state_unchanged": (
+				unrelated_before == _capture_non_heat_persistence_state()
+			),
+			"load_count": _heat_persistence_load_count,
+		}
+		return _last_heat_file_load_evidence.duplicate(true)
+
+	_heat_persistence_load_count += 1
+	if reason == "STARTUP":
+		_heat_persistence_startup_restored = true
+	_last_heat_persistence_payload = payload.duplicate(true)
+	var loaded_heat: Dictionary = _world_heat.get_save_data()
+	var loaded_first_hit_previews: Dictionary = {}
+	var loaded_first_hit_identity_blocks_duplicate_heat := true
+	for target in inspection_targets:
+		if not (loaded_heat["peaceful_target_ids_hit"] as Array).has(
+			target.target_id
+		):
+			continue
+		var preview: Dictionary = _world_heat.get_attack_preview(
+			target.target_id,
+			target.peaceful,
+			target.estimated_heat_cost,
+		)
+		loaded_first_hit_previews[target.target_id] = preview.duplicate(true)
+		loaded_first_hit_identity_blocks_duplicate_heat = (
+			loaded_first_hit_identity_blocks_duplicate_heat
+			and bool(preview["first_hit_already_recorded"])
+			and int(preview["estimated_heat_increase"]) == 0
+		)
+	var unrelated_after: Dictionary = _capture_non_heat_persistence_state()
+	_last_heat_file_load_evidence = {
+		"success": true,
+		"result": "WORLD HEAT FILE LOADED",
+		"reason": "LOADED_AND_REBASED",
+		"path": HEAT_PERSISTENCE_PATH,
+		"load_reason": reason,
+		"file_read": file_read.duplicate(true),
+		"requested_payload": payload.duplicate(true),
+		"world_heat_before": heat_before,
+		"world_heat_loaded": loaded_heat,
+		"world_heat_owner_load_evidence": heat_load_evidence.duplicate(true),
+		"heat_value_restored": (
+			loaded_heat["current_heat"] == saved_heat["current_heat"]
+		),
+		"first_hit_identity_restored": (
+			loaded_heat["peaceful_target_ids_hit"]
+				== saved_heat["peaceful_target_ids_hit"]
+		),
+		"loaded_first_hit_previews": loaded_first_hit_previews,
+		"loaded_first_hit_identity_blocks_duplicate_heat": (
+			loaded_first_hit_identity_blocks_duplicate_heat
+		),
+		"current_voyage_attack_flag_restored": (
+			loaded_heat["peaceful_attack_in_current_voyage"]
+				== saved_heat["peaceful_attack_in_current_voyage"]
+		),
+		"saved_voyage_cursor": saved_heat["last_completed_voyage"],
+		"rebased_voyage_cursor": loaded_heat["last_completed_voyage"],
+		"voyage_cursor_rebased_to_current_world": (
+			loaded_heat["last_completed_voyage"] == completed_voyages
+		),
+		"rebased_snapshot_equality_holds": (
+			heat_load_evidence["rebased_snapshot_equality_holds"]
+		),
+		"heat_accounting_holds_after_load": (
+			loaded_heat["current_heat"]
+				== loaded_heat["total_heat_added"]
+					- loaded_heat["total_heat_removed_by_voyage_decay"]
+		),
+		"unrelated_state_before": unrelated_before,
+		"unrelated_state_after": unrelated_after,
+		"unrelated_state_unchanged": unrelated_before == unrelated_after,
+		"completed_voyages_not_loaded_from_heat_file": true,
+		"departure_state_not_loaded_from_heat_file": true,
+		"load_count": _heat_persistence_load_count,
+		"startup_restored": _heat_persistence_startup_restored,
+		"external_save_file_count": 1,
+	}
+	_update_heat_view()
+	return _last_heat_file_load_evidence.duplicate(true)
+
+
+func _read_heat_persistence_file() -> Dictionary:
+	if not FileAccess.file_exists(HEAT_PERSISTENCE_PATH):
+		return {
+			"valid": false,
+			"reason": "FILE_NOT_FOUND",
+			"path": HEAT_PERSISTENCE_PATH,
+			"file_found": false,
+			"load_error": ERR_FILE_NOT_FOUND,
+		}
+	var config := ConfigFile.new()
+	var load_error := config.load(HEAT_PERSISTENCE_PATH)
+	if load_error != OK:
+		return {
+			"valid": false,
+			"reason": "CONFIG_LOAD_ERROR_%d" % load_error,
+			"path": HEAT_PERSISTENCE_PATH,
+			"file_found": true,
+			"load_error": load_error,
+		}
+	var sections := config.get_sections()
+	if sections.size() != 1 or sections[0] != HEAT_PERSISTENCE_SECTION:
+		return {
+			"valid": false,
+			"reason": "INVALID_CONFIG_SECTIONS",
+			"path": HEAT_PERSISTENCE_PATH,
+			"file_found": true,
+			"load_error": load_error,
+		}
+	var section_keys := config.get_section_keys(HEAT_PERSISTENCE_SECTION)
+	if section_keys.size() != 1 or section_keys[0] != HEAT_PERSISTENCE_KEY:
+		return {
+			"valid": false,
+			"reason": "INVALID_CONFIG_KEYS",
+			"path": HEAT_PERSISTENCE_PATH,
+			"file_found": true,
+			"load_error": load_error,
+		}
+	var payload_value = config.get_value(
+		HEAT_PERSISTENCE_SECTION,
+		HEAT_PERSISTENCE_KEY,
+	)
+	if typeof(payload_value) != TYPE_DICTIONARY:
+		return {
+			"valid": false,
+			"reason": "INVALID_PAYLOAD_TYPE",
+			"path": HEAT_PERSISTENCE_PATH,
+			"file_found": true,
+			"load_error": load_error,
+		}
+	var payload: Dictionary = payload_value
+	var validation: Dictionary = _validate_heat_persistence_payload(payload)
+	return {
+		"valid": validation["valid"],
+		"reason": validation["reason"],
+		"path": HEAT_PERSISTENCE_PATH,
+		"file_found": true,
+		"load_error": load_error,
+		"payload": payload.duplicate(true),
+		"payload_validation": validation.duplicate(true),
+		"exact_section_and_key_contract": true,
+	}
+
+
+func _validate_heat_persistence_payload(payload: Dictionary) -> Dictionary:
+	var required_keys := [
+		"format",
+		"version",
+		"saved_at_stable_dock",
+		"saved_completed_voyage",
+		"saved_dock_id",
+		"world_heat",
+	]
+	if payload.size() != required_keys.size():
+		return {"valid": false, "reason": "UNEXPECTED_ROOT_FIELD_COUNT"}
+	for required_key in required_keys:
+		if not payload.has(required_key):
+			return {
+				"valid": false,
+				"reason": "MISSING_%s" % String(required_key).to_upper(),
+			}
+	if typeof(payload["format"]) != TYPE_STRING:
+		return {"valid": false, "reason": "INVALID_TYPE_FORMAT"}
+	if typeof(payload["version"]) != TYPE_INT:
+		return {"valid": false, "reason": "INVALID_TYPE_VERSION"}
+	if typeof(payload["saved_at_stable_dock"]) != TYPE_BOOL:
+		return {"valid": false, "reason": "INVALID_TYPE_STABLE_DOCK"}
+	if typeof(payload["saved_completed_voyage"]) != TYPE_INT:
+		return {"valid": false, "reason": "INVALID_TYPE_SAVED_VOYAGE"}
+	if typeof(payload["saved_dock_id"]) != TYPE_STRING:
+		return {"valid": false, "reason": "INVALID_TYPE_SAVED_DOCK_ID"}
+	if typeof(payload["world_heat"]) != TYPE_DICTIONARY:
+		return {"valid": false, "reason": "INVALID_TYPE_WORLD_HEAT"}
+	if payload["format"] != HEAT_PERSISTENCE_FORMAT:
+		return {"valid": false, "reason": "INVALID_FORMAT"}
+	if payload["version"] != HEAT_PERSISTENCE_VERSION:
+		return {"valid": false, "reason": "UNSUPPORTED_VERSION"}
+	if not payload["saved_at_stable_dock"]:
+		return {"valid": false, "reason": "UNSTABLE_SAVE_BOUNDARY"}
+	if payload["saved_completed_voyage"] < 0:
+		return {"valid": false, "reason": "NEGATIVE_SAVED_VOYAGE"}
+	if (
+		payload["saved_dock_id"].is_empty()
+		or ship.get_dock_definition(payload["saved_dock_id"]).is_empty()
+	):
+		return {"valid": false, "reason": "UNKNOWN_SAVED_DOCK_ID"}
+	var saved_heat: Dictionary = payload["world_heat"]
+	var heat_validation: Dictionary = _world_heat.validate_save_data(
+		saved_heat,
+		_get_known_peaceful_target_ids(),
+	)
+	if not bool(heat_validation["valid"]):
+		return {
+			"valid": false,
+			"reason": "WORLD_HEAT_%s" % heat_validation["reason"],
+		}
+	if saved_heat["last_completed_voyage"] != payload["saved_completed_voyage"]:
+		return {"valid": false, "reason": "SAVED_VOYAGE_CURSOR_MISMATCH"}
+	if completed_voyages > saved_heat["completed_voyage_update_count"]:
+		return {
+			"valid": false,
+			"reason": "CURRENT_WORLD_VOYAGE_CANNOT_REBASE_SNAPSHOT",
+		}
+	if saved_heat["peaceful_attack_in_current_voyage"]:
+		return {"valid": false, "reason": "UNSAFE_CURRENT_VOYAGE_FLAG"}
+	var known_heat_costs: Dictionary = _get_known_peaceful_target_heat_costs()
+	var expected_total_heat_added := 0
+	for target_id in saved_heat["peaceful_target_ids_hit"]:
+		expected_total_heat_added += known_heat_costs[target_id]
+	if saved_heat["total_heat_added"] != expected_total_heat_added:
+		return {"valid": false, "reason": "TARGET_HEAT_ACCOUNTING_MISMATCH"}
+	return {
+		"valid": true,
+		"reason": "VALID",
+		"known_peaceful_target_ids": _get_known_peaceful_target_ids(),
+		"world_heat_validation": heat_validation.duplicate(true),
+	}
+
+
+func _get_known_peaceful_target_ids() -> Array[String]:
+	var peaceful_target_ids: Array[String] = []
+	for target in inspection_targets:
+		if target.peaceful:
+			peaceful_target_ids.append(target.target_id)
+	return peaceful_target_ids
+
+
+func _get_known_peaceful_target_heat_costs() -> Dictionary:
+	var peaceful_target_heat_costs: Dictionary = {}
+	for target in inspection_targets:
+		if target.peaceful:
+			peaceful_target_heat_costs[target.target_id] = (
+				maxi(0, target.estimated_heat_cost)
+			)
+	return peaceful_target_heat_costs
+
+
+func _capture_non_heat_persistence_state() -> Dictionary:
+	return {
+		"completed_voyages": completed_voyages,
+		"voyage_departure_dock_id": _voyage_departure_dock_id,
+		"voyage_departure_count": _voyage_departure_count,
+		"same_dock_arrival_count": _same_dock_arrival_count,
+		"last_completed_voyage_evidence": (
+			_last_completed_voyage_evidence.duplicate(true)
+		),
+		"money": money,
+		"cargo_lots": ship.get_cargo_lots(),
+		"ammunition_units": ship.get_ammunition_units(),
+		"port_trade_mark": port_trader.get_mark_state(completed_voyages),
+		"cove_trade_mark": cove_buyer.get_mark_state(completed_voyages),
+		"port_condition": _port_condition.get_playtest_state(
+			completed_voyages
+		),
+		"target_conditions": _get_target_condition_snapshots(),
+		"ship_is_docked": ship.is_docked,
+		"ship_current_dock_id": ship.current_dock_id,
+		"ship_last_dock_id": ship.last_dock_id,
+	}
+
+
 func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var food_state: Dictionary = ship.get_food_playtest_state()
@@ -5410,6 +6064,7 @@ func get_playtest_state() -> Dictionary:
 	var journal_state: Dictionary = (
 		_trade_journal.get_playtest_state(completed_voyages)
 	)
+	var heat_state: Dictionary = _world_heat.get_playtest_state()
 	var journal_good_names: Array = []
 	var journal_current_price_states := {}
 	var journal_current_fixed_prices := {}
@@ -5528,6 +6183,10 @@ func get_playtest_state() -> Dictionary:
 		hull_title.text,
 		hull_status.text,
 	]
+	var heat_view_full_text := "%s\n%s" % [
+		heat_title.text,
+		heat_status.text,
+	]
 	var repair_view_full_text := "%s\n%s\n%s\n%s\n%s\n%s" % [
 		repair_title.text,
 		repair_cost.text,
@@ -5543,6 +6202,7 @@ func get_playtest_state() -> Dictionary:
 		ammunition_cargo.text,
 	]
 	var repair_view_rect := repair_view.get_global_rect()
+	var heat_view_rect := heat_view.get_global_rect()
 	var hull_view_rect := hull_view.get_global_rect()
 	var food_view_rect := food_view.get_global_rect()
 	var controls_help_rect := controls_help.get_global_rect()
@@ -5688,9 +6348,15 @@ func get_playtest_state() -> Dictionary:
 		catch_status.text,
 	]
 	var active_inspection_estimate: Dictionary = (
-		_active_inspection_target.get_estimate_state()
+		_get_target_inspection_estimate(_active_inspection_target)
 		if _active_inspection_target != null
 		else _last_inspection_estimate.duplicate(true)
+	)
+	var active_inspection_heat_preview: Dictionary = (
+		(active_inspection_estimate.get(
+			"heat_preview",
+			{},
+		) as Dictionary).duplicate(true)
 	)
 	var target_inspection_view_text := ""
 	if target_inspection_view.visible:
@@ -7172,8 +7838,251 @@ func get_playtest_state() -> Dictionary:
 			or not ship.navigation_input_blocked
 		),
 		"target_inspection_changes_heat": false,
-		"target_inspection_estimated_heat_not_applied": true,
-		"active_heat_system_count": 0,
+		"target_inspection_estimated_heat_not_applied": (
+			_last_inspection_heat_preview.is_empty()
+			or bool(_last_inspection_heat_preview.get(
+				"preview_does_not_apply_heat",
+				false,
+			))
+		),
+		"target_inspection_peaceful_marker_visible": (
+			target_inspection_view.visible
+			and target_inspection_view_text.contains(
+				"PEACEFUL ESTIMATE · YES"
+			)
+		),
+		"target_inspection_peaceful_marker_matches_target": (
+			not target_inspection_view.visible
+			or target_inspection_view_text.contains(
+				"PEACEFUL ESTIMATE · %s" % (
+					"YES"
+					if bool(active_inspection_estimate.get(
+						"peaceful_estimate",
+						false,
+					))
+					else "NO"
+				)
+			)
+		),
+		"target_inspection_exact_heat_estimate_visible": (
+			target_inspection_view.visible
+			and target_inspection_view_text.contains("HEAT COST ESTIMATE · +")
+			and target_inspection_view_text.contains("WORLD HEAT PREVIEW ·")
+			and target_inspection_view_text.contains("NOT APPLIED")
+		),
+		"target_inspection_exact_heat_estimate_matches_preview": (
+			not target_inspection_view.visible
+			or (
+				not active_inspection_heat_preview.is_empty()
+				and target_inspection_view_text.contains(
+					"WORLD HEAT PREVIEW · %d -> %d (+%d)" % [
+						active_inspection_heat_preview["heat_before"],
+						active_inspection_heat_preview["heat_after"],
+						active_inspection_heat_preview[
+							"estimated_heat_increase"
+						],
+					]
+				)
+			)
+		),
+		"target_inspection_last_heat_preview": (
+			_last_inspection_heat_preview.duplicate(true)
+		),
+		"active_heat_system_count": heat_state["system_count"],
+		"world_heat": heat_state.duplicate(true),
+		"world_heat_value": heat_state["current_heat"],
+		"world_heat_step": heat_state["heat_step"],
+		"world_heat_accounting_holds": heat_state["heat_accounting_holds"],
+		"world_heat_changes_only_for_phase_events": (
+			bool(heat_state["heat_accounting_holds"])
+			and int(heat_state["current_heat"])
+				== int(heat_state["total_heat_added"])
+					- int(heat_state[
+						"total_heat_removed_by_voyage_decay"
+					])
+		),
+		"world_heat_meter_count": get_tree().get_nodes_in_group(
+			"world_heat_view"
+		).size(),
+		"world_heat_one_full_world_meter": (
+			int(heat_state["system_count"]) == 1
+			and int(heat_state["meter_count"]) == 1
+			and String(heat_state["scope"]) == "FULL_WORLD"
+			and get_tree().get_nodes_in_group("world_heat_view").size() == 1
+		),
+		"world_heat_view_visible": heat_view.visible,
+		"world_heat_view_text": heat_view_full_text,
+		"world_heat_view_rect": heat_view_rect,
+		"world_heat_meter_value": heat_meter.value,
+		"world_heat_meter_max": heat_meter.max_value,
+		"world_heat_view_matches_state": (
+			heat_view_full_text.contains(
+				"WORLD HEAT · %d" % heat_state["current_heat"]
+			)
+			and is_equal_approx(
+				heat_meter.value,
+				float(heat_state["current_heat"]),
+			)
+		),
+		"world_heat_first_hit_matches_shown_amount": (
+			heat_state["all_first_hits_matched_shown_amount"]
+		),
+		"world_heat_later_same_ship_hit_added_no_heat": (
+			heat_state["all_repeat_hits_added_no_heat"]
+		),
+		"world_heat_last_load_before": _heat_before_last_ammunition_load,
+		"world_heat_last_load_after": _heat_after_last_ammunition_load,
+		"world_heat_persists_through_ammunition_load": (
+			_last_ammunition_load_evidence.is_empty()
+			or _heat_before_last_ammunition_load
+				== _heat_after_last_ammunition_load
+		),
+		"heat_persistence_boundary_count": 1,
+		"heat_persistence_path": HEAT_PERSISTENCE_PATH,
+		"heat_persistence_format": HEAT_PERSISTENCE_FORMAT,
+		"heat_persistence_version": HEAT_PERSISTENCE_VERSION,
+		"heat_persistence_file_exists": FileAccess.file_exists(
+			HEAT_PERSISTENCE_PATH
+		),
+		"heat_persistence_external_save_file_count": (
+			1 if FileAccess.file_exists(HEAT_PERSISTENCE_PATH) else 0
+		),
+		"heat_persistence_save_count": _heat_persistence_save_count,
+		"heat_persistence_load_count": _heat_persistence_load_count,
+		"heat_persistence_cleanup_count": _heat_persistence_cleanup_count,
+		"heat_persistence_startup_load_attempted": (
+			_heat_persistence_startup_load_attempted
+		),
+		"heat_persistence_startup_restored": (
+			_heat_persistence_startup_restored
+		),
+		"heat_persistence_last_payload": (
+			_last_heat_persistence_payload.duplicate(true)
+		),
+		"heat_persistence_last_save_evidence": (
+			_last_heat_file_save_evidence.duplicate(true)
+		),
+		"heat_persistence_last_load_evidence": (
+			_last_heat_file_load_evidence.duplicate(true)
+		),
+		"heat_persistence_last_cleanup_evidence": (
+			_last_heat_file_cleanup_evidence.duplicate(true)
+		),
+		"world_heat_owner_load_count": heat_state["load_count"],
+		"heat_persistence_owner_load_counts_match": (
+			int(heat_state["load_count"]) == _heat_persistence_load_count
+		),
+		"world_heat_last_owner_load_evidence": (
+			(heat_state["last_load_evidence"] as Dictionary).duplicate(true)
+		),
+		"world_heat_persists_through_game_restart": (
+			_last_heat_file_load_evidence.is_empty()
+			or (
+				bool(_last_heat_file_load_evidence.get("success", false))
+				and bool(_last_heat_file_load_evidence.get(
+					"rebased_snapshot_equality_holds",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"heat_value_restored",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"first_hit_identity_restored",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"loaded_first_hit_identity_blocks_duplicate_heat",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"current_voyage_attack_flag_restored",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"voyage_cursor_rebased_to_current_world",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"heat_accounting_holds_after_load",
+					false,
+				))
+				and bool(_last_heat_file_load_evidence.get(
+					"unrelated_state_unchanged",
+					false,
+				))
+			)
+		),
+		"heat_persistence_startup_file_missing_is_clean": (
+			_heat_persistence_startup_load_attempted
+			and not _heat_persistence_startup_restored
+			and String(_last_heat_file_load_evidence.get(
+				"reason",
+				"",
+			)) == "FILE_NOT_FOUND"
+			and bool(_last_heat_file_load_evidence.get(
+				"world_heat_unchanged",
+				false,
+			))
+			and bool(_last_heat_file_load_evidence.get(
+				"unrelated_state_unchanged",
+				false,
+			))
+		),
+		"heat_persistence_no_unrelated_state_rollback": (
+			_last_heat_file_load_evidence.is_empty()
+			or bool(_last_heat_file_load_evidence.get(
+				"unrelated_state_unchanged",
+				false,
+			))
+		),
+		"world_heat_last_dock_follows_voyage_rule": (
+			_last_completed_voyage_evidence.is_empty()
+			or (
+				not bool(_last_completed_voyage_evidence.get("counted", false))
+				and int(_last_completed_voyage_evidence.get(
+					"world_heat_before",
+					0,
+				)) == int(_last_completed_voyage_evidence.get(
+					"world_heat_after",
+					0,
+				))
+			)
+			or bool((_last_completed_voyage_evidence.get(
+				"world_heat_transition",
+				{},
+			) as Dictionary).get(
+				"decayed_exactly_one_step_when_possible",
+				false,
+			))
+		),
+		"world_heat_last_voyage_evidence": (
+			(heat_state["last_voyage_evidence"] as Dictionary).duplicate(true)
+		),
+		"world_heat_decays_one_step_after_safe_voyage": (
+			int(heat_state["voyage_decay_count"]) == 0
+			or bool((heat_state["last_voyage_evidence"] as Dictionary).get(
+				"decayed_exactly_one_step_when_possible",
+				false,
+			))
+		),
+		"world_heat_pirate_hunter_system_count": (
+			heat_state["pirate_hunter_system_count"]
+		),
+		"world_heat_port_service_refusal_count": (
+			heat_state["port_service_refusal_count"]
+		),
+		"world_heat_per_nation_meter_count": (
+			heat_state["per_nation_heat_meter_count"]
+		),
+		"world_heat_law_system_count": heat_state["law_system_count"],
+		"world_heat_bribe_system_count": heat_state["bribe_system_count"],
+		"world_heat_wanted_level_system_count": (
+			heat_state["wanted_level_system_count"]
+		),
+		"world_heat_resident_reaction_count": (
+			heat_state["resident_reaction_count"]
+		),
 		"target_inspection_attack_action_count": broadside_state["system_count"],
 		"target_inspection_exact_hidden_cargo_shown": false,
 		"target_inspection_hidden_threat_count": 0,
