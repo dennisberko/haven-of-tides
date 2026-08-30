@@ -7,6 +7,7 @@ const FRESH_STATUS := "FRESH"
 const OLD_STATUS := "OLD"
 const LOCAL_MARKET_OPEN_SOURCE := "LOCAL_PORT_MARKET_OPEN"
 const LOCAL_PURCHASE_SOURCE := "LOCAL_PORT_SUCCESSFUL_PURCHASE"
+const PRIZE_TRADE_RECORDS_SOURCE := "BOARDING_PRIZE_TRADE_RECORDS"
 const RECORDED_GOOD_NAMES := [
 	"TIMBER",
 	"FOOD",
@@ -18,10 +19,12 @@ var _entry: Dictionary = {}
 var _record_count := 0
 var _market_open_record_count := 0
 var _purchase_refresh_count := 0
+var _prize_trade_records_update_count := 0
 var _last_record_source := "NONE"
 var _record_source_counts := {
 	LOCAL_MARKET_OPEN_SOURCE: 0,
 	LOCAL_PURCHASE_SOURCE: 0,
+	PRIZE_TRADE_RECORDS_SOURCE: 0,
 }
 
 
@@ -53,8 +56,10 @@ func record_local_port_market(
 	_record_source_counts[source] = int(_record_source_counts[source]) + 1
 	if source == LOCAL_MARKET_OPEN_SOURCE:
 		_market_open_record_count += 1
-	else:
+	elif source == LOCAL_PURCHASE_SOURCE:
 		_purchase_refresh_count += 1
+	else:
+		_prize_trade_records_update_count += 1
 	return true
 
 
@@ -108,11 +113,18 @@ func get_playtest_state(current_voyage: int) -> Dictionary:
 		"record_count": _record_count,
 		"market_open_record_count": _market_open_record_count,
 		"purchase_refresh_count": _purchase_refresh_count,
+		"prize_trade_records_update_count": (
+			_prize_trade_records_update_count
+		),
+		"prize_trade_records_updated_one_port_entry": (
+			_prize_trade_records_update_count > 0 and is_known()
+		),
 		"last_record_source": _last_record_source,
 		"record_source_counts": _record_source_counts.duplicate(true),
 		"allowed_record_sources": [
 			LOCAL_MARKET_OPEN_SOURCE,
 			LOCAL_PURCHASE_SOURCE,
+			PRIZE_TRADE_RECORDS_SOURCE,
 		],
 	}
 
@@ -121,6 +133,7 @@ func _is_local_record_source(source: String) -> bool:
 	return (
 		source == LOCAL_MARKET_OPEN_SOURCE
 		or source == LOCAL_PURCHASE_SOURCE
+		or source == PRIZE_TRADE_RECORDS_SOURCE
 	)
 
 

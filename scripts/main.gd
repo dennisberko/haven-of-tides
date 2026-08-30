@@ -11,6 +11,7 @@ const InspectableTargetShipState := preload(
 const TargetBoardingDeckState := preload(
 	"res://scripts/target_boarding_deck.gd"
 )
+const PrizeActionState := preload("res://scripts/prize_actions.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -114,6 +115,12 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var target_speed: Label = $Interface/TargetCombatView/TargetSpeed
 @onready var target_route: Label = $Interface/TargetCombatView/TargetRoute
 @onready var catch_status: Label = $Interface/TargetCombatView/CatchStatus
+@onready var prize_view: ColorRect = $Interface/PrizeView
+@onready var prize_title: Label = $Interface/PrizeView/PrizeTitle
+@onready var prize_status: Label = $Interface/PrizeView/PrizeStatus
+@onready var prize_details: Label = $Interface/PrizeView/PrizeDetails
+@onready var prize_result: Label = $Interface/PrizeView/PrizeResult
+@onready var prize_controls: Label = $Interface/PrizeView/PrizeControls
 @onready var cargo_choice_view: ColorRect = $Interface/CargoChoiceView
 @onready var cargo_choice_title: Label = $Interface/CargoChoiceView/ChoiceTitle
 @onready var cargo_choice_details: Label = $Interface/CargoChoiceView/ChoiceDetails
@@ -160,11 +167,11 @@ const CONSTRUCTION_COMPLETE_CONTROLS_TEXT := "X CLOSE · E CANNOT BUILD AGAIN"
 const CONSTRUCTION_RELEASE_CONTROLS_TEXT := "RELEASE E, X, M, WASD / ARROW KEYS"
 const TRADE_BUY_CONTROLS_TEXT := (
 	"E BUY SPICE · B BUY WEAPONS AND GUNPOWDER · "
-	+ "L LOAD AMMUNITION · X CLOSE"
+	+ "L LOAD AMMUNITION · C SELL CANNONS · X CLOSE"
 )
 const TRADE_SELL_CONTROLS_TEXT := "E SELL ONE LOT · X CLOSE"
 const TRADE_RELEASE_CONTROLS_TEXT := (
-	"RELEASE E, B, L, X, M, 1-6, WASD / ARROW KEYS"
+	"RELEASE E, B, L, C, X, M, 1-6, WASD / ARROW KEYS"
 )
 const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
@@ -172,8 +179,12 @@ const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const BOARDING_DECK_CONTROLS_TEXT := (
 	"WASD / ARROWS TO WALK · SPACE CUTLASS · GOLD POINT + E RETURN"
 )
+const PRIZE_CONTROLS_TEXT := (
+	"1 CARGO · 2 CANNONS · 3 REPAIR MATERIALS · 4 TRADE RECORDS · X CLOSE"
+)
 const SHORE_RETURN_DISTANCE := 64.0
 const STARTING_MONEY := 25
+const PRIZE_CANNON_CARGO_SALE_PRICE := 15
 
 var _player_near_sign := false
 var _player_near_resident := false
@@ -407,6 +418,18 @@ var _last_boarding_return_evidence: Dictionary = {}
 var _boarding_conservation_before: Dictionary = {}
 var _boarding_conservation_after: Dictionary = {}
 var _boarding_state_conservation_holds := false
+var _prize_actions = PrizeActionState.new()
+var _prize_opened_for_current_boarding := false
+var _prize_returned_to_player_ship := false
+var _prize_pressed_keys: Dictionary = {}
+var _prize_held_close_count := 0
+var _prize_close_evidence: Dictionary = {}
+var _prize_persistence_evidence: Dictionary = {}
+var _prize_trigger_fight_outcome := "NONE"
+var _prize_target_resolution_evidence: Dictionary = {}
+var _prize_cannon_sale_count := 0
+var _prize_cannon_money_earned := 0
+var _last_prize_cannon_sale_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -441,6 +464,7 @@ func _ready() -> void:
 	_update_broadside_view()
 	_update_ammunition_view()
 	_update_target_combat_view()
+	_update_prize_view()
 	_update_trade_view()
 	_update_trade_journal_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
@@ -460,6 +484,7 @@ func _ready() -> void:
 	broadside_view.hide()
 	ammunition_view.hide()
 	target_combat_view.hide()
+	prize_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -502,6 +527,7 @@ func _physics_process(delta: float) -> void:
 	_update_broadside_view()
 	_update_ammunition_view()
 	_update_target_combat_view()
+	_update_prize_view()
 	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
@@ -511,7 +537,11 @@ func _physics_process(delta: float) -> void:
 	_update_trade_persistence()
 	if _player_on_target_deck:
 		travel_camera.global_position = player.global_position
-		controls_help.text = BOARDING_DECK_CONTROLS_TEXT
+		controls_help.text = (
+			PRIZE_CONTROLS_TEXT
+			if _prize_actions.screen_open
+			else BOARDING_DECK_CONTROLS_TEXT
+		)
 	elif _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
@@ -774,6 +804,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _handle_boarding_deck_input(key_event: InputEventKey) -> void:
+	if _prize_actions.screen_open:
+		_handle_prize_screen_input(key_event)
+		return
 	if _key_matches(key_event, KEY_SPACE):
 		target_boarding_deck.handle_cutlass_input(
 			key_event.pressed,
@@ -798,6 +831,114 @@ func _handle_boarding_deck_input(key_event: InputEventKey) -> void:
 		_boarding_blocked_input_count += 1
 
 
+func _handle_prize_screen_input(key_event: InputEventKey) -> void:
+	var prize_type := _get_prize_type_for_key(key_event)
+	var prize_key := "X" if _key_matches(key_event, KEY_X) else prize_type
+	if prize_key.is_empty():
+		if key_event.pressed and not key_event.echo:
+			_boarding_blocked_input_count += 1
+		return
+	if not key_event.pressed:
+		_prize_pressed_keys.erase(prize_key)
+		return
+	if key_event.echo or bool(_prize_pressed_keys.get(prize_key, false)):
+		if prize_key == "X":
+			_prize_held_close_count += 1
+		else:
+			_prize_actions.record_held_input(
+				prize_type,
+				ship.get_cargo_lots(),
+				_trade_journal.get_entry_snapshot(),
+			)
+		return
+	_prize_pressed_keys[prize_key] = true
+	if prize_key == "X":
+		_close_prize_screen()
+		return
+	_attempt_prize_selection(prize_type)
+
+
+func _get_prize_type_for_key(key_event: InputEventKey) -> String:
+	if _key_matches(key_event, KEY_1):
+		return PrizeActionState.PRIZE_CARGO
+	if _key_matches(key_event, KEY_2):
+		return PrizeActionState.PRIZE_CANNONS
+	if _key_matches(key_event, KEY_3):
+		return PrizeActionState.PRIZE_REPAIR_MATERIALS
+	if _key_matches(key_event, KEY_4):
+		return PrizeActionState.PRIZE_TRADE_RECORDS
+	return ""
+
+
+func _attempt_prize_selection(prize_type: String) -> void:
+	if not _prize_actions.can_attempt_selection(prize_type):
+		return
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var journal_before: Dictionary = (
+		_trade_journal.get_playtest_state(completed_voyages)
+	)
+	if _prize_actions.actions_remaining <= 0:
+		_prize_actions.record_denied_selection(
+			prize_type,
+			"NO PRIZE ACTIONS REMAIN",
+			cargo_before,
+			journal_before,
+		)
+		return
+	if _prize_actions.selected_prize_types.has(prize_type):
+		_prize_actions.record_denied_selection(
+			prize_type,
+			"PRIZE ALREADY TAKEN",
+			cargo_before,
+			journal_before,
+		)
+		return
+	var cargo_lot_name: String = _prize_actions.get_cargo_lot_name(prize_type)
+	if not cargo_lot_name.is_empty() and not ship.can_keep_cargo_lot():
+		_prize_actions.record_denied_selection(
+			prize_type,
+			"NO FREE SHIP CARGO SLOT",
+			cargo_before,
+			journal_before,
+		)
+		return
+	if not cargo_lot_name.is_empty():
+		if not ship.keep_cargo_lot(cargo_lot_name):
+			_prize_actions.record_denied_selection(
+				prize_type,
+				"CARGO PRIZE DID NOT LOAD",
+				cargo_before,
+				journal_before,
+			)
+			return
+	else:
+		_record_local_port_market_in_journal(
+			TradeJournalState.PRIZE_TRADE_RECORDS_SOURCE
+		)
+	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var journal_after: Dictionary = (
+		_trade_journal.get_playtest_state(completed_voyages)
+	)
+	_prize_actions.record_successful_selection(
+		prize_type,
+		cargo_before,
+		cargo_after,
+		journal_before,
+		journal_after,
+	)
+	_update_cargo_view()
+	_update_trade_journal_view()
+	_update_prize_view()
+
+
+func _close_prize_screen() -> void:
+	_prize_close_evidence = _prize_actions.close_screen()
+	prize_view.hide()
+	player.movement_enabled = true
+	controls_help.text = BOARDING_DECK_CONTROLS_TEXT
+	_update_interaction_prompt()
+
+
 func _is_boarding_incompatible_key(key_event: InputEventKey) -> bool:
 	for keycode in [
 		KEY_M,
@@ -809,6 +950,7 @@ func _is_boarding_incompatible_key(key_event: InputEventKey) -> bool:
 		KEY_R,
 		KEY_B,
 		KEY_L,
+		KEY_C,
 		KEY_X,
 		KEY_1,
 		KEY_2,
@@ -1245,7 +1387,7 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 			_get_trade_key_name(trade_key)
 		)
 		_last_trade_result = "NO CHANGE · RELEASE THE KEY FIRST"
-		if trade_key == KEY_B or trade_key == KEY_L:
+		if trade_key == KEY_B or trade_key == KEY_L or trade_key == KEY_C:
 			var held_cargo: Array[String] = ship.get_cargo_lots()
 			var held_ammunition: int = ship.get_ammunition_units()
 			var held_spice_mark: Dictionary = (
@@ -1272,6 +1414,15 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 	_trade_pressed_keys[trade_key] = true
 	if trade_key == KEY_X:
 		_close_trade_contact()
+		return
+	if trade_key == KEY_C:
+		if _active_trade_contact != null and _active_trade_contact.is_port_trader():
+			_attempt_prize_cannon_cargo_sale()
+		else:
+			_trade_blocked_input_count += 1
+			_last_trade_action = "SELL_PRIZE_CANNONS_BLOCKED_AT_COVE"
+			_last_trade_result = "PRIZE CANNONS SELL AT PORT ONLY"
+			_update_trade_view()
 		return
 	if trade_key == KEY_B:
 		if _active_trade_contact != null and _active_trade_contact.is_port_trader():
@@ -1306,6 +1457,8 @@ func _get_trade_key(key_event: InputEventKey) -> int:
 		return KEY_B
 	if _key_matches(key_event, KEY_L):
 		return KEY_L
+	if _key_matches(key_event, KEY_C):
+		return KEY_C
 	return 0
 
 
@@ -1317,6 +1470,8 @@ func _get_trade_key_name(trade_key: int) -> String:
 			return "B"
 		KEY_L:
 			return "L"
+		KEY_C:
+			return "C"
 		KEY_X:
 			return "X"
 	return "UNKNOWN"
@@ -1717,6 +1872,74 @@ func _attempt_ammunition_load() -> void:
 	_update_cargo_view()
 	_update_money_view()
 	_update_ammunition_view()
+	_update_trade_view()
+
+
+func _attempt_prize_cannon_cargo_sale() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_port_trader()
+	):
+		return
+	var money_before := money
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var spice_mark_before: Dictionary = (
+		port_trader.get_mark_state(completed_voyages)
+	)
+	var cannon_lot_name := PrizeActionState.CANNON_CARGO_LOT_NAME
+	var success := cargo_before.has(cannon_lot_name)
+	_last_trade_action = "SELL_PRIZE_CANNONS_AS_CARGO"
+	if success:
+		success = ship.remove_cargo_lot(cannon_lot_name)
+	if success:
+		money += PRIZE_CANNON_CARGO_SALE_PRICE
+		_prize_cannon_sale_count += 1
+		_prize_cannon_money_earned += PRIZE_CANNON_CARGO_SALE_PRICE
+		_last_trade_result = "SOLD PRIZE CANNONS CARGO · +%d COINS" % (
+			PRIZE_CANNON_CARGO_SALE_PRICE
+		)
+	else:
+		_last_trade_result = "CANNON CARGO SALE DENIED · NO PRIZE CANNONS"
+	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var spice_mark_after: Dictionary = (
+		port_trader.get_mark_state(completed_voyages)
+	)
+	_last_prize_cannon_sale_evidence = {
+		"success": success,
+		"result": _last_trade_result,
+		"cargo_lot_name": cannon_lot_name,
+		"sellable_as_cargo": true,
+		"usable_cannons_kept_as_module": false,
+		"fixed_sale_price": PRIZE_CANNON_CARGO_SALE_PRICE,
+		"money_before": money_before,
+		"money_after": money,
+		"money_delta": money - money_before,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_delta": cargo_after.size() - cargo_before.size(),
+		"spice_mark_before": spice_mark_before,
+		"spice_mark_after": spice_mark_after,
+		"spice_state_unchanged": spice_mark_before == spice_mark_after,
+		"transaction_atomic": (
+			(
+				success
+				and money - money_before == PRIZE_CANNON_CARGO_SALE_PRICE
+				and cargo_after.size() == cargo_before.size() - 1
+				and cargo_after.count(cannon_lot_name)
+					== cargo_before.count(cannon_lot_name) - 1
+				and spice_mark_before == spice_mark_after
+			)
+			or (
+				not success
+				and money == money_before
+				and cargo_after == cargo_before
+				and spice_mark_before == spice_mark_after
+			)
+		),
+	}
+	_update_cargo_view()
+	_update_money_view()
 	_update_trade_view()
 
 
@@ -2705,6 +2928,7 @@ func _is_any_trade_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_E)
 		or Input.is_key_pressed(KEY_B)
 		or Input.is_key_pressed(KEY_L)
+		or Input.is_key_pressed(KEY_C)
 		or Input.is_key_pressed(KEY_M)
 		or Input.is_key_pressed(KEY_X)
 		or Input.is_key_pressed(KEY_1)
@@ -2734,7 +2958,11 @@ func _is_any_journal_guard_key_pressed() -> bool:
 
 func _get_context_controls_text() -> String:
 	if _player_on_target_deck:
-		return BOARDING_DECK_CONTROLS_TEXT
+		return (
+			PRIZE_CONTROLS_TEXT
+			if _prize_actions.screen_open
+			else BOARDING_DECK_CONTROLS_TEXT
+		)
 	if _journal_view_open:
 		return JOURNAL_CONTROLS_TEXT
 	if _journal_release_pending:
@@ -2945,6 +3173,14 @@ func _board_nearby_target() -> void:
 	_boarding_furthest_distance = 0.0
 	_boarding_walked_across_deck = false
 	_boarding_deck_bounds_held = true
+	_prize_opened_for_current_boarding = false
+	_prize_returned_to_player_ship = false
+	_prize_pressed_keys.clear()
+	_prize_held_close_count = 0
+	_prize_close_evidence = {}
+	_prize_persistence_evidence = {}
+	_prize_trigger_fight_outcome = "NONE"
+	_prize_target_resolution_evidence = {}
 	ship.set_navigation_input_blocked(true)
 	ship.set_captain_aboard(false)
 	_broadside_pressed_keys.clear()
@@ -2999,6 +3235,11 @@ func _update_boarding_deck_state(delta: float = 0.0) -> void:
 	if not _player_on_target_deck:
 		return
 	target_boarding_deck.update_combat(delta, player.global_position)
+	var combat_state: Dictionary = target_boarding_deck.get_playtest_state(
+		player.global_position
+	)
+	if bool(combat_state["fight_ended"]) and not _prize_opened_for_current_boarding:
+		_open_prize_screen_after_victory()
 	var movement_distance := _boarding_previous_player_position.distance_to(
 		player.global_position
 	)
@@ -3026,11 +3267,47 @@ func _update_boarding_deck_state(delta: float = 0.0) -> void:
 		_update_interaction_prompt()
 
 
+func _open_prize_screen_after_victory() -> void:
+	if _active_boarding_target == null:
+		return
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var combat_state: Dictionary = target_boarding_deck.get_playtest_state(
+		player.global_position
+	)
+	_prize_returned_to_player_ship = false
+	_prize_trigger_fight_outcome = String(combat_state["fight_outcome"])
+	_prize_pressed_keys.clear()
+	_prize_close_evidence = {}
+	_prize_persistence_evidence = {}
+	var open_evidence: Dictionary = _prize_actions.open_for_victory(
+		_active_boarding_target.target_id,
+		_active_boarding_target.display_name,
+		int(damage_state["hull_current"]),
+		int(damage_state["hull_max"]),
+		ship.get_cargo_lots(),
+		_trade_journal.get_entry_snapshot(),
+	)
+	if not bool(open_evidence.get("success", false)):
+		return
+	_prize_target_resolution_evidence = (
+		_active_boarding_target.resolve_boarding_victory()
+	)
+	if not bool(_prize_target_resolution_evidence.get("success", false)):
+		_prize_actions.close_screen()
+		return
+	_prize_opened_for_current_boarding = true
+	player.movement_enabled = false
+	interaction_prompt.hide()
+	controls_help.text = PRIZE_CONTROLS_TEXT
+	_update_prize_view()
+
+
 func _return_from_target_deck() -> void:
 	if (
 		not _player_on_target_deck
 		or not _player_near_boarding_return
 		or _active_boarding_target == null
+		or _prize_actions.screen_open
 	):
 		return
 	var target: InspectableTargetShipState = _active_boarding_target
@@ -3045,9 +3322,16 @@ func _return_from_target_deck() -> void:
 	player.enter_ship(ship_standing_position.global_position)
 	ship.set_captain_aboard(true)
 	ship.set_navigation_input_blocked(false, true)
+	_prize_returned_to_player_ship = true
 	_boarding_conservation_after = _capture_boarding_conservation_snapshot(target)
-	_boarding_state_conservation_holds = (
-		_boarding_conservation_before == _boarding_conservation_after
+	_boarding_state_conservation_holds = _boarding_return_state_holds(
+		_boarding_conservation_before,
+		_boarding_conservation_after,
+	)
+	_prize_persistence_evidence = _prize_actions.get_playtest_state(
+		ship.get_cargo_lots(),
+		_trade_journal.get_entry_snapshot(),
+		_prize_returned_to_player_ship,
 	)
 	_last_boarding_return_evidence = {
 		"success": true,
@@ -3066,6 +3350,10 @@ func _return_from_target_deck() -> void:
 		"state_before": _boarding_conservation_before.duplicate(true),
 		"state_after": _boarding_conservation_after.duplicate(true),
 		"state_conservation_holds": _boarding_state_conservation_holds,
+		"prize_persistence": _prize_persistence_evidence.duplicate(true),
+		"prize_persistence_holds": bool(
+			_prize_persistence_evidence["persistence_after_return_holds"]
+		),
 		"fresh_press_required": true,
 	}
 	_active_boarding_target = null
@@ -3095,8 +3383,55 @@ func _capture_boarding_conservation_snapshot(
 		"trade_sold_lot_count": _trade_sold_lot_count,
 		"port_trade_mark": port_trader.get_mark_state(completed_voyages),
 		"cove_trade_mark": cove_buyer.get_mark_state(completed_voyages),
+		"trade_journal_entry": _trade_journal.get_entry_snapshot(),
+		"trade_journal_prize_update_count": int(
+			_trade_journal.get_playtest_state(completed_voyages)[
+				"prize_trade_records_update_count"
+			]
+		),
 		"heat_change_count": 0,
 	}
+
+
+func _boarding_return_state_holds(
+	state_before: Dictionary,
+	state_after: Dictionary,
+) -> bool:
+	var expected_cargo: Array = (state_before["cargo_lots"] as Array).duplicate()
+	expected_cargo.append_array(_prize_actions.awarded_cargo_lots)
+	var journal_holds: bool = (
+		(
+			int(state_after["trade_journal_prize_update_count"])
+			== int(state_before["trade_journal_prize_update_count"]) + 1
+			and not (state_after["trade_journal_entry"] as Dictionary).is_empty()
+		)
+		if _prize_actions.trade_records_taken
+		else (
+			state_after["trade_journal_entry"] == state_before["trade_journal_entry"]
+			and state_after["trade_journal_prize_update_count"]
+				== state_before["trade_journal_prize_update_count"]
+		)
+	)
+	return (
+		state_after["money"] == state_before["money"]
+		and state_after["cargo_lots"] == expected_cargo
+		and state_after["ammunition_units"] == state_before["ammunition_units"]
+		and state_after["player_ship_hull"] == state_before["player_ship_hull"]
+		and state_after["completed_voyages"] == state_before["completed_voyages"]
+		and state_after["target_id"] == state_before["target_id"]
+		and state_after["target_hull"] == state_before["target_hull"]
+		and state_after["target_sails"] == state_before["target_sails"]
+		and state_after["target_disabled"] == state_before["target_disabled"]
+		and state_after["trade_bought_lot_count"]
+			== state_before["trade_bought_lot_count"]
+		and state_after["trade_sold_lot_count"]
+			== state_before["trade_sold_lot_count"]
+		and state_after["port_trade_mark"] == state_before["port_trade_mark"]
+		and state_after["cove_trade_mark"] == state_before["cove_trade_mark"]
+		and state_after["heat_change_count"] == 0
+		and state_before["heat_change_count"] == 0
+		and journal_holds
+	)
 
 
 func _open_target_inspection() -> void:
@@ -3536,6 +3871,51 @@ func _update_target_combat_view() -> void:
 	else:
 		catch_status.text = "CHASE · TARGET FASTER · DAMAGE SAILS TO CATCH"
 	target_combat_view.visible = _player_aboard_ship and not ship.is_docked
+
+
+func _update_prize_view() -> void:
+	var prize_state: Dictionary = _prize_actions.get_playtest_state(
+		ship.get_cargo_lots(),
+		_trade_journal.get_entry_snapshot(),
+		_prize_returned_to_player_ship,
+	)
+	prize_title.text = "VICTORY PRIZES · %s" % (
+		_prize_actions.active_target_name
+	)
+	prize_status.text = "PRIZE ACTIONS · %d / %d REMAIN" % [
+		prize_state["actions_remaining"],
+		prize_state["action_limit"],
+	]
+	var low_hull_text := (
+		"LOW HULL · ACTION LIMIT REDUCED TO %d"
+			% PrizeActionState.LOW_HULL_ACTION_LIMIT
+		if bool(prize_state["low_hull_reduction_applied"])
+		else "HULL READY · STANDARD %d ACTION LIMIT"
+			% PrizeActionState.DEFAULT_ACTION_LIMIT
+	)
+	var lines := PackedStringArray([
+		"CHOOSE LIMITED PRIZES · EACH SUCCESS USES 1 ACTION",
+		low_hull_text,
+		"SHIP CARGO SPACE · %d FREE OF %d" % [
+			ship.get_cargo_limit() - ship.get_cargo_lots().size(),
+			ship.get_cargo_limit(),
+		],
+		"",
+	])
+	for prize_type in PrizeActionState.PRIZE_TYPES:
+		var taken: bool = _prize_actions.selected_prize_types.has(prize_type)
+		lines.append("[%s] %s · %s" % [
+			PrizeActionState.PRIZE_KEYS[prize_type],
+			PrizeActionState.PRIZE_DISPLAY_NAMES[prize_type],
+			"TAKEN" if taken else "AVAILABLE",
+		])
+	prize_details.text = "\n".join(lines)
+	prize_result.text = _prize_actions.last_result
+	prize_controls.text = (
+		"[1] CARGO · [2] CANNONS · [3] REPAIR · "
+		+ "[4] TRADE RECORDS · [X] CLOSE"
+	)
+	prize_view.visible = _prize_actions.screen_open
 
 
 func _get_attack_choices_text() -> String:
@@ -4266,9 +4646,17 @@ func _update_trade_view() -> void:
 				ammunition_state["ammunition_units"],
 				ammunition_state["loaded_lot_count"],
 			])
+			port_lines.append("")
+			port_lines.append("PRIZE CANNONS · SELLABLE CARGO · FIXED %d COINS" % (
+				PRIZE_CANNON_CARGO_SALE_PRICE
+			))
+			port_lines.append("[C] SELL 1 %s · HELD CARGO %d" % [
+				PrizeActionState.CANNON_CARGO_LOT_NAME,
+				cargo_lots.count(PrizeActionState.CANNON_CARGO_LOT_NAME),
+			])
 			trade_details.text = "\n".join(port_lines)
 			trade_controls.text = (
-				"[E] %s · [B] BUY SUPPLY · [L] LOAD 3 AMMUNITION · [X] CLOSE" % (
+				"[E] %s · [B] SUPPLY · [L] LOAD · [C] SELL CANNONS · [X] CLOSE" % (
 					"BUY SPICE" if contact_state["trade_available"]
 					else "SPICE UNAVAILABLE"
 				)
@@ -4896,7 +5284,9 @@ func _update_request_view() -> void:
 
 func _update_interaction_prompt() -> void:
 	if _player_on_target_deck:
-		if _player_near_boarding_return:
+		if _prize_actions.screen_open:
+			interaction_prompt.hide()
+		elif _player_near_boarding_return:
 			interaction_prompt.text = "[E] RETURN TO PLAYER SHIP"
 			interaction_prompt.show()
 		else:
@@ -5173,17 +5563,20 @@ func get_playtest_state() -> Dictionary:
 		+ food_state["total_units_used"]
 		+ repair_state["consumed_timber_count"]
 		+ ammunition_state["depleted_lot_count"]
+		+ _prize_cannon_sale_count
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total
 		+ _trade_bought_lot_count
 		+ _ammunition_supply_purchased_lot_count
+		+ _prize_actions.get_awarded_cargo_lot_count()
 	)
 	var expected_money: int = (
 		STARTING_MONEY
 		- _trade_bought_lot_count * TradeContact.CHEAP_PRICE
 		+ _trade_sold_lot_count * TradeContact.VALUABLE_PRICE
 		- _ammunition_supply_money_spent
+		+ _prize_cannon_money_earned
 	)
 	var ammunition_load_state: Dictionary = ammunition_state["last_load_evidence"]
 	var ammunition_conversion_cargo_delta: int = 0
@@ -5204,9 +5597,14 @@ func get_playtest_state() -> Dictionary:
 	var boarding_prompt_target_ids: Array[String] = []
 	var boarding_far_denial_target_ids: Array[String] = []
 	var boarding_active_target_ids: Array[String] = []
+	var boarding_resolved_target_ids: Array[String] = []
+	var boarding_unresolved_target_ids: Array[String] = []
 	var boarding_prompt_contract_holds := true
 	var boarding_far_denial_holds := true
 	var boarding_state_owner_count_holds := true
+	var boarding_resolved_no_repeat_prompt_holds := true
+	var boarding_each_target_resolves_at_most_once := true
+	var boarding_resolution_preserves_route_condition := true
 	var boarding_last_far_denial_distance := -1.0
 	for target in inspection_targets:
 		target_ship_states.append(target.get_playtest_state())
@@ -5240,6 +5638,10 @@ func get_playtest_state() -> Dictionary:
 			)
 		if bool(target_boarding_state["active"]):
 			boarding_active_target_ids.append(target.target_id)
+		if bool(target_boarding_state["victory_resolved"]):
+			boarding_resolved_target_ids.append(target.target_id)
+		else:
+			boarding_unresolved_target_ids.append(target.target_id)
 		boarding_prompt_contract_holds = (
 			boarding_prompt_contract_holds
 			and bool(target_boarding_state["prompt_requires_condition_and_position"])
@@ -5251,6 +5653,24 @@ func get_playtest_state() -> Dictionary:
 		boarding_state_owner_count_holds = (
 			boarding_state_owner_count_holds
 			and int(target_boarding_state["owner_count"]) == 1
+		)
+		boarding_resolved_no_repeat_prompt_holds = (
+			boarding_resolved_no_repeat_prompt_holds
+			and bool(target_boarding_state["resolved_target_has_no_prompt"])
+			and (
+				not bool(target_boarding_state["victory_resolved"])
+				or bool(target_boarding_state["repeat_boarding_blocked"])
+			)
+		)
+		boarding_each_target_resolves_at_most_once = (
+			boarding_each_target_resolves_at_most_once
+			and int(target_boarding_state["victory_resolution_count"]) <= 1
+		)
+		boarding_resolution_preserves_route_condition = (
+			boarding_resolution_preserves_route_condition
+			and bool(target_boarding_state[
+				"resolution_preserved_condition_and_route"
+			])
 		)
 	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
 	var broadside_view_text: String = "%s\n%s\n%s" % [
@@ -5308,6 +5728,49 @@ func get_playtest_state() -> Dictionary:
 	var boarding_deck_state: Dictionary = target_boarding_deck.get_playtest_state(
 		player.global_position
 	)
+	var prize_state: Dictionary = _prize_actions.get_playtest_state(
+		ship.get_cargo_lots(),
+		_trade_journal.get_entry_snapshot(),
+		_prize_returned_to_player_ship,
+	)
+	var prize_screen_counts_by_target: Dictionary = (
+		prize_state["screen_open_counts_by_target"]
+	)
+	var resolved_targets_have_one_prize_screen_max: bool = true
+	for resolved_target_id in boarding_resolved_target_ids:
+		resolved_targets_have_one_prize_screen_max = (
+			resolved_targets_have_one_prize_screen_max
+			and int(prize_screen_counts_by_target.get(resolved_target_id, 0)) == 1
+		)
+	var two_distinct_targets_one_victory_each_eligible: bool = (
+		target_ship_ids.size() == 2
+		and boarding_each_target_resolves_at_most_once
+	)
+	for target_id in target_ship_ids:
+		two_distinct_targets_one_victory_each_eligible = (
+			two_distinct_targets_one_victory_each_eligible
+			and int(prize_screen_counts_by_target.get(target_id, 0)) <= 1
+		)
+	var prize_view_text := ""
+	if prize_view.visible:
+		prize_view_text = "%s\n%s\n%s\n%s\n%s" % [
+			prize_title.text,
+			prize_status.text,
+			prize_details.text,
+			prize_result.text,
+			prize_controls.text,
+		]
+	var prize_view_shows_four_types := prize_view.visible
+	for visible_prize_text in [
+		"[1] CAPTURED CARGO",
+		"[2] USABLE CANNONS · SELLABLE CARGO",
+		"[3] REPAIR MATERIALS · TIMBER LOT",
+		"[4] TRADE RECORDS · PORT JOURNAL ENTRY",
+	]:
+		prize_view_shows_four_types = (
+			prize_view_shows_four_types
+			and prize_view_text.contains(visible_prize_text)
+		)
 	var boarding_prompt_visible := (
 		interaction_prompt.visible
 		and interaction_prompt.text.begins_with("[E] BOARD ")
@@ -5372,6 +5835,10 @@ func get_playtest_state() -> Dictionary:
 		"cargo_accounted_total_including_consumed_and_sold": accounted_cargo_total,
 		"cargo_initial_total_lots_in_world": initial_physical_cargo_total,
 		"cargo_expected_total_including_bought": expected_cargo_total,
+		"cargo_prize_awarded_lots": (
+			_prize_actions.get_awarded_cargo_lot_count()
+		),
+		"cargo_prize_cannon_sold_lots": _prize_cannon_sale_count,
 		"cargo_lot_conservation_holds": accounted_cargo_total == expected_cargo_total,
 		"cargo_conservation_including_consumed_holds": (
 			accounted_cargo_total == expected_cargo_total
@@ -5799,6 +6266,21 @@ func get_playtest_state() -> Dictionary:
 		),
 		"boarding_active_target_ids": boarding_active_target_ids,
 		"boarding_active_target_count": boarding_active_target_ids.size(),
+		"boarding_resolved_target_ids": boarding_resolved_target_ids,
+		"boarding_resolved_target_count": boarding_resolved_target_ids.size(),
+		"boarding_unresolved_target_ids": boarding_unresolved_target_ids,
+		"boarding_unresolved_target_count": (
+			boarding_unresolved_target_ids.size()
+		),
+		"boarding_resolved_no_repeat_prompt_holds": (
+			boarding_resolved_no_repeat_prompt_holds
+		),
+		"boarding_each_target_resolves_at_most_once": (
+			boarding_each_target_resolves_at_most_once
+		),
+		"boarding_resolution_preserves_route_condition": (
+			boarding_resolution_preserves_route_condition
+		),
 		"boarding_attempt_count": _boarding_attempt_count,
 		"boarding_success_count": _boarding_success_count,
 		"boarding_return_count": _boarding_return_count,
@@ -5859,6 +6341,156 @@ func get_playtest_state() -> Dictionary:
 		"boarding_state_conservation_holds": (
 			_boarding_state_conservation_holds
 		),
+		"prize_action_state": prize_state,
+		"prize_action_system_count": prize_state["system_count"],
+		"prize_action_owner_count": prize_state["owner_count"],
+		"prize_screen_open": prize_state["screen_open"],
+		"prize_screen_open_count": prize_state["screen_open_count"],
+		"prize_screen_open_counts_by_target": (
+			prize_state["screen_open_counts_by_target"]
+		),
+		"prize_current_target_screen_open_count": (
+			prize_state["current_target_screen_open_count"]
+		),
+		"prize_screen_close_count": prize_state["screen_close_count"],
+		"prize_screen_opens_once_per_victory": (
+			prize_state["opens_once_per_victory"]
+		),
+		"prize_screen_opened_after_fight_victory": (
+			not _prize_opened_for_current_boarding
+			or (
+				bool(boarding_deck_state["fight_ended"])
+				and _prize_trigger_fight_outcome in ["SURRENDER", "DEFEAT"]
+			)
+		),
+		"prize_trigger_fight_outcome": _prize_trigger_fight_outcome,
+		"prize_target_resolution_evidence": (
+			_prize_target_resolution_evidence.duplicate(true)
+		),
+		"prize_opens_for_surrender_or_defeat": true,
+		"prize_resolved_target_cannot_prompt_again": (
+			boarding_resolved_no_repeat_prompt_holds
+		),
+		"prize_resolved_target_cannot_open_second_screen": (
+			resolved_targets_have_one_prize_screen_max
+		),
+		"prize_two_distinct_targets_one_victory_each_eligible": (
+			two_distinct_targets_one_victory_each_eligible
+		),
+		"prize_view_count": get_tree().get_nodes_in_group(
+			"prize_action_screen"
+		).size(),
+		"prize_view_visible": prize_view.visible,
+		"prize_view_text": prize_view_text,
+		"prize_view_shows_exactly_four_types": prize_view_shows_four_types,
+		"prize_view_shows_action_limit_before_choice": (
+			prize_view.visible
+			and prize_view_text.contains("PRIZE ACTIONS")
+			and prize_view_text.contains("EACH SUCCESS USES 1 ACTION")
+		),
+		"prize_type_count": prize_state["prize_type_count"],
+		"prize_types": prize_state["prize_types"],
+		"prize_action_limit": prize_state["action_limit"],
+		"prize_actions_remaining": prize_state["actions_remaining"],
+		"prize_actions_used": prize_state["actions_used"],
+		"prize_action_limit_prevents_all_four": (
+			prize_state["action_limit_prevents_taking_all_four"]
+		),
+		"prize_low_hull_threshold_percent": (
+			prize_state["low_hull_threshold_percent"]
+		),
+		"prize_low_hull_action_limit": prize_state["low_hull_action_limit"],
+		"prize_low_hull_reduction_applied": (
+			prize_state["low_hull_reduction_applied"]
+		),
+		"prize_low_hull_reduces_action_limit": (
+			prize_state["low_hull_reduces_action_limit"]
+		),
+		"prize_selected_types": prize_state["selected_prize_types"],
+		"prize_selected_count": prize_state["selected_prize_count"],
+		"prize_awarded_cargo_lots": prize_state["awarded_cargo_lots"],
+		"prize_awarded_cargo_lot_count": (
+			prize_state["awarded_cargo_lot_count"]
+		),
+		"prize_current_victory_awarded_cargo_lot_count": (
+			prize_state["current_victory_awarded_cargo_lot_count"]
+		),
+		"prize_cumulative_awarded_cargo_lot_count": (
+			prize_state["cumulative_awarded_cargo_lot_count"]
+		),
+		"prize_cargo_lot_name": prize_state["cargo_prize_lot_name"],
+		"prize_cannon_cargo_lot_name": prize_state["cannon_cargo_lot_name"],
+		"prize_cannon_is_usable": prize_state["cannon_is_usable"],
+		"prize_cannon_is_sellable_cargo": (
+			prize_state["cannon_is_sellable_cargo"]
+		),
+		"prize_cannon_sale_price": PRIZE_CANNON_CARGO_SALE_PRICE,
+		"prize_cannon_sale_count": _prize_cannon_sale_count,
+		"prize_cannon_money_earned": _prize_cannon_money_earned,
+		"prize_last_cannon_sale_evidence": (
+			_last_prize_cannon_sale_evidence.duplicate(true)
+		),
+		"prize_repair_material_lot_name": (
+			prize_state["repair_material_cargo_lot_name"]
+		),
+		"prize_repair_material_uses_existing_timber": (
+			prize_state["repair_material_uses_existing_timber"]
+		),
+		"prize_trade_records_taken": prize_state["trade_records_taken"],
+		"prize_trade_records_update_one_port_entry": (
+			prize_state["trade_records_update_one_port_entry"]
+		),
+		"prize_successful_selection_count": (
+			prize_state["successful_selection_count"]
+		),
+		"prize_denied_selection_count": (
+			prize_state["denied_selection_count"]
+		),
+		"prize_exhausted_rejection_count": (
+			prize_state["exhausted_rejection_count"]
+		),
+		"prize_cargo_full_rejection_count": (
+			prize_state["cargo_full_rejection_count"]
+		),
+		"prize_held_input_count": prize_state["held_input_count"],
+		"prize_held_close_count": _prize_held_close_count,
+		"prize_last_result": prize_state["last_result"],
+		"prize_last_open_evidence": (
+			prize_state["last_open_evidence"].duplicate(true)
+		),
+		"prize_last_selection_evidence": (
+			prize_state["last_selection_evidence"].duplicate(true)
+		),
+		"prize_last_denied_selection_evidence": (
+			prize_state["last_denied_selection_evidence"].duplicate(true)
+		),
+		"prize_last_held_input_evidence": (
+			prize_state["last_held_input_evidence"].duplicate(true)
+		),
+		"prize_close_evidence": _prize_close_evidence.duplicate(true),
+		"prize_returned_to_player_ship": _prize_returned_to_player_ship,
+		"prize_selected_prizes_persist": (
+			prize_state["selected_prizes_persist"]
+		),
+		"prize_trade_records_persist": prize_state["trade_records_persist"],
+		"prize_persistence_after_return_holds": (
+			prize_state["persistence_after_return_holds"]
+		),
+		"prize_ship_capture_system_count": (
+			prize_state["ship_capture_system_count"]
+		),
+		"prize_ransom_system_count": prize_state["ransom_system_count"],
+		"prize_prisoner_system_count": prize_state["prisoner_system_count"],
+		"prize_cannon_module_system_count": (
+			prize_state["cannon_module_system_count"]
+		),
+		"prize_story_clue_system_count": (
+			prize_state["story_clue_system_count"]
+		),
+		"prize_crew_injury_system_count": (
+			prize_state["crew_injury_system_count"]
+		),
+		"prize_heat_change_count": prize_state["heat_change_count"],
 		"boarding_target_hull_above_zero_at_entry": bool(
 			_successful_boarding_evidence.get("target_hull_above_zero", false)
 		),
@@ -6163,9 +6795,13 @@ func get_playtest_state() -> Dictionary:
 		"boarding_relationship_reaction_count": (
 			boarding_deck_state["relationship_reaction_count"]
 		),
-		"boarding_ship_capture_system_count": 0,
-		"boarding_reward_system_count": 0,
-		"boarding_heat_change_count": 0,
+		"boarding_ship_capture_system_count": (
+			boarding_deck_state["ship_capture_system_count"]
+		),
+		"boarding_reward_system_count": (
+			boarding_deck_state["reward_system_count"]
+		),
+		"boarding_heat_change_count": boarding_deck_state["heat_change_count"],
 		"boarding_crew_injury_system_count": (
 			boarding_deck_state["crew_injury_system_count"]
 		),
@@ -6863,6 +7499,12 @@ func get_playtest_state() -> Dictionary:
 		),
 		"journal_successful_purchase_refresh_count": (
 			journal_state["purchase_refresh_count"]
+		),
+		"journal_prize_trade_records_update_count": (
+			journal_state["prize_trade_records_update_count"]
+		),
+		"journal_prize_trade_records_updated_one_port_entry": (
+			journal_state["prize_trade_records_updated_one_port_entry"]
 		),
 		"journal_last_record_source": journal_state["last_record_source"],
 		"journal_record_source_counts": journal_state["record_source_counts"],

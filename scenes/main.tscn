@@ -300,7 +300,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 28 · Surrender"
+text = "Phase 29 · Prize actions"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -725,6 +725,66 @@ text = "CHASE · DAMAGE SAILS TO CATCH"
 horizontal_alignment = 1
 autowrap_mode = 2
 
+[node name="PrizeView" type="ColorRect" parent="Interface" groups=["prize_action_screen"]]
+visible = false
+offset_left = 128.0
+offset_top = 74.0
+offset_right = 1024.0
+offset_bottom = 562.0
+color = Color(0.0313726, 0.109804, 0.133333, 0.99)
+
+[node name="PrizeTitle" type="Label" parent="Interface/PrizeView"]
+offset_left = 28.0
+offset_top = 18.0
+offset_right = 868.0
+offset_bottom = 52.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 25
+text = "VICTORY PRIZES"
+horizontal_alignment = 1
+
+[node name="PrizeStatus" type="Label" parent="Interface/PrizeView"]
+offset_left = 28.0
+offset_top = 60.0
+offset_right = 868.0
+offset_bottom = 92.0
+theme_override_colors/font_color = Color(0.556863, 0.941176, 0.658824, 1)
+theme_override_font_sizes/font_size = 21
+text = "PRIZE ACTIONS · 2 / 2 REMAIN"
+horizontal_alignment = 1
+
+[node name="PrizeDetails" type="Label" parent="Interface/PrizeView"]
+offset_left = 44.0
+offset_top = 108.0
+offset_right = 852.0
+offset_bottom = 342.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_constants/line_spacing = 8
+theme_override_font_sizes/font_size = 18
+text = "CHOOSE LIMITED PRIZES · EACH SUCCESS USES 1 ACTION\nHULL READY · STANDARD 2 ACTION LIMIT\nSHIP CARGO SPACE · 1 FREE OF 3\n\n[1] CAPTURED CARGO · AVAILABLE\n[2] USABLE CANNONS · SELLABLE CARGO · AVAILABLE\n[3] REPAIR MATERIALS · TIMBER LOT · AVAILABLE\n[4] TRADE RECORDS · PORT JOURNAL ENTRY · AVAILABLE"
+horizontal_alignment = 1
+
+[node name="PrizeResult" type="Label" parent="Interface/PrizeView"]
+offset_left = 44.0
+offset_top = 354.0
+offset_right = 852.0
+offset_bottom = 400.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 18
+text = "CHOOSE 2 PRIZE ACTIONS"
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="PrizeControls" type="Label" parent="Interface/PrizeView"]
+offset_left = 28.0
+offset_top = 426.0
+offset_right = 868.0
+offset_bottom = 460.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 16
+text = "[1] CARGO · [2] CANNONS · [3] REPAIR · [4] TRADE RECORDS · [X] CLOSE"
+horizontal_alignment = 1
+
 [node name="CargoChoiceView" type="ColorRect" parent="Interface"]
 visible = false
 offset_left = 208.0
@@ -901,7 +961,7 @@ offset_right = 984.0
 offset_bottom = 520.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 14
-text = "[E] BUY SPICE · [B] BUY SUPPLY · [L] LOAD 3 AMMUNITION · [X] CLOSE"
+text = "[E] BUY SPICE · [B] SUPPLY · [L] LOAD · [C] SELL CANNONS · [X] CLOSE"
 horizontal_alignment = 1
 
 [node name="TradeJournalView" type="ColorRect" parent="Interface" groups=["trade_journal_screen"]]

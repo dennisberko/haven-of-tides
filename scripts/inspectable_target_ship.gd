@@ -70,6 +70,9 @@ var _boarding_prompt_available := false
 var _boarding_active := false
 var _boarding_begin_count := 0
 var _boarding_finish_count := 0
+var _boarding_victory_resolved := false
+var _boarding_victory_resolution_count := 0
+var _repeat_boarding_begin_blocked_count := 0
 var _boarding_far_denial_observed := false
 var _boarding_far_denial_count := 0
 var _boarding_far_denial_distance := -1.0
@@ -78,6 +81,8 @@ var _boarding_anchor_rotation := 0.0
 var _boarding_condition_at_begin: Dictionary = {}
 var _last_boarding_begin_evidence: Dictionary = {}
 var _last_boarding_finish_evidence: Dictionary = {}
+var _last_boarding_victory_resolution_evidence: Dictionary = {}
+var _last_repeat_boarding_block_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -132,6 +137,7 @@ func update_player_ship_state(
 		and is_boarding_condition_ready()
 		and is_alongside_player_ship()
 		and not _boarding_active
+		and not _boarding_victory_resolved
 	)
 	# The Board action has priority over target inspection at the same position.
 	_inspection_available = (
@@ -146,6 +152,7 @@ func update_player_ship_state(
 		and _chart_closed
 		and not is_alongside_player_ship()
 		and not _boarding_active
+		and not _boarding_victory_resolved
 		and not _boarding_far_denial_observed
 	):
 		_boarding_far_denial_observed = true
@@ -189,8 +196,27 @@ func is_boarding_active() -> bool:
 	return _boarding_active
 
 
+func is_boarding_victory_resolved() -> bool:
+	return _boarding_victory_resolved
+
+
 func begin_boarding() -> Dictionary:
 	var boarding_before: Dictionary = get_boarding_state()
+	if _boarding_victory_resolved:
+		_repeat_boarding_begin_blocked_count += 1
+		_last_repeat_boarding_block_evidence = {
+			"success": false,
+			"result": "BOARDING VICTORY ALREADY RESOLVED",
+			"rejection_reason": "TARGET_VICTORY_RESOLVED",
+			"target_id": target_id,
+			"resolved": true,
+			"resolution_count": _boarding_victory_resolution_count,
+			"begin_count_before": _boarding_begin_count,
+			"begin_count_after": _boarding_begin_count,
+			"prompt_available": _boarding_prompt_available,
+			"no_state_change": true,
+		}
+		return _last_repeat_boarding_block_evidence.duplicate(true)
 	if not _boarding_prompt_available or _boarding_active:
 		return {
 			"success": false,
@@ -230,6 +256,73 @@ func begin_boarding() -> Dictionary:
 	return _last_boarding_begin_evidence.duplicate(true)
 
 
+func resolve_boarding_victory() -> Dictionary:
+	if _boarding_victory_resolved:
+		return {
+			"success": false,
+			"result": "BOARDING VICTORY ALREADY RESOLVED",
+			"target_id": target_id,
+			"resolution_count": _boarding_victory_resolution_count,
+			"no_state_change": true,
+		}
+	if not _boarding_active:
+		return {
+			"success": false,
+			"result": "NO ACTIVE BOARDING VICTORY",
+			"target_id": target_id,
+			"resolution_count": _boarding_victory_resolution_count,
+			"no_state_change": true,
+		}
+	var condition_before := {
+		"hull_current": _hull_current,
+		"sail_current": _sail_current,
+	}
+	var route_position_before := global_position
+	var route_rotation_before := rotation
+	var route_enabled_before := route_enabled
+	_boarding_victory_resolved = true
+	_boarding_victory_resolution_count += 1
+	_boarding_prompt_available = false
+	_inspection_available = false
+	_last_boarding_victory_resolution_evidence = {
+		"success": true,
+		"result": "BOARDING VICTORY RESOLVED",
+		"target_id": target_id,
+		"target_name": display_name,
+		"resolved": _boarding_victory_resolved,
+		"resolution_count": _boarding_victory_resolution_count,
+		"boarding_active": _boarding_active,
+		"prompt_available": _boarding_prompt_available,
+		"begin_count": _boarding_begin_count,
+		"condition_at_resolution": {
+			"hull_current": _hull_current,
+			"sail_current": _sail_current,
+		},
+		"condition_before_resolution": condition_before,
+		"condition_unchanged_by_resolution": condition_before == {
+			"hull_current": _hull_current,
+			"sail_current": _sail_current,
+		},
+		"route_position_before_resolution": route_position_before,
+		"route_position_after_resolution": global_position,
+		"route_rotation_before_resolution": route_rotation_before,
+		"route_rotation_after_resolution": rotation,
+		"route_enabled_before_resolution": route_enabled_before,
+		"route_enabled_after_resolution": route_enabled,
+		"route_unchanged_by_resolution": (
+			global_position.is_equal_approx(route_position_before)
+			and is_equal_approx(rotation, route_rotation_before)
+			and route_enabled == route_enabled_before
+		),
+		"route_anchor_position": _boarding_anchor_position,
+		"route_anchor_rotation": _boarding_anchor_rotation,
+		"route_still_frozen_until_return": _boarding_active,
+		"repeat_boarding_blocked": true,
+	}
+	queue_redraw()
+	return _last_boarding_victory_resolution_evidence.duplicate(true)
+
+
 func finish_boarding() -> Dictionary:
 	if not _boarding_active:
 		return {
@@ -259,6 +352,10 @@ func finish_boarding() -> Dictionary:
 		"route_anchor_position": _boarding_anchor_position,
 		"route_position_at_return": global_position,
 		"route_stayed_fixed": route_stayed_fixed,
+		"victory_resolved": _boarding_victory_resolved,
+		"victory_resolution_count": _boarding_victory_resolution_count,
+		"repeat_boarding_blocked": _boarding_victory_resolved,
+		"prompt_available_after_return": _boarding_prompt_available,
 	}
 	queue_redraw()
 	return _last_boarding_finish_evidence.duplicate(true)
@@ -370,6 +467,7 @@ func apply_broadside_damage(
 		and is_boarding_condition_ready()
 		and is_alongside_player_ship()
 		and not _boarding_active
+		and not _boarding_victory_resolved
 	)
 	queue_redraw()
 	return _last_hit_evidence.duplicate(true)
@@ -476,6 +574,34 @@ func get_boarding_state() -> Dictionary:
 		"alongside_range": BOARDING_ALONGSIDE_RANGE,
 		"alongside": is_alongside_player_ship(),
 		"prompt_available": _boarding_prompt_available,
+		"victory_resolved": _boarding_victory_resolved,
+		"victory_resolution_count": _boarding_victory_resolution_count,
+		"resolved_target_has_no_prompt": (
+			not _boarding_victory_resolved or not _boarding_prompt_available
+		),
+		"repeat_boarding_blocked": _boarding_victory_resolved,
+		"repeat_boarding_begin_blocked_count": (
+			_repeat_boarding_begin_blocked_count
+		),
+		"last_victory_resolution_evidence": (
+			_last_boarding_victory_resolution_evidence.duplicate(true)
+		),
+		"last_repeat_boarding_block_evidence": (
+			_last_repeat_boarding_block_evidence.duplicate(true)
+		),
+		"resolution_preserved_condition_and_route": (
+			not _boarding_victory_resolved
+			or (
+				bool(_last_boarding_victory_resolution_evidence.get(
+					"condition_unchanged_by_resolution",
+					false,
+				))
+				and bool(_last_boarding_victory_resolution_evidence.get(
+					"route_unchanged_by_resolution",
+					false,
+				))
+			)
+		),
 		"prompt_requires_condition_and_position": (
 			not _boarding_prompt_available
 			or (is_boarding_condition_ready() and is_alongside_player_ship())
@@ -574,6 +700,14 @@ func get_playtest_state() -> Dictionary:
 		"attack_choice_count": ATTACK_CHOICES.size(),
 		"boarding": get_boarding_state(),
 		"boarding_system_count": 1,
+		"boarding_victory_resolved": _boarding_victory_resolved,
+		"boarding_victory_resolution_count": (
+			_boarding_victory_resolution_count
+		),
+		"repeat_boarding_blocked": _boarding_victory_resolved,
+		"repeat_boarding_begin_blocked_count": (
+			_repeat_boarding_begin_blocked_count
+		),
 		"crew_injury_system_count": 0,
 		"special_ammunition_type_count": 0,
 		"permanent_module_count": 0,
@@ -750,9 +884,13 @@ func _draw() -> void:
 			font,
 			Vector2(-110.0, 166.0),
 			(
-				"BOARDING READY · ALONGSIDE"
-				if _boarding_prompt_available
-				else "BOARDING READY · CLOSE THE DISTANCE"
+				"PRIZES CLAIMED · BOARDING RESOLVED"
+				if _boarding_victory_resolved
+				else (
+					"BOARDING READY · ALONGSIDE"
+					if _boarding_prompt_available
+					else "BOARDING READY · CLOSE THE DISTANCE"
+				)
 			),
 			HORIZONTAL_ALIGNMENT_CENTER,
 			220.0,

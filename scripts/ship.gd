@@ -1440,6 +1440,10 @@ func _draw() -> void:
 				cargo_color = Color("#d7b45a")
 			elif lot_name.contains("SPICE"):
 				cargo_color = Color("#c77b3d")
+			elif lot_name.contains("CANNONS"):
+				cargo_color = Color("#566571")
+			elif lot_name.contains("CAPTURED"):
+				cargo_color = Color("#9b6a47")
 			elif lot_name == ShipAmmunitionState.SOURCE_CARGO_LOT_NAME:
 				cargo_color = Color("#5f6b72")
 			elif lot_name.begins_with(
