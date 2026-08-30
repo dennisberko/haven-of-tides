@@ -24,6 +24,7 @@ var _attack_request_count := 0
 var _attack_hit_count := 0
 var _escape_count := 0
 var _defeat_count := 0
+var _player_defeat_resolution_count := 0
 var _event_sequence := 0
 var _warning_sequence := 0
 var _spawn_sequence := 0
@@ -213,6 +214,23 @@ func record_attack_result(evidence: Dictionary) -> void:
 		_attack_hit_count += 1
 
 
+func resolve_player_defeat(world_heat: int) -> Dictionary:
+	if not _encounter_active or _encounter_resolved:
+		return {
+			"resolved": false,
+			"outcome": _outcome,
+			"encounter_active": _encounter_active,
+			"encounter_resolved": _encounter_resolved,
+			"attack_request_count": _attack_request_count,
+			"attack_hit_count": _attack_hit_count,
+			"no_state_change": true,
+		}
+	_resolve("PLAYER DEFEATED", world_heat)
+	var evidence := _last_resolution_evidence.duplicate(true)
+	evidence["resolved"] = true
+	return evidence
+
+
 func get_warning_text() -> String:
 	if _warning_active:
 		return "HUNTER WARNING · NAVAL SAILS ARE CLOSING · PREPARE TO FIGHT OR RUN"
@@ -224,6 +242,8 @@ func get_warning_text() -> String:
 		return "ESCAPE SUCCESS · HUNTER PURSUIT BROKEN · HEAT REMAINS"
 	if _outcome == "DEFEATED":
 		return "HUNTER DEFEATED · SEA ROUTE CLEAR · HEAT REMAINS"
+	if _outcome == "PLAYER DEFEATED":
+		return "SHIP DEFEATED · HUNTER ENCOUNTER ENDED"
 	if _outcome == "HEAT COOLED":
 		return "HUNTER STOOD DOWN · HEAT BELOW %d · SEA ROUTE CLEAR" % (
 			HEAT_THRESHOLD
@@ -268,6 +288,7 @@ func get_hunter_playtest_state() -> Dictionary:
 		"attack_hit_count": _attack_hit_count,
 		"escape_count": _escape_count,
 		"defeat_count": _defeat_count,
+		"player_defeat_resolution_count": _player_defeat_resolution_count,
 		"warning_sequence": _warning_sequence,
 		"spawn_sequence": _spawn_sequence,
 		"first_chase_sequence": _first_chase_sequence,
@@ -304,6 +325,10 @@ func get_hunter_playtest_state() -> Dictionary:
 		"last_attack_evidence": _last_attack_evidence.duplicate(true),
 		"last_resolution_evidence": (
 			_last_resolution_evidence.duplicate(true)
+		),
+		"attacks_stopped_after_player_defeat": (
+			_outcome != "PLAYER DEFEATED"
+			or (_encounter_resolved and not _encounter_active)
 		),
 		"paused_update_count": _paused_update_count,
 		"pause_position_held": _pause_position_held,
@@ -366,6 +391,9 @@ func _resolve(result: String, world_heat: int) -> void:
 	if result == "ESCAPED":
 		_escape_count += 1
 		hide()
+	elif result == "PLAYER DEFEATED":
+		_player_defeat_resolution_count += 1
+		hide()
 	else:
 		_defeat_count += 1
 	_last_resolution_evidence = {
@@ -376,6 +404,9 @@ func _resolve(result: String, world_heat: int) -> void:
 		"warning_count": _warning_count,
 		"spawn_count": _spawn_count,
 		"attack_hit_count": _attack_hit_count,
+		"attack_request_count": _attack_request_count,
+		"visual_visible": visible,
+		"attacks_stopped": _encounter_resolved and not _encounter_active,
 		"resolution_sequence": _resolution_sequence,
 		"stable": _encounter_resolved and not _encounter_active,
 	}

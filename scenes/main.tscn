@@ -319,7 +319,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 30 · Heat"
+text = "Phase 33 · Defeat and recovery"
 
 [node name="RequestView" type="ColorRect" parent="Interface"]
 visible = false
@@ -1130,6 +1130,47 @@ offset_bottom = 532.0
 theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
 theme_override_font_sizes/font_size = 17
 text = "[J] OR [X] CLOSE"
+horizontal_alignment = 1
+
+[node name="DefeatResultView" type="ColorRect" parent="Interface" groups=["defeat_result_screen"]]
+visible = false
+offset_left = 126.0
+offset_top = 66.0
+offset_right = 1026.0
+offset_bottom = 570.0
+mouse_filter = 0
+color = Color(0.121569, 0.027451, 0.0352941, 0.99)
+
+[node name="DefeatTitle" type="Label" parent="Interface/DefeatResultView"]
+offset_left = 30.0
+offset_top = 22.0
+offset_right = 870.0
+offset_bottom = 62.0
+theme_override_colors/font_color = Color(1, 0.843137, 0.623529, 1)
+theme_override_font_sizes/font_size = 27
+text = "SHIP DEFEATED · SAFE RETURN"
+horizontal_alignment = 1
+
+[node name="DefeatDetails" type="Label" parent="Interface/DefeatResultView"]
+offset_left = 54.0
+offset_top = 88.0
+offset_right = 846.0
+offset_bottom = 390.0
+theme_override_colors/font_color = Color(0.956863, 0.968627, 0.929412, 1)
+theme_override_constants/line_spacing = 7
+theme_override_font_sizes/font_size = 19
+text = "RETURNED TO COVE\nCARGO LOST · 1 LOT\nAMMUNITION LOST · 1 UNIT\nMONEY RETAINED\nHULL RETAINED DAMAGED\nCREW RETAINED INJURED\nCOVE STORAGE · UNCHANGED\nRECOVERY · SALVAGE TIMBER · RETURN TO A SAFE DOCK · REPAIR"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="DefeatControls" type="Label" parent="Interface/DefeatResultView"]
+offset_left = 30.0
+offset_top = 430.0
+offset_right = 870.0
+offset_bottom = 472.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 19
+text = "[X] CONTINUE TO RECOVERY"
 horizontal_alignment = 1
 
 [node name="SignMessage" type="Label" parent="Interface"]

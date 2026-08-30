@@ -12,7 +12,8 @@ const REEF_COLLISION_SOURCE := "REEF"
 const REEF_COLLISION_RESPONSE := "REEF_HIT_STOP"
 const PIRATE_HUNTER_SOURCE := "PIRATE_HUNTER_BROADSIDE"
 const PIRATE_HUNTER_HIT_DAMAGE := 20
-const PIRATE_HUNTER_HULL_FLOOR := 20
+const PIRATE_HUNTER_HULL_FLOOR := 0
+const DEFEAT_HULL_THRESHOLD := 0
 
 var _hull_condition := HULL_START
 var _hit_count := 0
@@ -112,13 +113,17 @@ func try_pirate_hunter_hit(
 		_pirate_hunter_blocked_hit_count += 1
 		_last_pirate_hunter_hit_evidence = {
 			"success": false,
-			"result": "HUNTER HIT BLOCKED · PHASE 33 DEFEAT NOT ACTIVE",
+			"result": "HUNTER HIT BLOCKED · SHIP ALREADY DEFEATED",
 			"source": PIRATE_HUNTER_SOURCE,
 			"fixed_damage": PIRATE_HUNTER_HIT_DAMAGE,
 			"hull_floor": PIRATE_HUNTER_HULL_FLOOR,
+			"defeat_hull_threshold": DEFEAT_HULL_THRESHOLD,
 			"hull_before": hull_before,
 			"hull_after": _hull_condition,
 			"hull_delta": 0,
+			"damage": 0,
+			"defeated_before": hull_before <= DEFEAT_HULL_THRESHOLD,
+			"defeated_after": _hull_condition <= DEFEAT_HULL_THRESHOLD,
 			"fixed_existing_hull_owner_used": true,
 			"cargo_unchanged": true,
 			"food_progress_unchanged": true,
@@ -131,6 +136,10 @@ func try_pirate_hunter_hit(
 		PIRATE_HUNTER_HULL_FLOOR,
 		_hull_condition - PIRATE_HUNTER_HIT_DAMAGE,
 	)
+	var defeat_triggered := (
+		hull_before > DEFEAT_HULL_THRESHOLD
+		and _hull_condition <= DEFEAT_HULL_THRESHOLD
+	)
 	_pirate_hunter_hit_count += 1
 	_flash_remaining = DAMAGE_FLASH_DURATION
 	_flash_count += 1
@@ -142,10 +151,13 @@ func try_pirate_hunter_hit(
 		"source": PIRATE_HUNTER_SOURCE,
 		"fixed_damage": PIRATE_HUNTER_HIT_DAMAGE,
 		"hull_floor": PIRATE_HUNTER_HULL_FLOOR,
+		"defeat_hull_threshold": DEFEAT_HULL_THRESHOLD,
 		"hull_before": hull_before,
 		"hull_after": _hull_condition,
 		"hull_delta": _hull_condition - hull_before,
 		"damage": hull_before - _hull_condition,
+		"defeated_before": hull_before <= DEFEAT_HULL_THRESHOLD,
+		"defeated_after": _hull_condition <= DEFEAT_HULL_THRESHOLD,
 		"fixed_existing_hull_owner_used": true,
 		"cargo_before": cargo_snapshot.duplicate(),
 		"cargo_after": cargo_snapshot.duplicate(),
@@ -157,7 +169,7 @@ func try_pirate_hunter_hit(
 		"food_units_after": food_units,
 		"food_units_unchanged": true,
 		"crew_condition_changed": false,
-		"phase_33_defeat_triggered": false,
+		"phase_33_defeat_triggered": defeat_triggered,
 	}
 	return _last_pirate_hunter_hit_evidence.duplicate(true)
 
@@ -332,6 +344,7 @@ func get_playtest_state() -> Dictionary:
 		"continuous_contact_requires_exit": true,
 		"contact_reset_requires_actual_movement_away": true,
 		"has_defeat_behavior": false,
+		"supports_defeat_threshold": true,
 		"has_recovery_behavior": false,
 		"has_repair_behavior": true,
 		"repair_changes_hit_state": false,
@@ -340,6 +353,7 @@ func get_playtest_state() -> Dictionary:
 		"pirate_hunter_source": PIRATE_HUNTER_SOURCE,
 		"pirate_hunter_fixed_damage": PIRATE_HUNTER_HIT_DAMAGE,
 		"pirate_hunter_hull_floor": PIRATE_HUNTER_HULL_FLOOR,
+		"defeat_hull_threshold": DEFEAT_HULL_THRESHOLD,
 		"pirate_hunter_hit_count": _pirate_hunter_hit_count,
 		"pirate_hunter_blocked_hit_count": (
 			_pirate_hunter_blocked_hit_count

@@ -12,10 +12,14 @@ var load_denied_count := 0
 var total_units_loaded := 0
 var total_units_consumed := 0
 var depleted_lot_count := 0
+var defeat_loss_attempt_count := 0
+var defeat_unit_loss_count := 0
+var defeat_depleted_lot_count := 0
 var last_load_evidence: Dictionary = {}
 var successful_load_evidence: Dictionary = {}
 var last_denied_load_evidence: Dictionary = {}
 var last_consumption_evidence: Dictionary = {}
+var last_defeat_loss_evidence: Dictionary = {}
 
 
 func get_source_lot_count(cargo_lots: Array[String]) -> int:
@@ -159,6 +163,85 @@ func consume_for_accepted_broadside(cargo_lots: Array[String]) -> Dictionary:
 	return last_consumption_evidence.duplicate(true)
 
 
+func apply_limited_defeat_loss(
+	cargo_lots: Array[String],
+	unit_loss: int,
+	minimum_retained_cargo_lots: int,
+) -> Dictionary:
+	defeat_loss_attempt_count += 1
+	var cargo_before: Array[String] = cargo_lots.duplicate()
+	var ammunition_before := get_ammunition_units(cargo_lots)
+	var loaded_slot_index := -1
+	var loaded_slot_units := 0
+	for slot_index in range(cargo_lots.size()):
+		var slot_units := get_lot_ammunition_units(cargo_lots[slot_index])
+		if slot_units <= 0:
+			continue
+		loaded_slot_index = slot_index
+		loaded_slot_units = slot_units
+		break
+
+	var actual_unit_loss := mini(maxi(unit_loss, 0), loaded_slot_units)
+	var would_remove_last_cargo_lot := (
+		actual_unit_loss >= loaded_slot_units
+		and cargo_lots.size() <= minimum_retained_cargo_lots
+	)
+	if (
+		loaded_slot_index < 0
+		or actual_unit_loss <= 0
+		or would_remove_last_cargo_lot
+	):
+		last_defeat_loss_evidence = {
+			"success": false,
+			"result": (
+				"DEFEAT AMMUNITION LOSS LIMITED · RETAIN LAST CARGO LOT"
+				if would_remove_last_cargo_lot
+				else "DEFEAT AMMUNITION LOSS UNAVAILABLE"
+			),
+			"requested_unit_loss": unit_loss,
+			"actual_unit_loss": 0,
+			"ammunition_before": ammunition_before,
+			"ammunition_after": ammunition_before,
+			"cargo_before": cargo_before,
+			"cargo_after": cargo_lots.duplicate(),
+			"minimum_retained_cargo_lots": minimum_retained_cargo_lots,
+			"last_cargo_lot_retained": would_remove_last_cargo_lot,
+			"no_state_change": true,
+		}
+		return last_defeat_loss_evidence.duplicate(true)
+
+	var depleted_lot := actual_unit_loss >= loaded_slot_units
+	if depleted_lot:
+		cargo_lots.pop_at(loaded_slot_index)
+		defeat_depleted_lot_count += 1
+	else:
+		cargo_lots[loaded_slot_index] = get_loaded_lot_name(
+			loaded_slot_units - actual_unit_loss
+		)
+	defeat_unit_loss_count += actual_unit_loss
+	var ammunition_after := get_ammunition_units(cargo_lots)
+	last_defeat_loss_evidence = {
+		"success": true,
+		"result": "DEFEAT LOSS · -%d AMMUNITION" % actual_unit_loss,
+		"requested_unit_loss": unit_loss,
+		"actual_unit_loss": actual_unit_loss,
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_delta": ammunition_after - ammunition_before,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_lots.duplicate(),
+		"loaded_slot_index": loaded_slot_index,
+		"loaded_lot_units_before": loaded_slot_units,
+		"loaded_lot_units_after": maxi(0, loaded_slot_units - actual_unit_loss),
+		"loaded_lot_removed": depleted_lot,
+		"cargo_slot_loss": cargo_before.size() - cargo_lots.size(),
+		"minimum_retained_cargo_lots": minimum_retained_cargo_lots,
+		"cargo_retained": cargo_lots.size() >= minimum_retained_cargo_lots,
+		"loss_matches_request": actual_unit_loss == unit_loss,
+	}
+	return last_defeat_loss_evidence.duplicate(true)
+
+
 func get_playtest_state(cargo_lots: Array[String]) -> Dictionary:
 	var ammunition_units: int = get_ammunition_units(cargo_lots)
 	return {
@@ -178,12 +261,18 @@ func get_playtest_state(cargo_lots: Array[String]) -> Dictionary:
 		"total_units_loaded": total_units_loaded,
 		"total_units_consumed": total_units_consumed,
 		"depleted_lot_count": depleted_lot_count,
+		"defeat_loss_attempt_count": defeat_loss_attempt_count,
+		"defeat_unit_loss_count": defeat_unit_loss_count,
+		"defeat_depleted_lot_count": defeat_depleted_lot_count,
 		"cargo_lot_consumed_only_when_ammunition_reaches_zero": true,
 		"last_load_evidence": last_load_evidence.duplicate(true),
 		"successful_load_evidence": successful_load_evidence.duplicate(true),
 		"last_denied_load_evidence": last_denied_load_evidence.duplicate(true),
 		"last_consumption_evidence": (
 			last_consumption_evidence.duplicate(true)
+		),
+		"last_defeat_loss_evidence": (
+			last_defeat_loss_evidence.duplicate(true)
 		),
 		"ammunition_type_count": 1,
 		"free_ammunition_at_sea_count": 0,

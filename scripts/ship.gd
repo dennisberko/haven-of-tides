@@ -118,6 +118,9 @@ var _last_crew_combat_evidence: Dictionary = {}
 var _last_crew_injury_evidence: Dictionary = {}
 var _last_crew_dock_evidence: Dictionary = {}
 var _last_crew_restoration_evidence: Dictionary = {}
+var _defeat_return_count := 0
+var _defeat_ordinary_cargo_loss_count := 0
+var _last_defeat_return_evidence: Dictionary = {}
 var _repair_attempt_count := 0
 var _repair_success_count := 0
 var _repair_denied_attempt_count := 0
@@ -588,13 +591,232 @@ func apply_pirate_hunter_broadside() -> Dictionary:
 				float(food_state_after["progress_distance"]),
 			)
 		),
-		"phase_33_defeat_triggered": false,
+		"phase_33_defeat_triggered": (
+			bool(evidence.get("success", false))
+			and String(evidence.get("source", ""))
+				== ShipDamageState.PIRATE_HUNTER_SOURCE
+			and int(evidence.get("damage", 0)) > 0
+			and int(evidence.get("hull_before", 0))
+				> ShipDamageState.DEFEAT_HULL_THRESHOLD
+			and int(evidence.get("hull_after", 1))
+				<= ShipDamageState.DEFEAT_HULL_THRESHOLD
+		),
 	}, true)
 	_last_crew_combat_evidence = evidence.duplicate(true)
 	if bool(evidence.get("crew_injury_applied", false)):
 		_last_crew_injury_evidence = evidence.duplicate(true)
 	queue_redraw()
 	return evidence
+
+
+func return_to_cove_after_defeat(
+	ordinary_cargo_lot_loss: int,
+	ammunition_unit_loss: int,
+	minimum_retained_cargo_lots: int,
+) -> Dictionary:
+	var cargo_before: Array[String] = get_cargo_lots()
+	var ammunition_before := get_ammunition_units()
+	var timber_lots_before := cargo_before.count(TIMBER_LOT_NAME)
+	var damage_before: Dictionary = get_damage_playtest_state()
+	var crew_before: Dictionary = get_crew_condition_playtest_state()
+	var return_count_before := _defeat_return_count
+	if (
+		not captain_aboard
+		or is_docked
+		or int(damage_before["hull_current"])
+			> ShipDamageState.DEFEAT_HULL_THRESHOLD
+	):
+		_last_defeat_return_evidence = {
+			"success": false,
+			"result": "DEFEAT RETURN DENIED · INVALID SHIP STATE",
+			"captain_aboard": captain_aboard,
+			"ship_is_docked": is_docked,
+			"hull_current": damage_before["hull_current"],
+			"defeat_hull_threshold": ShipDamageState.DEFEAT_HULL_THRESHOLD,
+			"cargo_before": cargo_before,
+			"cargo_after": cargo_before.duplicate(),
+			"ammunition_before": ammunition_before,
+			"ammunition_after": ammunition_before,
+			"no_state_change": true,
+		}
+		return _last_defeat_return_evidence.duplicate(true)
+
+	var ammunition_loss_evidence := (
+		_ammunition_state.apply_limited_defeat_loss(
+			cargo_lots,
+			ammunition_unit_loss,
+			minimum_retained_cargo_lots,
+		)
+	)
+	var lost_cargo_lots: Array[String] = []
+	var ordinary_loss_applied := 0
+	var requested_ordinary_loss := maxi(ordinary_cargo_lot_loss, 0)
+	while (
+		ordinary_loss_applied < requested_ordinary_loss
+		and cargo_lots.size() > minimum_retained_cargo_lots
+	):
+		var removable_slot := _get_first_ordinary_cargo_slot(cargo_lots)
+		if removable_slot < 0:
+			break
+		lost_cargo_lots.append(cargo_lots[removable_slot])
+		cargo_lots.pop_at(removable_slot)
+		ordinary_loss_applied += 1
+	_sync_cargo_state()
+	_defeat_ordinary_cargo_loss_count += ordinary_loss_applied
+
+	var cove_definition: Dictionary = DOCK_DEFINITIONS["cove"]
+	global_position = cove_definition["snap_position"]
+	rotation = cove_definition["snap_rotation"]
+	current_speed = 0.0
+	sailing_velocity = Vector2.ZERO
+	controls_enabled = false
+	is_docked = true
+	current_dock_id = "cove"
+	last_dock_id = "cove"
+	at_damaged_dock = true
+	_dock_exit_cleared = false
+	_departure_input_armed = false
+	last_collision_response = "DEFEAT_RETURN_COVE"
+	_defeat_return_count += 1
+
+	var cargo_after: Array[String] = get_cargo_lots()
+	var ammunition_after := get_ammunition_units()
+	var timber_lots_after := cargo_after.count(TIMBER_LOT_NAME)
+	var damage_after: Dictionary = get_damage_playtest_state()
+	var crew_after: Dictionary = get_crew_condition_playtest_state()
+	_last_defeat_return_evidence = {
+		"success": true,
+		"result": "SHIP DEFEATED · RETURNED TO COVE",
+		"return_dock_id": "cove",
+		"return_count_before": return_count_before,
+		"return_count_after": _defeat_return_count,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_slot_loss": cargo_before.size() - cargo_after.size(),
+		"lost_cargo_lots": lost_cargo_lots,
+		"requested_ordinary_cargo_lot_loss": requested_ordinary_loss,
+		"ordinary_cargo_lot_loss": ordinary_loss_applied,
+		"ordinary_cargo_loss_limited": (
+			ordinary_loss_applied < requested_ordinary_loss
+		),
+		"timber_lots_before": timber_lots_before,
+		"timber_lots_after": timber_lots_after,
+		"timber_lot_loss": timber_lots_before - timber_lots_after,
+		"last_timber_lot_preserved": (
+			timber_lots_before == 0 or timber_lots_after >= 1
+		),
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_loss": ammunition_before - ammunition_after,
+		"ammunition_loss_evidence": ammunition_loss_evidence.duplicate(true),
+		"minimum_retained_cargo_lots": minimum_retained_cargo_lots,
+		"cargo_retained": cargo_after.size() >= minimum_retained_cargo_lots,
+		"hull_before": damage_before["hull_current"],
+		"hull_after": damage_after["hull_current"],
+		"hull_max": damage_after["hull_max"],
+		"hull_unchanged_on_return": (
+			damage_before["hull_current"] == damage_after["hull_current"]
+		),
+		"hull_retained_damaged": (
+			int(damage_after["hull_current"]) < int(damage_after["hull_max"])
+		),
+		"crew_condition_before": crew_before["condition"],
+		"crew_condition_after": crew_after["condition"],
+		"crew_condition_max": crew_after["condition_max"],
+		"crew_condition_unchanged_on_return": (
+			crew_before["condition"] == crew_after["condition"]
+		),
+		"crew_retained_injured": (
+			int(crew_after["condition"]) < int(crew_after["condition_max"])
+		),
+		"crew_restoration_count_before": crew_before["restoration_count"],
+		"crew_restoration_count_after": crew_after["restoration_count"],
+		"defeat_return_skipped_crew_restoration": (
+			crew_before["restoration_count"] == crew_after["restoration_count"]
+			and crew_before["condition"] == crew_after["condition"]
+		),
+		"ship_is_docked": is_docked,
+		"current_dock_id": current_dock_id,
+		"fixed_dock_pose": (
+			global_position.is_equal_approx(cove_definition["snap_position"])
+			and is_equal_approx(rotation, float(cove_definition["snap_rotation"]))
+		),
+		"captain_aboard": captain_aboard,
+		"main_ship_retained": true,
+		"port_access_retained": DOCK_DEFINITIONS.has("port"),
+		"normal_safe_dock_restoration_still_available": true,
+	}
+	queue_redraw()
+	return _last_defeat_return_evidence.duplicate(true)
+
+
+func _get_first_ordinary_cargo_slot(cargo_snapshot: Array[String]) -> int:
+	var timber_lot_count := cargo_snapshot.count(TIMBER_LOT_NAME)
+	for slot_index in range(cargo_snapshot.size()):
+		var lot_name := cargo_snapshot[slot_index]
+		if _ammunition_state.get_lot_ammunition_units(lot_name) > 0:
+			continue
+		if lot_name == TIMBER_LOT_NAME and timber_lot_count <= 1:
+			continue
+		return slot_index
+	return -1
+
+
+func _get_defeat_loss_preview(
+	cargo_before: Array[String],
+	ordinary_cargo_lot_loss: int,
+	ammunition_unit_loss: int,
+	minimum_retained_cargo_lots: int,
+) -> Dictionary:
+	var cargo_after: Array[String] = cargo_before.duplicate()
+	var preview_ammunition_state = ShipAmmunitionState.new()
+	var ammunition_evidence: Dictionary = (
+		preview_ammunition_state.apply_limited_defeat_loss(
+			cargo_after,
+			ammunition_unit_loss,
+			minimum_retained_cargo_lots,
+		)
+	)
+	var lost_ordinary_lots: Array[String] = []
+	var requested_ordinary_loss := maxi(ordinary_cargo_lot_loss, 0)
+	while (
+		lost_ordinary_lots.size() < requested_ordinary_loss
+		and cargo_after.size() > minimum_retained_cargo_lots
+	):
+		var removable_slot := _get_first_ordinary_cargo_slot(cargo_after)
+		if removable_slot < 0:
+			break
+		lost_ordinary_lots.append(cargo_after[removable_slot])
+		cargo_after.pop_at(removable_slot)
+	return {
+		"cargo_before": cargo_before.duplicate(),
+		"cargo_after": cargo_after,
+		"requested_ordinary_cargo_lot_loss": requested_ordinary_loss,
+		"ordinary_cargo_lot_loss": lost_ordinary_lots.size(),
+		"ordinary_cargo_loss_limited": (
+			lost_ordinary_lots.size() < requested_ordinary_loss
+		),
+		"lost_ordinary_cargo_lots": lost_ordinary_lots,
+		"ammunition_before": preview_ammunition_state.get_ammunition_units(
+			cargo_before
+		),
+		"ammunition_after": preview_ammunition_state.get_ammunition_units(
+			cargo_after
+		),
+		"ammunition_unit_loss": int(ammunition_evidence.get(
+			"actual_unit_loss",
+			0,
+		)),
+		"ammunition_loss_evidence": ammunition_evidence,
+		"timber_lots_before": cargo_before.count(TIMBER_LOT_NAME),
+		"timber_lots_after": cargo_after.count(TIMBER_LOT_NAME),
+		"last_timber_lot_preserved": (
+			cargo_before.count(TIMBER_LOT_NAME) == 0
+			or cargo_after.count(TIMBER_LOT_NAME) >= 1
+		),
+		"minimum_retained_cargo_lots": minimum_retained_cargo_lots,
+		"cargo_retained": cargo_after.size() >= minimum_retained_cargo_lots,
+	}
 
 
 func get_repair_playtest_state() -> Dictionary:
@@ -1390,6 +1612,26 @@ func get_playtest_state() -> Dictionary:
 	var repair_state: Dictionary = get_repair_playtest_state()
 	var broadside_state: Dictionary = get_broadside_playtest_state()
 	var ammunition_state: Dictionary = get_ammunition_playtest_state()
+	var defeat_repair_material_boundary_cargo: Array[String] = [
+		TIMBER_LOT_NAME,
+		_ammunition_state.get_loaded_lot_name(2),
+	]
+	var defeat_repair_material_boundary_evidence := _get_defeat_loss_preview(
+		defeat_repair_material_boundary_cargo,
+		1,
+		1,
+		1,
+	)
+	var defeat_normal_prepared_path_cargo: Array[String] = [
+		"COVE MEDICINE LOT",
+		_ammunition_state.get_loaded_lot_name(2),
+	]
+	var defeat_normal_prepared_path_evidence := _get_defeat_loss_preview(
+		defeat_normal_prepared_path_cargo,
+		1,
+		1,
+		1,
+	)
 	var fixed_pose := false
 	if not current_definition.is_empty():
 		fixed_pose = (
@@ -1566,6 +1808,24 @@ func get_playtest_state() -> Dictionary:
 		"ammunition_low_warning": ammunition_state["low_ammunition_warning"],
 		"ammunition_no_warning": ammunition_state["no_ammunition_warning"],
 		"ship_ammunition": ammunition_state,
+		"defeat_return_system_count": 1,
+		"defeat_return_count": _defeat_return_count,
+		"defeat_ordinary_cargo_loss_count": (
+			_defeat_ordinary_cargo_loss_count
+		),
+		"last_defeat_return_evidence": (
+			_last_defeat_return_evidence.duplicate(true)
+		),
+		"defeat_repair_material_boundary_evidence": (
+			defeat_repair_material_boundary_evidence
+		),
+		"defeat_normal_prepared_path_evidence": (
+			defeat_normal_prepared_path_evidence
+		),
+		"defeat_return_uses_existing_cargo_owner": true,
+		"defeat_return_uses_existing_ammunition_owner": true,
+		"defeat_return_uses_existing_damage_owner": true,
+		"defeat_return_uses_existing_crew_owner": true,
 		"restore_controls_after_navigation_release": (
 			_restore_controls_after_navigation_release
 		),

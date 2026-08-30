@@ -14,6 +14,7 @@ const TargetBoardingDeckState := preload(
 const PrizeActionState := preload("res://scripts/prize_actions.gd")
 const WorldHeatState := preload("res://scripts/world_heat.gd")
 const PirateHunterShipState := preload("res://scripts/pirate_hunter_ship.gd")
+const DefeatRecoveryState := preload("res://scripts/defeat_recovery.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -168,6 +169,16 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var journal_status: Label = $Interface/TradeJournalView/JournalStatus
 @onready var journal_details: Label = $Interface/TradeJournalView/JournalDetails
 @onready var journal_controls: Label = $Interface/TradeJournalView/JournalControls
+@onready var defeat_result_view: ColorRect = $Interface/DefeatResultView
+@onready var defeat_result_title: Label = (
+	$Interface/DefeatResultView/DefeatTitle
+)
+@onready var defeat_result_details: Label = (
+	$Interface/DefeatResultView/DefeatDetails
+)
+@onready var defeat_result_controls: Label = (
+	$Interface/DefeatResultView/DefeatControls
+)
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
@@ -193,6 +204,10 @@ const TRADE_RELEASE_CONTROLS_TEXT := (
 )
 const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
+const DEFEAT_RESULT_CONTROLS_TEXT := "X CONTINUE TO RECOVERY"
+const DEFEAT_RELEASE_CONTROLS_TEXT := (
+	"RELEASE X, E, M, J, R, Q, F, H, K, SPACE, 1-6, WASD / ARROW KEYS"
+)
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const BOARDING_DECK_CONTROLS_TEXT := (
 	"WASD / ARROWS TO WALK · SPACE CUTLASS · GOLD POINT + E RETURN"
@@ -475,6 +490,12 @@ var _last_crew_combat_context_evidence: Dictionary = {}
 var _last_crew_injury_context_evidence: Dictionary = {}
 var _last_crew_dock_context_evidence: Dictionary = {}
 var _last_crew_restoration_context_evidence: Dictionary = {}
+var _defeat_recovery = DefeatRecoveryState.new()
+var _defeat_pressed_keys: Dictionary = {}
+var _last_defeat_modal_input_evidence: Dictionary = {}
+var _defeat_release_cleanup_count := 0
+var _defeat_release_cleanup_evidence: Dictionary = {}
+var _defeat_start_input_cleanup_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -517,6 +538,7 @@ func _ready() -> void:
 	_update_prize_view()
 	_update_trade_view()
 	_update_trade_journal_view()
+	_update_defeat_result_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -537,6 +559,7 @@ func _ready() -> void:
 	ammunition_view.hide()
 	target_combat_view.hide()
 	prize_view.hide()
+	defeat_result_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -556,6 +579,7 @@ func _ready() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	_update_defeat_release_guard()
 	_update_chart_release_pending()
 	_update_cargo_choice_release_pending()
 	_update_storage_release_pending()
@@ -587,6 +611,7 @@ func _physics_process(delta: float) -> void:
 	_update_damage_hit_checkpoint()
 	_update_trade_view()
 	_update_trade_journal_view()
+	_update_defeat_result_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
@@ -631,7 +656,11 @@ func _physics_process(delta: float) -> void:
 			and ship.last_dock_id == "cove"
 		):
 			_construction_released_cove_dock = true
-		if _journal_view_open:
+		if _defeat_recovery.is_result_open():
+			controls_help.text = DEFEAT_RESULT_CONTROLS_TEXT
+		elif _defeat_recovery.is_release_guard_pending():
+			controls_help.text = DEFEAT_RELEASE_CONTROLS_TEXT
+		elif _journal_view_open:
 			controls_help.text = JOURNAL_CONTROLS_TEXT
 		elif _journal_release_pending:
 			controls_help.text = JOURNAL_RELEASE_CONTROLS_TEXT
@@ -678,6 +707,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 
 	var key_event := event as InputEventKey
+	if _defeat_recovery.is_result_open():
+		_handle_defeat_result_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
+	if _defeat_recovery.is_release_guard_pending():
+		_handle_defeat_release_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
 	if _key_matches(key_event, KEY_R) and not key_event.pressed:
 		_repair_key_held = false
 	var released_broadside_side: String = _get_broadside_side(key_event)
@@ -857,6 +894,151 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _handle_defeat_result_input(key_event: InputEventKey) -> void:
+	var is_close_key := _key_matches(key_event, KEY_X)
+	if not key_event.pressed:
+		_clear_defeat_held_key_state(key_event, "RESULT_OPEN")
+		return
+	if key_event.echo:
+		return
+	if not is_close_key:
+		_defeat_recovery.record_blocked_input()
+		_last_defeat_modal_input_evidence = {
+			"action": "BLOCKED_DURING_DEFEAT_RESULT",
+			"physical_keycode": key_event.physical_keycode,
+			"keycode": key_event.keycode,
+			"result_screen_open": true,
+			"no_world_action": true,
+		}
+		return
+	if bool(_defeat_pressed_keys.get("X", false)):
+		_defeat_recovery.record_blocked_input()
+		return
+	_defeat_pressed_keys["X"] = true
+	if not _defeat_recovery.close_result_screen():
+		return
+	defeat_result_view.hide()
+	ship.set_navigation_input_blocked(false, false)
+	player.movement_enabled = false
+	controls_help.text = DEFEAT_RELEASE_CONTROLS_TEXT
+	interaction_prompt.hide()
+
+
+func _handle_defeat_release_input(key_event: InputEventKey) -> void:
+	if key_event.pressed:
+		return
+	_clear_defeat_held_key_state(key_event, "RELEASE_GUARD")
+
+
+func _clear_defeat_held_key_state(
+	key_event: InputEventKey,
+	context: String,
+) -> void:
+	var key_name := ""
+	var state_before := _get_defeat_held_action_state()
+	if _key_matches(key_event, KEY_X):
+		key_name = "X"
+		_defeat_pressed_keys.erase("X")
+	elif _key_matches(key_event, KEY_E):
+		key_name = "E"
+		_interact_held = false
+	elif _key_matches(key_event, KEY_R):
+		key_name = "R"
+		_repair_key_held = false
+	else:
+		var broadside_side := _get_broadside_side(key_event)
+		if not broadside_side.is_empty():
+			key_name = "Q" if broadside_side == "LEFT" else "F"
+			_broadside_pressed_keys.erase(broadside_side)
+		else:
+			var attack_choice := _get_attack_choice(key_event)
+			if not attack_choice.is_empty():
+				key_name = (
+					"H"
+					if attack_choice == InspectableTargetShipState.ATTACK_HULL
+					else "K"
+				)
+				_attack_choice_pressed_keys.erase(attack_choice)
+	if key_name.is_empty():
+		return
+	_defeat_release_cleanup_count += 1
+	var state_after := _get_defeat_held_action_state()
+	_defeat_release_cleanup_evidence[key_name] = {
+		"key": key_name,
+		"context": context,
+		"state_before": state_before,
+		"state_after": state_after,
+		"key_held_after_release": bool(state_after.get(key_name, false)),
+		"release_cleared_key_state": not bool(state_after.get(key_name, false)),
+		"cleanup_number": _defeat_release_cleanup_count,
+	}
+
+
+func _clear_all_defeat_held_action_state(context: String) -> void:
+	var state_before := _get_defeat_held_action_state()
+	_defeat_pressed_keys.clear()
+	_interact_held = false
+	_repair_key_held = false
+	_broadside_pressed_keys.clear()
+	_attack_choice_pressed_keys.clear()
+	_defeat_start_input_cleanup_evidence = {
+		"context": context,
+		"state_before": state_before,
+		"state_after": _get_defeat_held_action_state(),
+		"all_action_keys_clear": not _has_stale_defeat_action_key_state(),
+	}
+
+
+func _get_defeat_held_action_state() -> Dictionary:
+	return {
+		"X": bool(_defeat_pressed_keys.get("X", false)),
+		"E": _interact_held,
+		"R": _repair_key_held,
+		"Q": bool(_broadside_pressed_keys.get("LEFT", false)),
+		"F": bool(_broadside_pressed_keys.get("RIGHT", false)),
+		"H": bool(_attack_choice_pressed_keys.get(
+			InspectableTargetShipState.ATTACK_HULL,
+			false,
+		)),
+		"K": bool(_attack_choice_pressed_keys.get(
+			InspectableTargetShipState.ATTACK_SAILS,
+			false,
+		)),
+	}
+
+
+func _has_stale_defeat_action_key_state() -> bool:
+	var held_state := _get_defeat_held_action_state()
+	return (
+		bool(held_state["R"])
+		or bool(held_state["Q"])
+		or bool(held_state["F"])
+		or bool(held_state["H"])
+		or bool(held_state["K"])
+	)
+
+
+func _update_defeat_release_guard() -> void:
+	if not _defeat_recovery.is_release_guard_pending():
+		return
+	if _is_any_defeat_guard_key_pressed():
+		player.movement_enabled = false
+		return
+	if not _defeat_recovery.complete_release_guard():
+		return
+	_defeat_pressed_keys.clear()
+	player.movement_enabled = not _player_aboard_ship and not _dialogue_open
+	controls_help.text = _get_context_controls_text()
+	_update_interaction_prompt()
+
+
+func _update_defeat_result_view() -> void:
+	defeat_result_title.text = "SHIP DEFEATED · SAFE RETURN"
+	defeat_result_details.text = _defeat_recovery.get_result_text()
+	defeat_result_controls.text = "[X] CONTINUE TO RECOVERY"
+	defeat_result_view.visible = _defeat_recovery.is_result_open()
 
 
 func _handle_boarding_deck_input(key_event: InputEventKey) -> void:
@@ -1110,7 +1292,9 @@ func _get_attack_choice(key_event: InputEventKey) -> String:
 
 func _is_attack_choice_input_blocked() -> bool:
 	return (
-		_player_on_target_deck
+		_defeat_recovery.is_result_open()
+		or _defeat_recovery.is_release_guard_pending()
+		or _player_on_target_deck
 		or not _player_aboard_ship
 		or ship.is_docked
 		or ship.navigation_input_blocked
@@ -2802,7 +2986,9 @@ func _key_matches(key_event: InputEventKey, key: Key) -> bool:
 
 func _set_chart_visible(visible: bool) -> void:
 	if (
-		_storage_view_open
+		_defeat_recovery.is_result_open()
+		or _defeat_recovery.is_release_guard_pending()
+		or _storage_view_open
 		or _storage_release_pending
 		or _construction_view_open
 		or _construction_release_pending
@@ -2926,6 +3112,8 @@ func _refresh_prompt_after_navigation_release() -> void:
 		return
 	if (
 		waypoint_display.chart_visible
+		or _defeat_recovery.is_result_open()
+		or _defeat_recovery.is_release_guard_pending()
 		or _chart_release_pending
 		or _cargo_choice_open
 		or _cargo_choice_release_pending
@@ -3030,7 +3218,33 @@ func _is_any_journal_guard_key_pressed() -> bool:
 	)
 
 
+func _is_any_defeat_guard_key_pressed() -> bool:
+	return (
+		_is_any_movement_key_pressed()
+		or Input.is_key_pressed(KEY_X)
+		or Input.is_key_pressed(KEY_E)
+		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_J)
+		or Input.is_key_pressed(KEY_R)
+		or Input.is_key_pressed(KEY_Q)
+		or Input.is_key_pressed(KEY_F)
+		or Input.is_key_pressed(KEY_H)
+		or Input.is_key_pressed(KEY_K)
+		or Input.is_key_pressed(KEY_SPACE)
+		or Input.is_key_pressed(KEY_1)
+		or Input.is_key_pressed(KEY_2)
+		or Input.is_key_pressed(KEY_3)
+		or Input.is_key_pressed(KEY_4)
+		or Input.is_key_pressed(KEY_5)
+		or Input.is_key_pressed(KEY_6)
+	)
+
+
 func _get_context_controls_text() -> String:
+	if _defeat_recovery.is_result_open():
+		return DEFEAT_RESULT_CONTROLS_TEXT
+	if _defeat_recovery.is_release_guard_pending():
+		return DEFEAT_RELEASE_CONTROLS_TEXT
 	if _player_on_target_deck:
 		return (
 			PRIZE_CONTROLS_TEXT
@@ -3083,6 +3297,8 @@ func _update_wreck_opportunity() -> void:
 		waypoint_display.selected_location_id,
 		(
 			_player_aboard_ship
+			and not _defeat_recovery.is_result_open()
+			and not _defeat_recovery.is_release_guard_pending()
 			and not waypoint_display.chart_visible
 			and not _cargo_choice_open
 			and not _cargo_choice_release_pending
@@ -3096,7 +3312,9 @@ func _update_wreck_opportunity() -> void:
 			and not _journal_release_pending
 		),
 		(
-			not waypoint_display.chart_visible
+			not _defeat_recovery.is_result_open()
+			and not _defeat_recovery.is_release_guard_pending()
+			and not waypoint_display.chart_visible
 			and not _cargo_choice_open
 			and not _cargo_choice_release_pending
 			and not _storage_view_open
@@ -3120,7 +3338,9 @@ func _update_pirate_hunter(delta: float) -> void:
 		and not ship.navigation_release_pending
 	)
 	var modal_pause_active: bool = (
-		waypoint_display.chart_visible
+		_defeat_recovery.is_result_open()
+		or _defeat_recovery.is_release_guard_pending()
+		or waypoint_display.chart_visible
 		or _chart_release_pending
 		or _cargo_choice_open
 		or _cargo_choice_release_pending
@@ -3147,6 +3367,9 @@ func _update_pirate_hunter(delta: float) -> void:
 		var target_conditions_before := _get_target_condition_snapshots()
 		var crew_before: Dictionary = ship.get_crew_condition_playtest_state()
 		var evidence: Dictionary = ship.apply_pirate_hunter_broadside()
+		var defeat_triggered := _defeat_recovery.should_begin_from_naval_damage(
+			evidence
+		)
 		var heat_after := _world_heat.get_current_heat()
 		var target_conditions_after := _get_target_condition_snapshots()
 		var crew_after: Dictionary = ship.get_crew_condition_playtest_state()
@@ -3170,17 +3393,75 @@ func _update_pirate_hunter(delta: float) -> void:
 					false,
 				))
 			),
-			"phase_33_defeat_triggered": false,
+			"phase_33_defeat_triggered": defeat_triggered,
 		}, true)
 		_last_crew_combat_context_evidence = evidence.duplicate(true)
 		if bool(evidence.get("crew_injury_applied", false)):
 			_last_crew_injury_context_evidence = evidence.duplicate(true)
 		pirate_hunter.record_attack_result(evidence)
+		if defeat_triggered:
+			_begin_ship_defeat(evidence)
+
+
+func _begin_ship_defeat(damage_evidence: Dictionary) -> void:
+	if not _defeat_recovery.should_begin_from_naval_damage(damage_evidence):
+		return
+	var cove_storage_before: Array[String] = cove_storage.get_cargo_lots()
+	var cove_storage_slots_before: Array[String] = cove_storage.get_storage_slots()
+	var money_before := money
+	var hunter_resolution: Dictionary = pirate_hunter.resolve_player_defeat(
+		_world_heat.get_current_heat()
+	)
+	var return_evidence: Dictionary = ship.return_to_cove_after_defeat(
+		DefeatRecoveryState.FIXED_CARGO_LOT_LOSS,
+		DefeatRecoveryState.FIXED_AMMUNITION_UNIT_LOSS,
+		DefeatRecoveryState.MINIMUM_RETAINED_CARGO_LOTS,
+	)
+	var cove_storage_after: Array[String] = cove_storage.get_cargo_lots()
+	var cove_storage_slots_after: Array[String] = cove_storage.get_storage_slots()
+	var defeat_evidence: Dictionary = _defeat_recovery.begin_defeat(
+		damage_evidence,
+		return_evidence,
+		hunter_resolution,
+		cove_storage_before,
+		cove_storage_after,
+		cove_storage_slots_before,
+		cove_storage_slots_after,
+		money_before,
+		money,
+	)
+	if defeat_evidence.is_empty():
+		return
+	if _target_inspection_view_open:
+		_close_target_inspection("PLAYER_DEFEAT")
+	_player_on_target_deck = false
+	_player_shore_id = ""
+	_player_near_ship_return = false
+	_player_aboard_ship = true
+	ship.set_captain_aboard(true)
+	ship.set_navigation_input_blocked(true)
+	player.enter_ship(ship_standing_position.global_position)
+	player.movement_enabled = false
+	_available_dock_id = ""
+	_last_leave_allowed = false
+	_last_ship_docked = true
+	_clear_all_defeat_held_action_state("DEFEAT_START")
+	controls_help.text = DEFEAT_RESULT_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_update_cargo_view()
+	_update_money_view()
+	_update_hull_view()
+	_update_crew_view()
+	_update_repair_view()
+	_update_pirate_hunter_view()
+	_update_defeat_result_view()
 
 
 func _update_target_inspection() -> void:
 	var inspection_context_available: bool = (
 		not _player_on_target_deck
+		and not _defeat_recovery.is_result_open()
+		and not _defeat_recovery.is_release_guard_pending()
 		and _player_aboard_ship
 		and not ship.is_docked
 		and not waypoint_display.chart_visible
@@ -4329,6 +4610,12 @@ func _salvage_wreck() -> void:
 	_last_cargo_result = "KEPT_%s" % _cargo_result_name(salvage_lot)
 	_salvage_collection_position = ship.global_position
 	_last_salvage_eligible = false
+	_defeat_recovery.record_existing_salvage_recovery(
+		salvage_lot,
+		ship.get_cargo_lots(),
+		ship.timber_lots,
+		ship.get_cargo_limit(),
+	)
 	_update_cargo_view()
 	_update_interaction_prompt()
 
@@ -4400,6 +4687,12 @@ func _replace_cargo_with_pending_salvage(slot_index: int) -> void:
 		_cargo_result_name(removed_lot),
 		_cargo_result_name(_pending_salvage_lot),
 	]
+	_defeat_recovery.record_existing_salvage_recovery(
+		_pending_salvage_lot,
+		ship.get_cargo_lots(),
+		ship.timber_lots,
+		ship.get_cargo_limit(),
+	)
 	_close_cargo_choice()
 
 
@@ -4731,6 +5024,7 @@ func _attempt_docked_hull_repair() -> void:
 	_last_repair_attempt_evidence = evidence.duplicate(true)
 	if bool(evidence["success"]):
 		_successful_repair_evidence = evidence.duplicate(true)
+		_defeat_recovery.record_existing_repair_recovery(evidence)
 		_repair_snapshot_ashore = {}
 		_repair_snapshot_return = {}
 		_repair_snapshot_release = {}
@@ -5687,7 +5981,9 @@ func _update_interaction_prompt() -> void:
 			interaction_prompt.hide()
 		return
 	if (
-		_dialogue_open
+		_defeat_recovery.is_result_open()
+		or _defeat_recovery.is_release_guard_pending()
+		or _dialogue_open
 		or waypoint_display.chart_visible
 		or _chart_release_pending
 		or _cargo_choice_open
@@ -6286,6 +6582,7 @@ func get_playtest_state() -> Dictionary:
 	)
 	var heat_state: Dictionary = _world_heat.get_playtest_state()
 	var hunter_state: Dictionary = pirate_hunter.get_hunter_playtest_state()
+	var defeat_state: Dictionary = _defeat_recovery.get_playtest_state()
 	var journal_good_names: Array = []
 	var journal_current_price_states := {}
 	var journal_current_fixed_prices := {}
@@ -6426,6 +6723,11 @@ func get_playtest_state() -> Dictionary:
 		ammunition_status.text,
 		ammunition_cargo.text,
 	]
+	var defeat_result_view_full_text := "%s\n%s\n%s" % [
+		defeat_result_title.text,
+		defeat_result_details.text,
+		defeat_result_controls.text,
+	]
 	var repair_view_rect := repair_view.get_global_rect()
 	var heat_view_rect := heat_view.get_global_rect()
 	var hull_view_rect := hull_view.get_global_rect()
@@ -6449,6 +6751,7 @@ func get_playtest_state() -> Dictionary:
 		+ food_state["total_units_used"]
 		+ repair_state["consumed_timber_count"]
 		+ ammunition_state["depleted_lot_count"]
+		+ defeat_state["total_cargo_slot_loss_count"]
 		+ _prize_cannon_sale_count
 	)
 	var expected_cargo_total: int = (
@@ -6944,42 +7247,112 @@ func get_playtest_state() -> Dictionary:
 			+ int(crew_state["new_crew_task_count"])
 		),
 		"phase_33_player_defeat_detection_count": (
-			crew_state["player_defeat_detection_count"]
+			defeat_state["defeat_detection_count"]
 		),
 		"phase_33_encounter_end_on_player_defeat_count": (
-			crew_state["encounter_end_on_player_defeat_count"]
+			defeat_state["encounter_end_count"]
 		),
 		"phase_33_forced_safe_return_count": (
-			crew_state["forced_safe_return_count"]
+			defeat_state["forced_safe_return_count"]
 		),
 		"phase_33_defeat_cargo_loss_count": (
-			crew_state["defeat_cargo_loss_count"]
+			defeat_state["cargo_lot_loss_count"]
 		),
 		"phase_33_defeat_ammunition_loss_count": (
-			crew_state["defeat_ammunition_loss_count"]
+			defeat_state["ammunition_unit_loss_count"]
 		),
 		"phase_33_defeat_money_loss_count": (
-			crew_state["defeat_money_loss_count"]
+			defeat_state["money_loss_count"]
 		),
 		"phase_33_defeat_result_screen_count": (
-			crew_state["defeat_result_screen_count"]
+			defeat_state["result_screen_open_count"]
 		),
 		"phase_33_salvage_recovery_trigger_count": (
-			crew_state["salvage_recovery_trigger_count"]
+			defeat_state["salvage_recovery_count"]
 		),
 		"phase_33_recovery_behavior_count": (
-			crew_state["phase_33_recovery_behavior_count"]
+			defeat_state["repair_recovery_count"]
 		),
 		"phase_33_feature_count": (
-			int(crew_state["player_defeat_detection_count"])
-			+ int(crew_state["encounter_end_on_player_defeat_count"])
-			+ int(crew_state["forced_safe_return_count"])
-			+ int(crew_state["defeat_cargo_loss_count"])
-			+ int(crew_state["defeat_ammunition_loss_count"])
-			+ int(crew_state["defeat_money_loss_count"])
-			+ int(crew_state["defeat_result_screen_count"])
-			+ int(crew_state["salvage_recovery_trigger_count"])
-			+ int(crew_state["phase_33_recovery_behavior_count"])
+			defeat_state["system_count"]
+		),
+		"defeat_recovery_state": defeat_state.duplicate(true),
+		"defeat_state_owner_count": defeat_state["owner_count"],
+		"defeat_flow_state": defeat_state["flow_state"],
+		"defeat_hull_threshold": defeat_state["defeat_hull_threshold"],
+		"defeat_supported_naval_damage_source": (
+			defeat_state["supported_naval_damage_source"]
+		),
+		"defeat_safe_return_dock_id": defeat_state["safe_return_dock_id"],
+		"defeat_fixed_cargo_lot_loss": defeat_state["fixed_cargo_lot_loss"],
+		"defeat_fixed_ammunition_unit_loss": (
+			defeat_state["fixed_ammunition_unit_loss"]
+		),
+		"defeat_minimum_retained_cargo_lots": (
+			defeat_state["minimum_retained_cargo_lots"]
+		),
+		"defeat_result_screen_count": get_tree().get_nodes_in_group(
+			"defeat_result_screen"
+		).size(),
+		"defeat_result_screen_visible": defeat_result_view.visible,
+		"defeat_result_screen_text": (
+			defeat_result_view_full_text if defeat_result_view.visible else ""
+		),
+		"defeat_result_screen_lists_actual_state": (
+			not defeat_result_view.visible
+			or (
+				defeat_result_details.text == _defeat_recovery.get_result_text()
+				and defeat_result_view_full_text.contains("CARGO LOST")
+				and defeat_result_view_full_text.contains("AMMUNITION LOST")
+				and defeat_result_view_full_text.contains("MONEY RETAINED")
+				and defeat_result_view_full_text.contains("HULL RETAINED DAMAGED")
+				and defeat_result_view_full_text.contains("CREW RETAINED INJURED")
+				and defeat_result_view_full_text.contains("COVE STORAGE · UNCHANGED")
+			)
+		),
+		"defeat_result_modal_blocks": {
+			"sailing": defeat_result_view.visible
+				and ship_state["navigation_input_blocked"],
+			"chart": defeat_result_view.visible
+				and not waypoint_state["chart_visible"],
+			"attack": defeat_result_view.visible,
+			"boarding": defeat_result_view.visible,
+			"world_interaction": defeat_result_view.visible,
+			"walking": defeat_result_view.visible
+				and not player_state["movement_enabled"],
+		},
+		"defeat_result_release_guard_pending": (
+			defeat_state["release_guard_pending"]
+		),
+		"defeat_result_blocked_input_count": defeat_state["blocked_input_count"],
+		"defeat_last_modal_input_evidence": (
+			_last_defeat_modal_input_evidence.duplicate(true)
+		),
+		"defeat_held_action_state": _get_defeat_held_action_state(),
+		"defeat_release_cleanup_count": _defeat_release_cleanup_count,
+		"defeat_release_cleanup_evidence": (
+			_defeat_release_cleanup_evidence.duplicate(true)
+		),
+		"defeat_start_input_cleanup_evidence": (
+			_defeat_start_input_cleanup_evidence.duplicate(true)
+		),
+		"defeat_fresh_actions_clear_of_stale_phase_33_state": (
+			not _has_stale_defeat_action_key_state()
+		),
+		"defeat_last_evidence": (
+			(defeat_state["last_defeat_evidence"] as Dictionary).duplicate(true)
+		),
+		"defeat_repair_material_boundary_evidence": (
+			ship_state["defeat_repair_material_boundary_evidence"]
+		),
+		"defeat_normal_prepared_path_evidence": (
+			ship_state["defeat_normal_prepared_path_evidence"]
+		),
+		"defeat_existing_salvage_recovery_used": (
+			defeat_state["existing_salvage_recovery_used"]
+		),
+		"defeat_existing_repair_recovery_used": (
+			defeat_state["existing_repair_recovery_used"]
 		),
 		"ship_controls": ship_state["controls"],
 		"ship_controls_enabled": ship_state["controls_enabled"],
@@ -6994,6 +7367,7 @@ func get_playtest_state() -> Dictionary:
 			+ food_state["total_units_used"]
 			+ repair_state["consumed_timber_count"]
 			+ ammunition_state["depleted_lot_count"]
+			+ defeat_state["total_cargo_slot_loss_count"]
 		),
 		"cargo_construction_consumed_lots": (
 			construction_state["consumed_lot_count"]
@@ -7001,6 +7375,7 @@ func get_playtest_state() -> Dictionary:
 		"cargo_food_consumed_lots": food_state["total_units_used"],
 		"cargo_repair_consumed_lots": repair_state["consumed_timber_count"],
 		"cargo_ammunition_depleted_lots": ammunition_state["depleted_lot_count"],
+		"cargo_defeat_lost_lots": defeat_state["total_cargo_slot_loss_count"],
 		"cargo_ammunition_source_purchased_lots": (
 			_ammunition_supply_purchased_lot_count
 		),
@@ -8159,8 +8534,8 @@ func get_playtest_state() -> Dictionary:
 		"broadside_heat_change_system_count": (
 			broadside_state["heat_change_system_count"]
 		),
-		"ship_defeat_system_count": 0,
-		"ship_recovery_system_count": 0,
+		"ship_defeat_system_count": defeat_state["system_count"],
+		"ship_recovery_system_count": defeat_state["system_count"],
 		"repair_system_count": repair_state["system_count"],
 		"repair_available": repair_state["available"],
 		"repair_denial_reasons": repair_state["denial_reasons"],
@@ -8694,6 +9069,20 @@ func get_playtest_state() -> Dictionary:
 		),
 		"pirate_hunter_escape_count": hunter_state["escape_count"],
 		"pirate_hunter_defeat_count": hunter_state["defeat_count"],
+		"pirate_hunter_player_defeat_resolution_count": (
+			hunter_state["player_defeat_resolution_count"]
+		),
+		"pirate_hunter_attacks_stopped_after_player_defeat": (
+			hunter_state["attacks_stopped_after_player_defeat"]
+		),
+		"pirate_hunter_player_defeat_is_stable": (
+			String(hunter_state["outcome"]) != "PLAYER DEFEATED"
+			or (
+				bool(hunter_state["encounter_resolved"])
+				and not bool(hunter_state["encounter_active"])
+				and not bool(hunter_state["visual_visible"])
+			)
+		),
 		"pirate_hunter_escape_is_stable": (
 			String(hunter_state["outcome"]) != "ESCAPED"
 			or (
@@ -9632,6 +10021,9 @@ func get_playtest_state() -> Dictionary:
 			"food_consumed": food_state["total_units_used"],
 			"repair_timber_consumed": repair_state["consumed_timber_count"],
 			"ammunition_depleted_lots": ammunition_state["depleted_lot_count"],
+			"defeat_lost_cargo_lots": (
+				defeat_state["total_cargo_slot_loss_count"]
+			),
 			"sold_trade_lots": _trade_sold_lot_count,
 			"initial_physical_cargo": initial_physical_cargo_total,
 			"initial_storage_lots": (
@@ -9698,6 +10090,7 @@ func get_playtest_state() -> Dictionary:
 		),
 		"input_release_pending": (
 			ship_state["navigation_release_pending"]
+			or defeat_state["release_guard_pending"]
 			or _chart_release_pending
 			or _cargo_choice_release_pending
 			or _storage_release_pending
