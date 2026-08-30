@@ -15,6 +15,7 @@ const PrizeActionState := preload("res://scripts/prize_actions.gd")
 const WorldHeatState := preload("res://scripts/world_heat.gd")
 const PirateHunterShipState := preload("res://scripts/pirate_hunter_ship.gd")
 const DefeatRecoveryState := preload("res://scripts/defeat_recovery.gd")
+const FishingAreaState := preload("res://scripts/fishing_area.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -38,6 +39,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var cove_buyer = $InteractiveObjects/CoveBuyer
 @onready var sea_area = $SeaArea
 @onready var wreck_opportunity: WreckOpportunity = $WreckOpportunity
+@onready var fishing_area: FishingAreaState = $FishingArea
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
@@ -188,6 +190,9 @@ const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CARGO_CHOICE_CONTROLS_TEXT := "X LEAVE AT WRECK · 1 / 2 / 3 REPLACE CARGO SLOT"
+const FISHING_CARGO_CHOICE_CONTROLS_TEXT := (
+	"X DISCARD CAUGHT FISH · 1 / 2 / 3 REPLACE CARGO SLOT"
+)
 const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
 const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 1-6, M, WASD / ARROW KEYS"
 const CONSTRUCTION_READY_CONTROLS_TEXT := "E BUILD STORAGE SHED · X CLOSE"
@@ -198,9 +203,9 @@ const TRADE_BUY_CONTROLS_TEXT := (
 	"E BUY SPICE · B BUY WEAPONS AND GUNPOWDER · "
 	+ "L LOAD AMMUNITION · C SELL CANNONS · X CLOSE"
 )
-const TRADE_SELL_CONTROLS_TEXT := "E SELL ONE LOT · X CLOSE"
+const TRADE_SELL_CONTROLS_TEXT := "E SELL SPICE · F SELL FISH · X CLOSE"
 const TRADE_RELEASE_CONTROLS_TEXT := (
-	"RELEASE E, B, L, C, X, M, 1-6, WASD / ARROW KEYS"
+	"RELEASE E, B, L, C, F, X, M, 1-6, WASD / ARROW KEYS"
 )
 const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
@@ -218,6 +223,8 @@ const PRIZE_CONTROLS_TEXT := (
 const SHORE_RETURN_DISTANCE := 64.0
 const STARTING_MONEY := 25
 const PRIZE_CANNON_CARGO_SALE_PRICE := 15
+const CARGO_SOURCE_WRECK := "WRECK"
+const CARGO_SOURCE_FISHING := "FISHING"
 const HEAT_PERSISTENCE_PATH := "user://haven_of_tides_phase30_heat.cfg"
 const HEAT_PERSISTENCE_SECTION := "phase30_heat"
 const HEAT_PERSISTENCE_KEY := "payload"
@@ -245,6 +252,7 @@ var _player_near_ship_return := false
 var _last_ship_docked := false
 var _chart_release_pending := false
 var _last_salvage_eligible := false
+var _last_fishing_prompt := ""
 var _salvage_collection_position := Vector2.ZERO
 var _salvage_sailed_after_collection := false
 var _cove_docked_after_salvage := false
@@ -256,7 +264,8 @@ var _timber_lots_at_cove_dock := 0
 var _timber_lots_while_ashore := 0
 var _timber_lots_after_return_to_ship := 0
 var _timber_lots_after_cove_dock_release := 0
-var _pending_salvage_lot := ""
+var _pending_cargo_lot := ""
+var _pending_cargo_source := ""
 var _cargo_choice_open := false
 var _cargo_choice_release_pending := false
 var _prompt_refresh_after_navigation_release := false
@@ -334,6 +343,10 @@ var _trade_purchase_attempt_count := 0
 var _trade_sale_attempt_count := 0
 var _trade_bought_lot_count := 0
 var _trade_sold_lot_count := 0
+var _fish_sale_attempt_count := 0
+var _fish_sold_lot_count := 0
+var _fish_sale_denied_count := 0
+var _fish_money_earned := 0
 var _trade_denied_purchase_count := 0
 var _trade_denied_sale_count := 0
 var _trade_held_input_count := 0
@@ -351,6 +364,8 @@ var _last_held_ammunition_trade_evidence: Dictionary = {}
 var _last_trade_attempt_evidence: Dictionary = {}
 var _successful_purchase_evidence: Dictionary = {}
 var _successful_sale_evidence: Dictionary = {}
+var _last_fish_sale_evidence: Dictionary = {}
+var _successful_fish_sale_evidence: Dictionary = {}
 var _trade_purchase_money_snapshot := 0
 var _trade_purchase_cargo_snapshot: Array[String] = []
 var _trade_returned_to_ship_at_port := false
@@ -520,6 +535,7 @@ func _ready() -> void:
 	)
 	_load_world_heat_persistence("STARTUP")
 	_update_wreck_opportunity()
+	_update_fishing_area()
 	_update_cargo_view()
 	_update_storage_view()
 	_update_construction_view()
@@ -592,6 +608,7 @@ func _physics_process(delta: float) -> void:
 		_player_aboard_ship,
 	)
 	_update_wreck_opportunity()
+	_update_fishing_area()
 	_update_pirate_hunter(delta)
 	_update_target_inspection()
 	_update_boarding_deck_state(delta)
@@ -630,6 +647,7 @@ func _physics_process(delta: float) -> void:
 		var available_dock_id: String = ship.get_available_dock_id()
 		var ship_docked: bool = ship.is_docked
 		var salvage_eligible := wreck_opportunity.is_salvage_eligible()
+		var fishing_prompt: String = fishing_area.get_interaction_prompt()
 		if _last_ship_docked and not ship_docked:
 			_record_voyage_departure(String(ship.last_dock_id))
 			_capture_damage_checkpoint("RELEASE")
@@ -665,7 +683,7 @@ func _physics_process(delta: float) -> void:
 		elif _journal_release_pending:
 			controls_help.text = JOURNAL_RELEASE_CONTROLS_TEXT
 		elif _cargo_choice_open:
-			controls_help.text = CARGO_CHOICE_CONTROLS_TEXT
+			controls_help.text = _get_cargo_choice_controls_text()
 		elif _cargo_choice_release_pending or ship.navigation_release_pending:
 			controls_help.text = RELEASE_CONTROLS_TEXT
 		elif waypoint_display.chart_visible:
@@ -681,11 +699,13 @@ func _physics_process(delta: float) -> void:
 			or available_dock_id != _available_dock_id
 			or ship_docked != _last_ship_docked
 			or salvage_eligible != _last_salvage_eligible
+			or fishing_prompt != _last_fishing_prompt
 		):
 			_last_leave_allowed = leave_allowed
 			_available_dock_id = available_dock_id
 			_last_ship_docked = ship_docked
 			_last_salvage_eligible = salvage_eligible
+			_last_fishing_prompt = fishing_prompt
 			_update_interaction_prompt()
 	elif not _player_shore_id.is_empty():
 		travel_camera.global_position = player.global_position
@@ -837,6 +857,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key_event.echo or _interact_held:
 		if _can_board_nearby_target():
 			_record_held_boarding_interaction("BOARD")
+		elif fishing_area.can_receive_fishing_press():
+			fishing_area.record_held_press(ship.get_cargo_lots())
 		return
 
 	_interact_held = true
@@ -854,6 +876,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_board_nearby_target()
 		elif _can_inspect_nearby_target():
 			_open_target_inspection()
+		elif fishing_area.can_receive_fishing_press():
+			_fish_in_area()
 		elif wreck_opportunity.can_receive_salvage_press():
 			_salvage_wreck()
 		elif ship.can_leave_at_damaged_dock():
@@ -1631,7 +1655,12 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 			_get_trade_key_name(trade_key)
 		)
 		_last_trade_result = "NO CHANGE · RELEASE THE KEY FIRST"
-		if trade_key == KEY_B or trade_key == KEY_L or trade_key == KEY_C:
+		if (
+			trade_key == KEY_B
+			or trade_key == KEY_L
+			or trade_key == KEY_C
+			or trade_key == KEY_F
+		):
 			var held_cargo: Array[String] = ship.get_cargo_lots()
 			var held_ammunition: int = ship.get_ammunition_units()
 			var held_spice_mark: Dictionary = (
@@ -1688,6 +1717,15 @@ func _handle_trade_input(key_event: InputEventKey) -> void:
 			_last_trade_result = "AMMUNITION LOADING AVAILABLE AT PORT ONLY"
 			_update_trade_view()
 		return
+	if trade_key == KEY_F:
+		if _active_trade_contact != null and _active_trade_contact.is_cove_buyer():
+			_attempt_fish_sale()
+		else:
+			_trade_blocked_input_count += 1
+			_last_trade_action = "SELL_FISH_BLOCKED_AT_PORT"
+			_last_trade_result = "FISH SALES AVAILABLE AT COVE ONLY"
+			_update_trade_view()
+		return
 	if _active_trade_contact != null and _active_trade_contact.is_port_trader():
 		_attempt_trade_purchase()
 	else:
@@ -1705,6 +1743,8 @@ func _get_trade_key(key_event: InputEventKey) -> int:
 		return KEY_L
 	if _key_matches(key_event, KEY_C):
 		return KEY_C
+	if _key_matches(key_event, KEY_F):
+		return KEY_F
 	return 0
 
 
@@ -1718,6 +1758,8 @@ func _get_trade_key_name(trade_key: int) -> String:
 			return "L"
 		KEY_C:
 			return "C"
+		KEY_F:
+			return "F"
 		KEY_X:
 			return "X"
 	return "UNKNOWN"
@@ -2287,6 +2329,130 @@ func _attempt_trade_sale() -> void:
 		due_voyage,
 	)
 	_successful_sale_evidence = _last_trade_attempt_evidence.duplicate(true)
+
+
+func _get_fish_money_preview(money_before: int) -> Dictionary:
+	return {
+		"money_before": money_before,
+		"money_after": money_before + TradeContact.NORMAL_PRICE,
+		"money_delta": TradeContact.NORMAL_PRICE,
+		"price_state": String(
+			TradeContact.PriceState.keys()[TradeContact.PriceState.NORMAL]
+		),
+		"fixed_price": TradeContact.NORMAL_PRICE,
+	}
+
+
+func _attempt_fish_sale() -> void:
+	if (
+		not _trade_view_open
+		or _active_trade_contact == null
+		or not _active_trade_contact.is_cove_buyer()
+	):
+		return
+
+	_trade_sale_attempt_count += 1
+	_fish_sale_attempt_count += 1
+	_last_trade_action = "SELL_ONE_%s" % FishingAreaState.FISH_LOT_NAME.replace(
+		" ",
+		"_",
+	)
+	var money_before := money
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var mark_state_before: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	var money_preview := _get_fish_money_preview(money_before)
+	var success := cargo_before.has(FishingAreaState.FISH_LOT_NAME)
+	if success:
+		success = ship.remove_cargo_lot(FishingAreaState.FISH_LOT_NAME)
+	if success:
+		money += int(money_preview["money_delta"])
+		_fish_sold_lot_count += 1
+		_fish_money_earned += int(money_preview["money_delta"])
+		_last_trade_result = "SOLD 1 FISH LOT · NORMAL · RECEIVED %d COINS" % (
+			money_preview["fixed_price"]
+		)
+	else:
+		_fish_sale_denied_count += 1
+		_last_trade_result = "FISH SALE DENIED · NO FISH LOT IN SHIP CARGO"
+
+	var cargo_after: Array[String] = ship.get_cargo_lots()
+	var mark_state_after: Dictionary = (
+		_active_trade_contact.get_mark_state(completed_voyages)
+	)
+	_last_fish_sale_evidence = {
+		"success": success,
+		"action": _last_trade_action,
+		"result": _last_trade_result,
+		"fish_lot_name": FishingAreaState.FISH_LOT_NAME,
+		"price_state": money_preview["price_state"],
+		"fixed_sale_price": money_preview["fixed_price"],
+		"canonical_normal_price": TradeContact.NORMAL_PRICE,
+		"fixed_price_map": TradeContact.get_fixed_price_map(),
+		"uses_canonical_normal_fixed_price": (
+			FishingAreaState.FISH_PRICE_STATE == money_preview["price_state"]
+			and int(money_preview["fixed_price"])
+				== TradeContact.NORMAL_PRICE
+			and int(TradeContact.get_fixed_price_map()["NORMAL"])
+				== TradeContact.NORMAL_PRICE
+		),
+		"money_preview_before": money_preview["money_before"],
+		"money_preview_after": money_preview["money_after"],
+		"money_preview_delta": money_preview["money_delta"],
+		"money_before": money_before,
+		"money_after": money,
+		"money_delta": money - money_before,
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_delta": cargo_after.size() - cargo_before.size(),
+		"fish_count_delta": (
+			cargo_after.count(FishingAreaState.FISH_LOT_NAME)
+			- cargo_before.count(FishingAreaState.FISH_LOT_NAME)
+		),
+		"cove_spice_mark_before": mark_state_before,
+		"cove_spice_mark_after": mark_state_after,
+		"spice_demand_unchanged": _trade_mark_resources_equal(
+			mark_state_before,
+			mark_state_after,
+		),
+		"fresh_press_required": true,
+		"preview_matches_actual": (
+			(not success)
+			or (
+				money == int(money_preview["money_after"])
+				and money - money_before
+					== int(money_preview["money_delta"])
+			)
+		),
+		"transaction_atomic": (
+			(
+				success
+				and money - money_before == TradeContact.NORMAL_PRICE
+				and cargo_after.size() == cargo_before.size() - 1
+				and cargo_after.count(FishingAreaState.FISH_LOT_NAME)
+					== cargo_before.count(FishingAreaState.FISH_LOT_NAME) - 1
+				and _trade_mark_resources_equal(
+					mark_state_before,
+					mark_state_after,
+				)
+			)
+			or (
+				not success
+				and money == money_before
+				and cargo_after == cargo_before
+				and _trade_mark_resources_equal(
+					mark_state_before,
+					mark_state_after,
+				)
+			)
+		),
+	}
+	if success:
+		_successful_fish_sale_evidence = _last_fish_sale_evidence.duplicate(true)
+	_update_cargo_view()
+	_update_money_view()
+	_update_trade_view()
 
 
 func _record_trade_attempt(
@@ -2944,14 +3110,14 @@ func _handle_cargo_choice_input(key_event: InputEventKey) -> void:
 	if key_event.echo:
 		return
 	if _key_matches(key_event, KEY_X):
-		_leave_pending_salvage_at_wreck()
+		_leave_or_discard_pending_cargo_lot()
 		return
 	if _key_matches(key_event, KEY_1):
-		_replace_cargo_with_pending_salvage(0)
+		_replace_cargo_with_pending_lot(0)
 	elif _key_matches(key_event, KEY_2):
-		_replace_cargo_with_pending_salvage(1)
+		_replace_cargo_with_pending_lot(1)
 	elif _key_matches(key_event, KEY_3):
-		_replace_cargo_with_pending_salvage(2)
+		_replace_cargo_with_pending_lot(2)
 
 
 func _handle_chart_input(key_event: InputEventKey) -> bool:
@@ -3191,6 +3357,7 @@ func _is_any_trade_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_B)
 		or Input.is_key_pressed(KEY_L)
 		or Input.is_key_pressed(KEY_C)
+		or Input.is_key_pressed(KEY_F)
 		or Input.is_key_pressed(KEY_M)
 		or Input.is_key_pressed(KEY_X)
 		or Input.is_key_pressed(KEY_1)
@@ -3276,7 +3443,7 @@ func _get_context_controls_text() -> String:
 	if _storage_release_pending:
 		return STORAGE_RELEASE_CONTROLS_TEXT
 	if _cargo_choice_open:
-		return CARGO_CHOICE_CONTROLS_TEXT
+		return _get_cargo_choice_controls_text()
 	if _cargo_choice_release_pending or ship.navigation_release_pending:
 		return RELEASE_CONTROLS_TEXT
 	if _player_aboard_ship:
@@ -3326,6 +3493,40 @@ func _update_wreck_opportunity() -> void:
 			and not _journal_view_open
 			and not _journal_release_pending
 		),
+	)
+
+
+func _update_fishing_area() -> void:
+	var world_input_available: bool = (
+		_player_aboard_ship
+		and ship.controls_enabled
+		and not ship.is_docked
+		and not _player_on_target_deck
+		and not _defeat_recovery.is_result_open()
+		and not _defeat_recovery.is_release_guard_pending()
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not _target_inspection_view_open
+		and not ship.navigation_input_blocked
+		and not ship.navigation_release_pending
+	)
+	fishing_area.update_state(
+		ship.global_position,
+		ship.current_speed,
+		_player_aboard_ship,
+		ship.captain_aboard,
+		_player_aboard_ship and not _player_on_target_deck,
+		world_input_available,
 	)
 
 
@@ -4567,6 +4768,43 @@ func _get_world_cargo_total() -> int:
 	)
 
 
+func _fish_in_area() -> void:
+	if not fishing_area.can_receive_fishing_press():
+		return
+
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	var fish_lot: String = fishing_area.try_catch_fish_lot(cargo_before)
+	if fish_lot.is_empty():
+		_last_cargo_action = "FISHING_ATTEMPT"
+		_last_cargo_result = "NO_CHANGE_INELIGIBLE"
+		_update_interaction_prompt()
+		return
+
+	if not ship.can_keep_cargo_lot():
+		if not _open_cargo_choice(fish_lot, CARGO_SOURCE_FISHING):
+			fishing_area.resolve_discard(ship.get_cargo_lots())
+			_last_cargo_action = "FULL_SHIP_FISHING_ATTEMPT"
+			_last_cargo_result = "NO_CHANGE_CHOICE_NOT_OPENED"
+		return
+
+	if not ship.keep_cargo_lot(fish_lot):
+		fishing_area.resolve_discard(ship.get_cargo_lots())
+		_last_cargo_action = "KEEP_CAUGHT_FISH"
+		_last_cargo_result = "NO_CHANGE_CARGO_FULL"
+		return
+	if not fishing_area.resolve_direct_keep(ship.get_cargo_lots()):
+		ship.undo_last_kept_cargo_lot(fish_lot)
+		_last_cargo_action = "KEEP_CAUGHT_FISH"
+		_last_cargo_result = "ROLLED_BACK_FISHING_STATE"
+		return
+
+	_cargo_kept_count += 1
+	_last_cargo_action = "KEEP_CAUGHT_FISH"
+	_last_cargo_result = "KEPT_ONE_FISH_LOT"
+	_update_cargo_view()
+	_update_interaction_prompt()
+
+
 func _salvage_wreck() -> void:
 	if (
 		_trade_view_open
@@ -4588,7 +4826,7 @@ func _salvage_wreck() -> void:
 		_last_cargo_result = "NO_CHANGE_WRECK_EMPTY"
 		return
 	if not ship.can_keep_cargo_lot():
-		_open_cargo_choice(salvage_lot)
+		_open_cargo_choice(salvage_lot, CARGO_SOURCE_WRECK)
 		return
 	if not wreck_opportunity.can_take_next_salvage_lot(salvage_lot):
 		_last_cargo_action = "KEEP_NEW_LOT"
@@ -4620,64 +4858,102 @@ func _salvage_wreck() -> void:
 	_update_interaction_prompt()
 
 
-func _open_cargo_choice(salvage_lot: String) -> void:
+func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 	if (
 		_cargo_choice_open
-		or salvage_lot.is_empty()
-		or not wreck_opportunity.mark_salvage_choice_pending(salvage_lot)
+		or cargo_lot.is_empty()
+		or not [CARGO_SOURCE_WRECK, CARGO_SOURCE_FISHING].has(cargo_source)
 	):
-		return
-	_pending_salvage_lot = salvage_lot
+		return false
+	if (
+		cargo_source == CARGO_SOURCE_WRECK
+		and not wreck_opportunity.mark_salvage_choice_pending(cargo_lot)
+	):
+		return false
+	if (
+		cargo_source == CARGO_SOURCE_FISHING
+		and (
+			cargo_lot != FishingAreaState.FISH_LOT_NAME
+			or not fishing_area.record_choice_required()
+		)
+	):
+		return false
+	_pending_cargo_lot = cargo_lot
+	_pending_cargo_source = cargo_source
 	_cargo_choice_open = true
 	_cargo_choice_opened_count += 1
-	_last_cargo_action = "FULL_SHIP_SALVAGE_ATTEMPT"
+	_last_cargo_action = "FULL_SHIP_%s_ATTEMPT" % cargo_source
 	_last_cargo_result = "CARGO_CHOICE_REQUIRED"
 	ship.set_navigation_input_blocked(true)
 	player.movement_enabled = false
-	controls_help.text = CARGO_CHOICE_CONTROLS_TEXT
+	controls_help.text = _get_cargo_choice_controls_text()
 	interaction_prompt.hide()
 	_update_cargo_view()
+	return true
 
 
-func _leave_pending_salvage_at_wreck() -> void:
-	if (
-		not _cargo_choice_open
-		or not wreck_opportunity.leave_salvage_lot_at_wreck(
-			_pending_salvage_lot
+func _leave_or_discard_pending_cargo_lot() -> void:
+	if not _cargo_choice_open or _pending_cargo_lot.is_empty():
+		return
+	var resolved := false
+	if _pending_cargo_source == CARGO_SOURCE_WRECK:
+		resolved = wreck_opportunity.leave_salvage_lot_at_wreck(
+			_pending_cargo_lot
 		)
-	):
+	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
+		resolved = fishing_area.resolve_discard(ship.get_cargo_lots())
+	if not resolved:
 		return
 	_cargo_left_count += 1
 	_cargo_choice_resolution_count += 1
-	_last_cargo_action = "LEAVE_NEW_LOT"
-	_last_cargo_result = "LEFT_%s_AT_WRECK" % _cargo_result_name(
-		_pending_salvage_lot
+	_last_cargo_action = (
+		"LEAVE_NEW_LOT" if _pending_cargo_source == CARGO_SOURCE_WRECK
+		else "DISCARD_NEW_FISH_LOT"
+	)
+	_last_cargo_result = (
+		"LEFT_%s_AT_WRECK" % _cargo_result_name(_pending_cargo_lot)
+		if _pending_cargo_source == CARGO_SOURCE_WRECK
+		else "DISCARDED_FISH_LOT_CARGO_UNCHANGED"
 	)
 	_close_cargo_choice()
 
 
-func _replace_cargo_with_pending_salvage(slot_index: int) -> void:
+func _replace_cargo_with_pending_lot(slot_index: int) -> void:
+	if not _cargo_choice_open or _pending_cargo_lot.is_empty():
+		return
 	if (
-		not _cargo_choice_open
-		or _pending_salvage_lot.is_empty()
-		or wreck_opportunity.get_next_salvage_lot() != _pending_salvage_lot
+		_pending_cargo_source == CARGO_SOURCE_WRECK
+		and wreck_opportunity.get_next_salvage_lot() != _pending_cargo_lot
+	):
+		return
+	if (
+		_pending_cargo_source == CARGO_SOURCE_FISHING
+		and not fishing_area.has_pending_catch()
 	):
 		return
 	var removed_lot: String = ship.replace_cargo_slot(
 		slot_index,
-		_pending_salvage_lot,
+		_pending_cargo_lot,
 	)
 	if removed_lot.is_empty():
 		_last_cargo_action = "REPLACE_CARGO_SLOT"
 		_last_cargo_result = "NO_CHANGE_INVALID_SLOT"
 		return
-	if not wreck_opportunity.exchange_salvage_lot(
-		_pending_salvage_lot,
-		removed_lot,
-	):
+	var source_resolved := false
+	if _pending_cargo_source == CARGO_SOURCE_WRECK:
+		source_resolved = wreck_opportunity.exchange_salvage_lot(
+			_pending_cargo_lot,
+			removed_lot,
+		)
+	elif _pending_cargo_source == CARGO_SOURCE_FISHING:
+		source_resolved = fishing_area.resolve_replacement(
+			removed_lot,
+			ship.get_cargo_lots(),
+		)
+	if not source_resolved:
 		ship.replace_cargo_slot(slot_index, removed_lot)
 		_last_cargo_action = "REPLACE_CARGO_SLOT"
-		_last_cargo_result = "ROLLED_BACK_WRECK_STATE"
+		_last_cargo_result = "ROLLED_BACK_CARGO_SOURCE_STATE"
 		return
 
 	_cargo_replaced_count += 1
@@ -4685,14 +4961,15 @@ func _replace_cargo_with_pending_salvage(slot_index: int) -> void:
 	_last_cargo_action = "REPLACE_CARGO_SLOT_%d" % (slot_index + 1)
 	_last_cargo_result = "REPLACED_%s_WITH_%s" % [
 		_cargo_result_name(removed_lot),
-		_cargo_result_name(_pending_salvage_lot),
+		_cargo_result_name(_pending_cargo_lot),
 	]
-	_defeat_recovery.record_existing_salvage_recovery(
-		_pending_salvage_lot,
-		ship.get_cargo_lots(),
-		ship.timber_lots,
-		ship.get_cargo_limit(),
-	)
+	if _pending_cargo_source == CARGO_SOURCE_WRECK:
+		_defeat_recovery.record_existing_salvage_recovery(
+			_pending_cargo_lot,
+			ship.get_cargo_lots(),
+			ship.timber_lots,
+			ship.get_cargo_limit(),
+		)
 	_close_cargo_choice()
 
 
@@ -4700,7 +4977,8 @@ func _close_cargo_choice() -> void:
 	_cargo_choice_open = false
 	_cargo_choice_release_pending = true
 	_prompt_refresh_after_navigation_release = true
-	_pending_salvage_lot = ""
+	_pending_cargo_lot = ""
+	_pending_cargo_source = ""
 	cargo_choice_view.hide()
 	controls_help.text = RELEASE_CONTROLS_TEXT
 	_update_cargo_view()
@@ -4709,6 +4987,14 @@ func _close_cargo_choice() -> void:
 
 func _cargo_result_name(lot_name: String) -> String:
 	return lot_name.to_upper().replace(" ", "_")
+
+
+func _get_cargo_choice_controls_text() -> String:
+	return (
+		FISHING_CARGO_CHOICE_CONTROLS_TEXT
+		if _pending_cargo_source == CARGO_SOURCE_FISHING
+		else CARGO_CHOICE_CONTROLS_TEXT
+	)
 
 
 func _update_cargo_view() -> void:
@@ -4728,7 +5014,10 @@ func _update_cargo_view() -> void:
 	var wreck_lots := wreck_opportunity.get_salvage_lots()
 	cargo_lines.append("WRECK  %d LOTS REMAIN" % wreck_lots.size())
 	if _cargo_choice_open:
-		cargo_lines.append("PENDING  %s" % _pending_salvage_lot)
+		cargo_lines.append("PENDING  %s · %s" % [
+			_pending_cargo_lot,
+			_pending_cargo_source,
+		])
 	else:
 		cargo_lines.append("PENDING  NONE")
 	cargo_details.text = "\n".join(cargo_lines)
@@ -4746,13 +5035,17 @@ func _update_cargo_view() -> void:
 	if not _cargo_choice_open:
 		cargo_choice_view.hide()
 		return
-	cargo_choice_title.text = "CARGO FULL · NEW %s" % _pending_salvage_lot
+	cargo_choice_title.text = "CARGO FULL · NEW %s" % _pending_cargo_lot
 	var choice_lines := PackedStringArray()
 	for slot_index in range(cargo_lots.size()):
 		choice_lines.append(
 			"[%d] REPLACE %s" % [slot_index + 1, cargo_lots[slot_index]]
 		)
-	choice_lines.append("[X] LEAVE %s AT WRECK" % _pending_salvage_lot)
+	choice_lines.append(
+		"[X] LEAVE %s AT WRECK" % _pending_cargo_lot
+		if _pending_cargo_source == CARGO_SOURCE_WRECK
+		else "[X] DISCARD CAUGHT %s · CARGO UNCHANGED" % _pending_cargo_lot
+	)
 	cargo_choice_details.text = "\n".join(choice_lines)
 	cargo_choice_view.show()
 
@@ -5172,6 +5465,7 @@ func _update_trade_view() -> void:
 		var price_state: String = String(contact_state["current_price_state"])
 		var fixed_price: int = int(contact_state["current_fixed_price"])
 		var money_preview: Dictionary = _active_trade_contact.get_money_preview(money)
+		var fish_money_preview := _get_fish_money_preview(money)
 		var money_delta: int = int(money_preview["money_delta"])
 		var money_delta_text := (
 			"+%d" % money_delta if money_delta > 0 else "%d" % money_delta
@@ -5287,7 +5581,11 @@ func _update_trade_view() -> void:
 				+ "VOYAGES COMPLETE · %d\n"
 				+ "SELL PREVIEW · %s\n"
 				+ "SHIP CARGO · %d/%d · %s %d LOT\n"
-				+ "TRADE · %s"
+				+ "SPICE TRADE · %s\n\n"
+				+ "FISH CATCH SALE · SEPARATE FROM SPICE DEMAND\n"
+				+ "%s · %s · %d COINS · HELD %d\n"
+				+ "FISH SELL PREVIEW · %d -> %d (+%d)\n"
+				+ "[F] SELL ONE FISH LOT"
 			) % [
 				TradeContact.GOOD_NAME,
 				price_state,
@@ -5303,11 +5601,18 @@ func _update_trade_view() -> void:
 				TradeContact.GOOD_NAME,
 				cargo_lots.count(TradeContact.GOOD_NAME),
 				"AVAILABLE" if contact_state["trade_available"] else "UNAVAILABLE",
+				FishingAreaState.FISH_LOT_NAME,
+				FishingAreaState.FISH_PRICE_STATE,
+				TradeContact.NORMAL_PRICE,
+				cargo_lots.count(FishingAreaState.FISH_LOT_NAME),
+				fish_money_preview["money_before"],
+				fish_money_preview["money_after"],
+				fish_money_preview["money_delta"],
 			]
 			trade_controls.text = (
-				"[E] SELL ONE LOT · [X] CLOSE"
+				"[E] SELL SPICE · [F] SELL FISH · [X] CLOSE"
 				if contact_state["trade_available"]
-				else "[E] SELL UNAVAILABLE · [X] CLOSE"
+				else "[E] SPICE UNAVAILABLE · [F] SELL FISH · [X] CLOSE"
 			)
 		trade_result.text = _last_trade_result
 	if _trade_view_open:
@@ -6021,6 +6326,9 @@ func _update_interaction_prompt() -> void:
 				_near_inspection_target.display_name
 			)
 			interaction_prompt.show()
+		elif not fishing_area.get_interaction_prompt().is_empty():
+			interaction_prompt.text = fishing_area.get_interaction_prompt()
+			interaction_prompt.show()
 		elif wreck_opportunity.is_salvage_eligible():
 			var next_salvage_lot := wreck_opportunity.get_next_salvage_lot()
 			if next_salvage_lot == "TIMBER LOT":
@@ -6564,6 +6872,7 @@ func get_playtest_state() -> Dictionary:
 	var player_state: Dictionary = player.get_playtest_state()
 	var waypoint_state: Dictionary = waypoint_display.get_playtest_state()
 	var wreck_state: Dictionary = wreck_opportunity.get_playtest_state()
+	var fishing_state: Dictionary = fishing_area.get_playtest_state()
 	var storage_state: Dictionary = cove_storage.get_playtest_state()
 	var construction_state: Dictionary = construction_site.get_playtest_state(
 		cove_storage
@@ -6692,6 +7001,7 @@ func get_playtest_state() -> Dictionary:
 	var active_trade_preview := {}
 	if _active_trade_contact != null:
 		active_trade_preview = _active_trade_contact.get_money_preview(money)
+	var fish_money_preview := _get_fish_money_preview(money)
 	var food_view_full_text := "%s\n%s\n%s" % [
 		food_title.text,
 		food_status.text,
@@ -6738,6 +7048,7 @@ func get_playtest_state() -> Dictionary:
 		ship_state["cargo_used_slots"]
 		+ wreck_state["wreck_salvage_lot_count"]
 		+ storage_state["storage_used_slots"]
+		+ fishing_state["pending_catch_count"]
 	)
 	var initial_physical_cargo_total: int = int(
 		ship_state["starting_cargo_used_slots"]
@@ -6753,12 +7064,16 @@ func get_playtest_state() -> Dictionary:
 		+ ammunition_state["depleted_lot_count"]
 		+ defeat_state["total_cargo_slot_loss_count"]
 		+ _prize_cannon_sale_count
+		+ _fish_sold_lot_count
+		+ fishing_state["discarded_catch_count"]
+		+ fishing_state["displaced_cargo_discard_count"]
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total
 		+ _trade_bought_lot_count
 		+ _ammunition_supply_purchased_lot_count
 		+ _prize_actions.get_awarded_cargo_lot_count()
+		+ fishing_state["successful_catch_count"]
 	)
 	var expected_money: int = (
 		STARTING_MONEY
@@ -6766,6 +7081,7 @@ func get_playtest_state() -> Dictionary:
 		+ _trade_sold_lot_count * TradeContact.VALUABLE_PRICE
 		- _ammunition_supply_money_spent
 		+ _prize_cannon_money_earned
+		+ _fish_sold_lot_count * TradeContact.NORMAL_PRICE
 	)
 	var ammunition_load_state: Dictionary = ammunition_state["last_load_evidence"]
 	var ammunition_conversion_cargo_delta: int = 0
@@ -9894,6 +10210,9 @@ func get_playtest_state() -> Dictionary:
 			and int(port_trader_state["base_fixed_price"]) == 20
 			and cove_buyer_state["base_price_state"] == "VALUABLE"
 			and int(cove_buyer_state["base_fixed_price"]) == 30
+			and fishing_state["fish_price_state"] == "NORMAL"
+			and TradeContact.NORMAL_PRICE
+				== int(TradeContact.get_fixed_price_map()["NORMAL"])
 		),
 		"trade_base_price_states_fixed": (
 			port_trader_state["base_price_state"] == "CHEAP"
@@ -9921,6 +10240,42 @@ func get_playtest_state() -> Dictionary:
 		"money_accounting_holds": money == expected_money,
 		"money_view_visible": money_view.visible,
 		"money_view_text": money_details.text,
+		"fish_normal_sale_price": TradeContact.NORMAL_PRICE,
+		"fish_fixed_price_state": {
+			"lot_name": FishingAreaState.FISH_LOT_NAME,
+			"price_state": fishing_state["fish_price_state"],
+			"price_state_index": TradeContact.PriceState.NORMAL,
+			"fixed_price": TradeContact.NORMAL_PRICE,
+			"canonical_fixed_price_map": TradeContact.get_fixed_price_map(),
+			"matches_canonical_normal": (
+				fishing_state["fish_price_state"]
+					== String(TradeContact.PriceState.keys()[
+						TradeContact.PriceState.NORMAL
+					])
+				and TradeContact.NORMAL_PRICE
+					== int(TradeContact.get_fixed_price_map()["NORMAL"])
+			),
+		},
+		"fish_trade_price_state": fishing_state["fish_price_state"],
+		"fish_trade_fixed_price": TradeContact.NORMAL_PRICE,
+		"fish_trade_uses_canonical_normal_fixed_price": (
+			fishing_state["fish_price_state"] == "NORMAL"
+			and TradeContact.NORMAL_PRICE
+				== int(TradeContact.get_fixed_price_map()["NORMAL"])
+		),
+		"fish_money_preview": fish_money_preview.duplicate(true),
+		"fish_money_earned": _fish_money_earned,
+		"fish_sale_attempt_count": _fish_sale_attempt_count,
+		"fish_sold_lot_count": _fish_sold_lot_count,
+		"fish_sale_denied_count": _fish_sale_denied_count,
+		"last_fish_sale_evidence": _last_fish_sale_evidence.duplicate(true),
+		"successful_fish_sale_evidence": (
+			_successful_fish_sale_evidence.duplicate(true)
+		),
+		"fish_sale_money_accounting_holds": (
+			_fish_money_earned
+			== _fish_sold_lot_count * TradeContact.NORMAL_PRICE
+		),
 		"ship_trade_lot_count": (
 			ship.get_cargo_lots().count(TradeContact.GOOD_NAME)
 		),
@@ -9931,6 +10286,28 @@ func get_playtest_state() -> Dictionary:
 		"trade_view_result": trade_result.text,
 		"trade_view_controls": trade_controls.text,
 		"trade_view_text": trade_view_full_text,
+		"cove_fish_sale_visible": (
+			not (
+				_trade_view_open
+				and _active_trade_contact == cove_buyer
+				and trade_view.visible
+			)
+			or (
+				trade_view_full_text.contains("FISH CATCH SALE")
+				and trade_view_full_text.contains(FishingAreaState.FISH_LOT_NAME)
+				and trade_view_full_text.contains(
+					"NORMAL · %d COINS" % TradeContact.NORMAL_PRICE
+				)
+				and trade_view_full_text.contains(
+					"FISH SELL PREVIEW · %d -> %d (+%d)" % [
+						fish_money_preview["money_before"],
+						fish_money_preview["money_after"],
+						fish_money_preview["money_delta"],
+					]
+				)
+				and trade_view_full_text.contains("[F] SELL ONE FISH LOT")
+			)
+		),
 		"port_ammunition_supply_price_visible": (
 			not (
 				_trade_view_open
@@ -10003,6 +10380,7 @@ func get_playtest_state() -> Dictionary:
 			"storage": _trade_view_open and not _storage_view_open,
 			"construction": _trade_view_open and not _construction_view_open,
 			"salvage": _trade_view_open,
+			"fishing": _trade_view_open,
 			"docking": _trade_view_open,
 			"other_interactions": _trade_view_open,
 		},
@@ -10025,6 +10403,12 @@ func get_playtest_state() -> Dictionary:
 				defeat_state["total_cargo_slot_loss_count"]
 			),
 			"sold_trade_lots": _trade_sold_lot_count,
+			"sold_fish_lots": _fish_sold_lot_count,
+			"discarded_fish_lots": fishing_state["discarded_catch_count"],
+			"fishing_replacement_discarded_cargo_lots": (
+				fishing_state["displaced_cargo_discard_count"]
+			),
+			"pending_fish_lots": fishing_state["pending_catch_count"],
 			"initial_physical_cargo": initial_physical_cargo_total,
 			"initial_storage_lots": (
 				storage_state["starting_storage_used_slots"]
@@ -10033,6 +10417,7 @@ func get_playtest_state() -> Dictionary:
 			"bought_ammunition_source_lots": (
 				_ammunition_supply_purchased_lot_count
 			),
+			"caught_fish_lots": fishing_state["successful_catch_count"],
 			"ammunition_conversion_cargo_delta": (
 				ammunition_conversion_cargo_delta
 			),
@@ -10148,6 +10533,158 @@ func get_playtest_state() -> Dictionary:
 			waypoint_state["chart_visible"]
 			and ship_state["navigation_input_blocked"]
 		),
+		"fishing_system_count": fishing_state["system_count"],
+		"fishing_state_owner_count": fishing_state["owner_count"],
+		"fishing_area_count": fishing_state["area_count"],
+		"fishing_area_id": fishing_state["area_id"],
+		"fishing_area_position": fishing_state["area_position"],
+		"fishing_area_at_sea": (
+			sea_state["bounds"].has_point(fishing_state["area_position"])
+			and fishing_state["area_position"].distance_to(
+				sea_state["island_center"]
+			) > float(sea_state["island_radius"])
+			and not sea_state["port_land_rect"].has_point(
+				fishing_state["area_position"]
+			)
+		),
+		"fishing_area_visible": fishing_state["area_visible"],
+		"fishing_area_visual_radius": fishing_state["visual_radius"],
+		"fishing_area_visual_local_bounds": fishing_state["visual_local_bounds"],
+		"fishing_area_visual_world_rect": fishing_state["visual_world_rect"],
+		"fishing_area_visual_on_screen": fishing_state["visual_on_screen"],
+		"fishing_range": fishing_state["fishing_range"],
+		"fishing_max_speed": fishing_state["fishing_max_speed"],
+		"ship_distance_to_fishing_area": fishing_state["ship_distance"],
+		"fishing_eligibility": fishing_state["eligibility"],
+		"fishing_eligible": fishing_state["fishing_eligible"],
+		"fishing_requires_captain_aboard": true,
+		"fishing_requires_stopped_ship": true,
+		"fishing_prompt_visible": (
+			interaction_prompt.visible
+			and (
+				interaction_prompt.text == "[E] CATCH ONE FISH LOT"
+				or interaction_prompt.text == "STOP SHIP TO FISH"
+				or interaction_prompt.text == "CAPTAIN MUST BE ABOARD TO FISH"
+			)
+		),
+		"fishing_prompt_text": (
+			interaction_prompt.text
+			if interaction_prompt.visible
+			and (
+				interaction_prompt.text == "[E] CATCH ONE FISH LOT"
+				or interaction_prompt.text == "STOP SHIP TO FISH"
+				or interaction_prompt.text == "CAPTAIN MUST BE ABOARD TO FISH"
+			)
+			else ""
+		),
+		"fish_lot_name": fishing_state["fish_lot_name"],
+		"fish_type_count": fishing_state["fish_type_count"],
+		"fish_price_state": fishing_state["fish_price_state"],
+		"fish_cargo_lot_count": (
+			ship.get_cargo_lots().count(FishingAreaState.FISH_LOT_NAME)
+		),
+		"fish_uses_normal_cargo_slots": true,
+		"fish_each_lot_uses_one_slot": ship_state["each_cargo_lot_uses_one_slot"],
+		"fishing_catch_attempt_count": fishing_state["catch_attempt_count"],
+		"successful_fishing_catch_count": (
+			fishing_state["successful_catch_count"]
+		),
+		"fishing_direct_keep_count": fishing_state["direct_keep_count"],
+		"fishing_choice_required_count": fishing_state["choice_required_count"],
+		"fishing_discarded_catch_count": fishing_state["discarded_catch_count"],
+		"fishing_replacement_keep_count": fishing_state["replacement_keep_count"],
+		"fishing_pending_catch_count": fishing_state["pending_catch_count"],
+		"fishing_last_catch_result": fishing_state["last_catch_result"],
+		"fishing_last_catch_evidence": fishing_state["last_catch_evidence"],
+		"fishing_last_choice_evidence": fishing_state["last_choice_evidence"],
+		"fishing_last_held_input_evidence": (
+			fishing_state["last_held_input_evidence"]
+		),
+		"fishing_fresh_press_required": fishing_state["fresh_press_required"],
+		"fishing_one_lot_per_fresh_press": (
+			fishing_state["one_lot_per_fresh_press"]
+		),
+		"fishing_catch_accounting_holds": (
+			fishing_state["catch_accounting_holds"]
+		),
+		"fishing_uses_existing_cargo_owner": true,
+		"fishing_uses_existing_cargo_choice": true,
+		"fishing_uses_existing_cove_buyer": true,
+		"fishing_cargo_choice": {
+			"open_for_fish": (
+				_cargo_choice_open
+				and _pending_cargo_source == CARGO_SOURCE_FISHING
+			),
+			"pending_lot": (
+				_pending_cargo_lot
+				if _pending_cargo_source == CARGO_SOURCE_FISHING
+				else ""
+			),
+			"prompt_visible": (
+				cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_FISHING
+			),
+			"prompt_text": (
+				"%s\n%s" % [cargo_choice_title.text, cargo_choice_details.text]
+				if cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_FISHING
+				else ""
+			),
+			"navigation_blocked": (
+				_cargo_choice_open
+				and _pending_cargo_source == CARGO_SOURCE_FISHING
+				and ship_state["navigation_input_blocked"]
+			),
+			"discard_control": "X",
+			"replacement_controls": ["1", "2", "3"],
+			"last_resolution": fishing_state["last_choice_evidence"],
+		},
+		"fishing_sale": {
+			"system": "COVE_BUYER",
+			"control": "F",
+			"lot_name": fishing_state["fish_lot_name"],
+			"price_state": fishing_state["fish_price_state"],
+			"fixed_price": TradeContact.NORMAL_PRICE,
+			"money_preview": fish_money_preview.duplicate(true),
+			"uses_canonical_normal_fixed_price": (
+				fishing_state["fish_price_state"] == "NORMAL"
+				and TradeContact.NORMAL_PRICE
+					== int(TradeContact.get_fixed_price_map()["NORMAL"])
+			),
+			"attempt_count": _fish_sale_attempt_count,
+			"sold_lot_count": _fish_sold_lot_count,
+			"money_earned": _fish_money_earned,
+			"last_evidence": _last_fish_sale_evidence.duplicate(true),
+			"successful_evidence": (
+				_successful_fish_sale_evidence.duplicate(true)
+			),
+		},
+		"fishing_accounting": {
+			"catch_accounting_holds": fishing_state["catch_accounting_holds"],
+			"world_cargo_accounting_holds": (
+				accounted_cargo_total == expected_cargo_total
+			),
+			"money_accounting_holds": money == expected_money,
+			"cargo_limit_never_exceeded": ship_state["cargo_limit_never_exceeded"],
+			"caught": fishing_state["successful_catch_count"],
+			"in_ship": ship.get_cargo_lots().count(
+				FishingAreaState.FISH_LOT_NAME
+			),
+			"pending": fishing_state["pending_catch_count"],
+			"discarded_new_fish": fishing_state["discarded_catch_count"],
+			"discarded_replaced_cargo": (
+				fishing_state["displaced_cargo_discard_count"]
+			),
+			"sold": _fish_sold_lot_count,
+		},
+		"fishing_excluded_features": {
+			"separate_minigame": fishing_state["separate_minigame_enabled"],
+			"rod_net_trap_upgrades": fishing_state["fishing_upgrades_enabled"],
+			"rare_fish": fishing_state["rare_fish_enabled"],
+			"weather_effects": fishing_state["weather_effects_enabled"],
+			"time_effects": fishing_state["time_effects_enabled"],
+			"monster_fishing": fishing_state["monster_fishing_enabled"],
+		},
 		"wreck_count": wreck_state["wreck_count"],
 		"wreck_id": wreck_state["wreck_id"],
 		"wreck_position": wreck_state["wreck_position"],
@@ -10217,10 +10754,17 @@ func get_playtest_state() -> Dictionary:
 		),
 		"cargo_view_visible": cargo_view.visible,
 		"cargo_view_text": cargo_details.text,
-		"pending_salvage_lot": _pending_salvage_lot,
+		"pending_cargo_lot": _pending_cargo_lot,
+		"pending_cargo_source": _pending_cargo_source,
+		"pending_salvage_lot": (
+			_pending_cargo_lot
+			if _pending_cargo_source == CARGO_SOURCE_WRECK
+			else ""
+		),
 		"pending_salvage_lot_still_at_wreck": (
-			_pending_salvage_lot.is_empty()
-			or wreck_state["next_salvage_lot"] == _pending_salvage_lot
+			_pending_cargo_source != CARGO_SOURCE_WRECK
+			or _pending_cargo_lot.is_empty()
+			or wreck_state["next_salvage_lot"] == _pending_cargo_lot
 		),
 		"cargo_choice_open": _cargo_choice_open,
 		"cargo_choice_prompt_visible": cargo_choice_view.visible,
@@ -10233,7 +10777,7 @@ func get_playtest_state() -> Dictionary:
 			"visible": cargo_choice_view.visible,
 			"title": cargo_choice_title.text,
 			"text": cargo_choice_details.text,
-			"controls": CARGO_CHOICE_CONTROLS_TEXT,
+			"controls": _get_cargo_choice_controls_text(),
 		},
 		"cargo_choice_navigation_blocked": (
 			_cargo_choice_open and ship_state["navigation_input_blocked"]

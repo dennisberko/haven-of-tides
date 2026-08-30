@@ -2,6 +2,25 @@
 
 [Previous: Phase 33 - Defeat and recovery](33-defeat-and-recovery.md) | [Next: Phase 35 - Weather](35-weather.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Add one visible fishing area at sea | DONE |
+| Add 2: Let the player stop and fish in that area | DONE |
+| Add 3: Give the player one type of fish | DONE |
+| Add 4: Put fish in normal cargo space | DONE |
+| Add 5: Let the player keep, sell, or discard fish with existing actions | DONE |
+| Complete when: The player can catch fish and make a cargo choice | DONE |
+| Test 1: Sail to the visible fishing area | DONE |
+| Test 2: Catch one lot of fish | DONE |
+| Test 3: Confirm fish uses cargo space | DONE |
+| Test 4: Fill the ship and catch another lot | DONE |
+| Test 5: Confirm cargo choice is required | DONE |
+| Test 6: Sell or deliver fish with an earlier system | DONE |
+
 ## Goal
 
 Add a safe way to collect fish during a voyage.
