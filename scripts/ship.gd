@@ -407,6 +407,19 @@ func get_ammunition_playtest_state() -> Dictionary:
 	return _ammunition_state.get_playtest_state(cargo_lots)
 
 
+func consume_ammunition_for_harpoon() -> Dictionary:
+	var evidence: Dictionary = (
+		_ammunition_state.consume_for_accepted_harpoon(cargo_lots)
+	)
+	if bool(evidence.get("success", false)):
+		_sync_cargo_state()
+	evidence["action"] = "CONSUME_AMMUNITION_FOR_MONSTER_HARPOON"
+	evidence["uses_existing_ammunition_owner"] = true
+	evidence["harpoon_ammunition_type_count"] = 1
+	queue_redraw()
+	return evidence
+
+
 func load_ammunition_at_port() -> Dictionary:
 	var evidence: Dictionary = _ammunition_state.attempt_port_load(
 		cargo_lots,
@@ -649,6 +662,130 @@ func apply_pirate_hunter_broadside() -> Dictionary:
 			and int(evidence.get("hull_after", 1))
 				<= ShipDamageState.DEFEAT_HULL_THRESHOLD
 		),
+	}, true)
+	_last_crew_combat_evidence = evidence.duplicate(true)
+	if bool(evidence.get("crew_injury_applied", false)):
+		_last_crew_injury_evidence = evidence.duplicate(true)
+	queue_redraw()
+	return evidence
+
+
+func apply_monster_attack() -> Dictionary:
+	var cargo_before: Array[String] = get_cargo_lots()
+	var ammunition_before := get_ammunition_units()
+	var food_state: Dictionary = get_food_playtest_state()
+	var food_progress_before := float(food_state["progress_distance"])
+	var food_units_before := get_food_units()
+	var hull_before := int(get_damage_playtest_state()["hull_current"])
+	var crew_before: Dictionary = get_crew_condition_playtest_state()
+	var current_speed_before := current_speed
+	var evidence: Dictionary = _damage_state.try_monster_attack(
+		cargo_before,
+		food_progress_before,
+		food_units_before,
+	)
+	if bool(evidence.get("success", false)):
+		var crew_damage_evidence: Dictionary = (
+			_crew_condition_state.record_monster_attack_injury(
+				ShipDamageState.MONSTER_ATTACK_SOURCE,
+				TOP_SPEED,
+			)
+		)
+		current_speed = minf(current_speed, get_top_speed())
+		if current_speed > 0.0:
+			sailing_velocity = get_forward_direction() * current_speed
+		damage_impact_sound.play()
+		_damage_state.record_monster_attack_sound_play(
+			damage_impact_sound.stream.get_class(),
+			ShipDamageState.IMPACT_SOUND_DURATION,
+		)
+		evidence.merge({
+			"crew_damage_evidence": crew_damage_evidence.duplicate(true),
+			"crew_condition_before": crew_before["condition"],
+			"crew_condition_after": _crew_condition_state.get_condition(),
+			"crew_condition_changed": (
+				crew_damage_evidence["injury_applied"]
+			),
+			"crew_injury_applied": crew_damage_evidence["injury_applied"],
+			"crew_fixed_injury_amount": (
+				crew_damage_evidence["fixed_injury_amount"]
+			),
+			"sailing_top_speed_before": (
+				crew_damage_evidence["sailing_top_speed_before"]
+			),
+			"sailing_top_speed_after": (
+				crew_damage_evidence["sailing_top_speed_after"]
+			),
+			"current_speed_before": current_speed_before,
+			"current_speed_after": current_speed,
+			"current_speed_respects_crew_cap": current_speed <= get_top_speed(),
+			"uses_existing_crew_condition_owner": true,
+		}, true)
+		_damage_state.record_monster_attack_crew_result(evidence)
+	else:
+		evidence.merge({
+			"crew_damage_evidence": {},
+			"crew_condition_before": crew_before["condition"],
+			"crew_condition_after": crew_before["condition"],
+			"crew_condition_changed": false,
+			"crew_injury_applied": false,
+			"crew_fixed_injury_amount": (
+				crew_before["fixed_injury_amount"]
+			),
+			"sailing_top_speed_before": get_top_speed(),
+			"sailing_top_speed_after": get_top_speed(),
+			"current_speed_before": current_speed_before,
+			"current_speed_after": current_speed,
+			"current_speed_respects_crew_cap": current_speed <= get_top_speed(),
+			"uses_existing_crew_condition_owner": true,
+		}, true)
+		_damage_state.record_monster_attack_crew_result(evidence)
+	var cargo_after: Array[String] = get_cargo_lots()
+	var ammunition_after := get_ammunition_units()
+	var food_state_after: Dictionary = get_food_playtest_state()
+	var hull_after := int(get_damage_playtest_state()["hull_current"])
+	evidence.merge({
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_unchanged": cargo_before == cargo_after,
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_unchanged": ammunition_before == ammunition_after,
+		"food_units_before": food_units_before,
+		"food_units_after": get_food_units(),
+		"food_units_unchanged": food_units_before == get_food_units(),
+		"food_progress_before": food_progress_before,
+		"food_progress_after": food_state_after["progress_distance"],
+		"food_progress_unchanged": is_equal_approx(
+			food_progress_before,
+			float(food_state_after["progress_distance"]),
+		),
+		"hull_before": hull_before,
+		"hull_after": hull_after,
+		"hull_delta": hull_after - hull_before,
+		"hull_changed_only_by_fixed_monster_damage": (
+			not bool(evidence.get("success", false))
+			or hull_after - hull_before
+				== -ShipDamageState.MONSTER_ATTACK_DAMAGE
+		),
+		"crew_changed_only_by_fixed_monster_injury": (
+			not bool(evidence.get("success", false))
+			or int(evidence["crew_condition_after"])
+				- int(evidence["crew_condition_before"])
+				== -CrewConditionState.FIXED_INJURY_AMOUNT
+		),
+		"unrelated_ship_resources_unchanged": (
+			cargo_before == cargo_after
+			and ammunition_before == ammunition_after
+			and food_units_before == get_food_units()
+			and is_equal_approx(
+				food_progress_before,
+				float(food_state_after["progress_distance"]),
+			)
+		),
+		"uses_existing_ship_damage_owner": true,
+		"uses_existing_crew_condition_owner": true,
+		"phase_33_defeat_triggered": false,
 	}, true)
 	_last_crew_combat_evidence = evidence.duplicate(true)
 	if bool(evidence.get("crew_injury_applied", false)):
@@ -1932,6 +2069,7 @@ func get_playtest_state() -> Dictionary:
 			"repair": "R",
 			"left_broadside": "Q",
 			"right_broadside": "F",
+			"monster_harpoon": "V",
 			"target_hull": "H",
 			"target_sails": "K",
 		},

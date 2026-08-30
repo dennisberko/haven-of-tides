@@ -1,4 +1,4 @@
-[gd_scene load_steps=34 format=3]
+[gd_scene load_steps=35 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/cove.gd" id="1_cove"]
@@ -21,6 +21,7 @@
 [ext_resource type="Script" path="res://scripts/weather_area.gd" id="18_weather_area"]
 [ext_resource type="Script" path="res://scripts/ruin_exploration.gd" id="19_ruin"]
 [ext_resource type="Script" path="res://scripts/story_clue.gd" id="20_story_clue"]
+[ext_resource type="Script" path="res://scripts/monster_hunt.gd" id="21_monster_hunt"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_dock"]
 size = Vector2(190, 84)
@@ -316,6 +317,12 @@ shape = SubResource("RectangleShape2D_ruin_tool_gate")
 z_index = 2
 script = ExtResource("20_story_clue")
 
+[node name="MonsterHunt" type="Node2D" parent="." groups=["monster_hunt"]]
+z_index = 2
+process_priority = -4
+position = Vector2(2250, 1500)
+script = ExtResource("21_monster_hunt")
+
 [node name="Player" type="CharacterBody2D" parent="."]
 position = Vector2(520, 335)
 script = ExtResource("2_player")
@@ -351,7 +358,7 @@ theme_override_colors/font_shadow_color = Color(0.0470588, 0.145098, 0.180392, 0
 theme_override_constants/shadow_offset_x = 2
 theme_override_constants/shadow_offset_y = 2
 theme_override_font_sizes/font_size = 17
-text = "Phase 37 · Tool Gates"
+text = "Phase 39 · Monster Hunting"
 
 [node name="WeatherView" type="ColorRect" parent="Interface" groups=["weather_view"]]
 visible = false
@@ -378,6 +385,47 @@ offset_bottom = 80.0
 theme_override_colors/font_color = Color(0.741176, 0.886275, 0.917647, 1)
 theme_override_font_sizes/font_size = 12
 text = "TURN RATE 100% · [T] START STORM"
+autowrap_mode = 2
+
+[node name="MonsterHuntView" type="ColorRect" parent="Interface" groups=["monster_hunt_view"]]
+visible = false
+offset_left = 408.0
+offset_top = 474.0
+offset_right = 744.0
+offset_bottom = 582.0
+mouse_filter = 2
+color = Color(0.113725, 0.0509804, 0.105882, 0.95)
+
+[node name="MonsterTitle" type="Label" parent="Interface/MonsterHuntView"]
+offset_left = 12.0
+offset_top = 7.0
+offset_right = 324.0
+offset_bottom = 28.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 15
+text = "SEA MONSTER · BLACKWAKE LEVIATHAN"
+horizontal_alignment = 1
+
+[node name="MonsterStatus" type="Label" parent="Interface/MonsterHuntView"]
+offset_left = 12.0
+offset_top = 34.0
+offset_right = 324.0
+offset_bottom = 58.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 13
+text = "HEALTH 2/2 · [V] HARPOON · 1 AMMUNITION"
+horizontal_alignment = 1
+
+[node name="MonsterResult" type="Label" parent="Interface/MonsterHuntView"]
+offset_left = 12.0
+offset_top = 63.0
+offset_right = 324.0
+offset_bottom = 101.0
+theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
+theme_override_font_sizes/font_size = 11
+text = "NO HARPOON ATTEMPT · ATTACK IN 0.8"
+horizontal_alignment = 1
+vertical_alignment = 1
 autowrap_mode = 2
 
 [node name="RequestView" type="ColorRect" parent="Interface"]

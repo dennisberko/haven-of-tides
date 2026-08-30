@@ -17,6 +17,8 @@ var _restoration_attempt_count := 0
 var _restoration_count := 0
 var _last_naval_damage_evidence: Dictionary = {}
 var _last_injury_evidence: Dictionary = {}
+var _monster_attack_injury_count := 0
+var _last_monster_attack_injury_evidence: Dictionary = {}
 var _last_restoration_attempt_evidence: Dictionary = {}
 var _last_successful_restoration_evidence: Dictionary = {}
 
@@ -77,6 +79,64 @@ func record_successful_naval_damage(
 	if injury_applied:
 		_last_injury_evidence = _last_naval_damage_evidence.duplicate(true)
 	return _last_naval_damage_evidence.duplicate(true)
+
+
+func record_monster_attack_injury(
+		source: String,
+		base_sailing_top_speed: float,
+) -> Dictionary:
+	var condition_before := _condition
+	var injury_count_before := _injury_count
+	var low_before := is_low()
+	var sailing_top_speed_before := get_sailing_top_speed(
+		base_sailing_top_speed
+	)
+	_condition = maxi(0, _condition - FIXED_INJURY_AMOUNT)
+	var injury_applied := _condition < condition_before
+	if injury_applied:
+		_injury_count += 1
+		_monster_attack_injury_count += 1
+	var sailing_top_speed_after := get_sailing_top_speed(
+		base_sailing_top_speed
+	)
+	_last_monster_attack_injury_evidence = {
+		"source": source,
+		"success": injury_applied,
+		"result": (
+			"MONSTER ATTACK INJURED CREW"
+			if injury_applied
+			else "MONSTER ATTACK INJURY BLOCKED · CREW AT ZERO"
+		),
+		"uses_existing_crew_condition_owner": true,
+		"uses_existing_fixed_injury_amount": true,
+		"fixed_injury_amount": FIXED_INJURY_AMOUNT,
+		"condition_before": condition_before,
+		"condition_after": _condition,
+		"condition_delta": _condition - condition_before,
+		"injury_applied": injury_applied,
+		"injury_count_before": injury_count_before,
+		"injury_count_after": _injury_count,
+		"monster_attack_injury_count": _monster_attack_injury_count,
+		"low_before": low_before,
+		"low_after": is_low(),
+		"affected_action": "SAILING_TOP_SPEED",
+		"affected_action_count": 1,
+		"base_sailing_top_speed": base_sailing_top_speed,
+		"sailing_top_speed_before": sailing_top_speed_before,
+		"sailing_top_speed_after": sailing_top_speed_after,
+		"sailing_top_speed_delta": (
+			sailing_top_speed_after - sailing_top_speed_before
+		),
+		"low_speed_multiplier": LOW_SAILING_TOP_SPEED_MULTIPLIER,
+		"action_reduction_started": not low_before and is_low(),
+		"naval_injury_threshold_progress_unchanged": true,
+		"phase_33_defeat_triggered": false,
+	}
+	if injury_applied:
+		_last_injury_evidence = (
+			_last_monster_attack_injury_evidence.duplicate(true)
+		)
+	return _last_monster_attack_injury_evidence.duplicate(true)
 
 
 func restore_at_dock(
@@ -201,6 +261,10 @@ func get_playtest_state(base_sailing_top_speed: float) -> Dictionary:
 			_last_naval_damage_evidence.duplicate(true)
 		),
 		"last_injury_evidence": _last_injury_evidence.duplicate(true),
+		"monster_attack_injury_count": _monster_attack_injury_count,
+		"last_monster_attack_injury_evidence": (
+			_last_monster_attack_injury_evidence.duplicate(true)
+		),
 		"last_restoration_attempt_evidence": (
 			_last_restoration_attempt_evidence.duplicate(true)
 		),

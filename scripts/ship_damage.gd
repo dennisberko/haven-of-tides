@@ -13,6 +13,9 @@ const REEF_COLLISION_RESPONSE := "REEF_HIT_STOP"
 const PIRATE_HUNTER_SOURCE := "PIRATE_HUNTER_BROADSIDE"
 const PIRATE_HUNTER_HIT_DAMAGE := 20
 const PIRATE_HUNTER_HULL_FLOOR := 0
+const MONSTER_ATTACK_SOURCE := "BLACKWAKE_LEVIATHAN_CRUSHING_STRIKE"
+const MONSTER_ATTACK_DAMAGE := PIRATE_HUNTER_HIT_DAMAGE
+const MONSTER_ATTACK_HULL_FLOOR := 0
 const DEFEAT_HULL_THRESHOLD := 0
 
 var _hull_condition := HULL_START
@@ -36,6 +39,9 @@ var _last_repair_evidence: Dictionary = {}
 var _pirate_hunter_hit_count := 0
 var _pirate_hunter_blocked_hit_count := 0
 var _last_pirate_hunter_hit_evidence: Dictionary = {}
+var _monster_attack_hit_count := 0
+var _monster_attack_blocked_hit_count := 0
+var _last_monster_attack_hit_evidence: Dictionary = {}
 
 
 func update_timers(delta: float) -> void:
@@ -174,6 +180,70 @@ func try_pirate_hunter_hit(
 	return _last_pirate_hunter_hit_evidence.duplicate(true)
 
 
+func try_monster_attack(
+		cargo_snapshot: Array[String],
+		food_progress: float,
+		food_units: int,
+) -> Dictionary:
+	var hull_before := _hull_condition
+	if hull_before <= MONSTER_ATTACK_HULL_FLOOR:
+		_monster_attack_blocked_hit_count += 1
+		_last_monster_attack_hit_evidence = {
+			"success": false,
+			"result": "MONSTER ATTACK BLOCKED · SHIP ALREADY DEFEATED",
+			"source": MONSTER_ATTACK_SOURCE,
+			"fixed_damage": MONSTER_ATTACK_DAMAGE,
+			"hull_floor": MONSTER_ATTACK_HULL_FLOOR,
+			"hull_before": hull_before,
+			"hull_after": _hull_condition,
+			"hull_delta": 0,
+			"damage": 0,
+			"fixed_existing_hull_owner_used": true,
+			"cargo_unchanged": true,
+			"food_progress_unchanged": true,
+			"food_units_unchanged": true,
+			"no_state_change": true,
+		}
+		return _last_monster_attack_hit_evidence.duplicate(true)
+
+	_hull_condition = maxi(
+		MONSTER_ATTACK_HULL_FLOOR,
+		_hull_condition - MONSTER_ATTACK_DAMAGE,
+	)
+	_monster_attack_hit_count += 1
+	_flash_remaining = DAMAGE_FLASH_DURATION
+	_flash_count += 1
+	_last_monster_attack_hit_evidence = {
+		"success": true,
+		"result": "MONSTER CRUSHING STRIKE · -%d HULL" % (
+			hull_before - _hull_condition
+		),
+		"source": MONSTER_ATTACK_SOURCE,
+		"fixed_damage": MONSTER_ATTACK_DAMAGE,
+		"hull_floor": MONSTER_ATTACK_HULL_FLOOR,
+		"hull_before": hull_before,
+		"hull_after": _hull_condition,
+		"hull_delta": _hull_condition - hull_before,
+		"damage": hull_before - _hull_condition,
+		"fixed_existing_hull_owner_used": true,
+		"cargo_before": cargo_snapshot.duplicate(),
+		"cargo_after": cargo_snapshot.duplicate(),
+		"cargo_unchanged": true,
+		"food_progress_before": food_progress,
+		"food_progress_after": food_progress,
+		"food_progress_unchanged": true,
+		"food_units_before": food_units,
+		"food_units_after": food_units,
+		"food_units_unchanged": true,
+		"crew_condition_changed": false,
+		"phase_33_defeat_triggered": (
+			hull_before > DEFEAT_HULL_THRESHOLD
+			and _hull_condition <= DEFEAT_HULL_THRESHOLD
+		),
+	}
+	return _last_monster_attack_hit_evidence.duplicate(true)
+
+
 func clear_contact_after_movement_away(
 		actual_distance: float,
 		distance_before: float,
@@ -230,6 +300,24 @@ func record_pirate_hunter_sound_play(
 		_last_pirate_hunter_hit_evidence["sound_duration"] = _sound_duration
 
 
+func record_monster_attack_sound_play(
+	stream_kind: String,
+	duration: float,
+) -> void:
+	_sound_play_count += 1
+	_sound_stream_kind = stream_kind
+	_sound_duration = duration
+	if not _last_monster_attack_hit_evidence.is_empty():
+		_last_monster_attack_hit_evidence["sound_played"] = true
+		_last_monster_attack_hit_evidence["sound_play_count"] = (
+			_sound_play_count
+		)
+		_last_monster_attack_hit_evidence["sound_stream_kind"] = (
+			_sound_stream_kind
+		)
+		_last_monster_attack_hit_evidence["sound_duration"] = _sound_duration
+
+
 func record_pirate_hunter_crew_result(combat_evidence: Dictionary) -> void:
 	if _last_pirate_hunter_hit_evidence.is_empty():
 		return
@@ -246,6 +334,22 @@ func record_pirate_hunter_crew_result(combat_evidence: Dictionary) -> void:
 		"phase_33_defeat_triggered",
 	]:
 		_last_pirate_hunter_hit_evidence[key] = combat_evidence.get(key)
+
+
+func record_monster_attack_crew_result(combat_evidence: Dictionary) -> void:
+	if _last_monster_attack_hit_evidence.is_empty():
+		return
+	for key in [
+		"crew_condition_before",
+		"crew_condition_after",
+		"crew_condition_changed",
+		"crew_injury_applied",
+		"crew_fixed_injury_amount",
+		"sailing_top_speed_before",
+		"sailing_top_speed_after",
+		"phase_33_defeat_triggered",
+	]:
+		_last_monster_attack_hit_evidence[key] = combat_evidence.get(key)
 
 
 func configure_sound(stream_kind: String, duration: float) -> void:
@@ -362,6 +466,17 @@ func get_playtest_state() -> Dictionary:
 			_last_pirate_hunter_hit_evidence.duplicate(true)
 		),
 		"pirate_hunter_uses_existing_hull_owner": true,
+		"monster_attack_source": MONSTER_ATTACK_SOURCE,
+		"monster_attack_fixed_damage": MONSTER_ATTACK_DAMAGE,
+		"monster_attack_hull_floor": MONSTER_ATTACK_HULL_FLOOR,
+		"monster_attack_hit_count": _monster_attack_hit_count,
+		"monster_attack_blocked_hit_count": (
+			_monster_attack_blocked_hit_count
+		),
+		"last_monster_attack_hit_evidence": (
+			_last_monster_attack_hit_evidence.duplicate(true)
+		),
+		"monster_attack_uses_existing_hull_owner": true,
 		"crew_injury_system_count": 1,
 	}
 

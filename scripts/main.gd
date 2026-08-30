@@ -19,6 +19,7 @@ const FishingAreaState := preload("res://scripts/fishing_area.gd")
 const WeatherAreaState := preload("res://scripts/weather_area.gd")
 const RuinExplorationState := preload("res://scripts/ruin_exploration.gd")
 const StoryClueState := preload("res://scripts/story_clue.gd")
+const MonsterHuntState := preload("res://scripts/monster_hunt.gd")
 
 enum RequestState {
 	AVAILABLE,
@@ -46,6 +47,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var weather_area: WeatherAreaState = $WeatherArea
 @onready var ruin_exploration: RuinExplorationState = $RuinExploration
 @onready var story_clue: StoryClueState = $StoryClue
+@onready var monster_hunt: MonsterHuntState = $MonsterHunt
 @onready var inspection_targets: Array[InspectableTargetShipState] = [
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
@@ -190,12 +192,22 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var weather_view: ColorRect = $Interface/WeatherView
 @onready var weather_title: Label = $Interface/WeatherView/WeatherTitle
 @onready var weather_status: Label = $Interface/WeatherView/WeatherStatus
+@onready var monster_hunt_view: ColorRect = $Interface/MonsterHuntView
+@onready var monster_hunt_title: Label = (
+	$Interface/MonsterHuntView/MonsterTitle
+)
+@onready var monster_hunt_status: Label = (
+	$Interface/MonsterHuntView/MonsterStatus
+)
+@onready var monster_hunt_result: Label = (
+	$Interface/MonsterHuntView/MonsterResult
+)
 @onready var controls_help: Label = $Interface/Controls
 @onready var waypoint_display: WaypointDisplay = $Interface/WaypointDisplay
 
 const COVE_CAMERA_POSITION := Vector2(576.0, 324.0)
 const WALKING_CONTROLS_TEXT := "WASD / ARROWS TO MOVE · E INTERACT · M CHART · J JOURNAL"
-const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · E ACTION · T WEATHER · M CHART · J JOURNAL"
+const SAILING_CONTROLS_TEXT := "W / UP SAIL · A / D TURN · S / DOWN BRAKE · H HULL · K SAILS · Q LEFT · F RIGHT · V HARPOON · E ACTION · T WEATHER · M CHART · J JOURNAL"
 const DOCKED_CONTROLS_TEXT := "E GO ASHORE · R REPAIR · W / UP SAIL AWAY · M CHART · J JOURNAL"
 const CHART_CONTROLS_TEXT := "M CLOSE · 1 COVE · 2 ISLAND · 3 PORT · X CLEAR"
 const CHART_STORY_CONTROLS_TEXT := (
@@ -210,6 +222,9 @@ const RUIN_CARGO_CHOICE_CONTROLS_TEXT := (
 )
 const STORY_CLUE_CARGO_CHOICE_CONTROLS_TEXT := (
 	"X LEAVE MAP FRAGMENT IN RUIN · 1 / 2 / 3 REPLACE CARGO SLOT"
+)
+const MONSTER_HUNT_CARGO_CHOICE_CONTROLS_TEXT := (
+	"1 / 2 / 3 REPLACE CARGO SLOT · MONSTER PART MUST BE KEPT"
 )
 const STORAGE_CONTROLS_TEXT := "1 / 2 / 3 SHIP TO STORAGE · 4 / 5 / 6 STORAGE TO SHIP · X CLOSE"
 const STORAGE_RELEASE_CONTROLS_TEXT := "RELEASE E, X, 1-6, M, WASD / ARROW KEYS"
@@ -229,7 +244,7 @@ const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
 const DEFEAT_RESULT_CONTROLS_TEXT := "X CONTINUE TO RECOVERY"
 const DEFEAT_RELEASE_CONTROLS_TEXT := (
-	"RELEASE X, E, M, J, R, Q, F, H, K, SPACE, 1-6, WASD / ARROW KEYS"
+	"RELEASE X, E, M, J, R, Q, F, V, H, K, SPACE, 1-6, WASD / ARROW KEYS"
 )
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
 const BOARDING_DECK_CONTROLS_TEXT := (
@@ -245,6 +260,7 @@ const CARGO_SOURCE_WRECK := "WRECK"
 const CARGO_SOURCE_FISHING := "FISHING"
 const CARGO_SOURCE_RUIN := "RUIN"
 const CARGO_SOURCE_STORY_CLUE := "STORY_CLUE"
+const CARGO_SOURCE_MONSTER_HUNT := "MONSTER_HUNT"
 const HEAT_PERSISTENCE_PATH := "user://haven_of_tides_phase30_heat.cfg"
 const HEAT_PERSISTENCE_SECTION := "phase30_heat"
 const HEAT_PERSISTENCE_KEY := "payload"
@@ -541,6 +557,8 @@ var _last_defeat_modal_input_evidence: Dictionary = {}
 var _defeat_release_cleanup_count := 0
 var _defeat_release_cleanup_evidence: Dictionary = {}
 var _defeat_start_input_cleanup_evidence: Dictionary = {}
+var _harpoon_pressed := false
+var _last_monster_attack_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -571,6 +589,7 @@ func _ready() -> void:
 	_update_fishing_area()
 	_update_ruin_exploration()
 	_update_story_clue()
+	_update_monster_hunt(0.0)
 	_update_cargo_view()
 	_update_storage_view()
 	_update_construction_view()
@@ -591,6 +610,7 @@ func _ready() -> void:
 	_update_trade_journal_view()
 	_update_defeat_result_view()
 	_update_weather_view()
+	_update_monster_hunt_view()
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
 	sign_message.hide()
@@ -613,6 +633,7 @@ func _ready() -> void:
 	prize_view.hide()
 	defeat_result_view.hide()
 	weather_view.hide()
+	monster_hunt_view.hide()
 	sign.body_entered.connect(_on_sign_body_entered)
 	sign.body_exited.connect(_on_sign_body_exited)
 	resident.body_entered.connect(_on_resident_body_entered)
@@ -649,6 +670,7 @@ func _physics_process(delta: float) -> void:
 	_update_fishing_area()
 	_update_ruin_exploration()
 	_update_story_clue()
+	_update_monster_hunt(delta)
 	_update_pirate_hunter(delta)
 	_update_target_inspection()
 	_update_boarding_deck_state(delta)
@@ -670,6 +692,7 @@ func _physics_process(delta: float) -> void:
 	_update_trade_journal_view()
 	_update_defeat_result_view()
 	_update_weather_view()
+	_update_monster_hunt_view()
 	_update_salvage_persistence()
 	_update_storage_persistence()
 	_update_construction_persistence()
@@ -774,6 +797,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var key_event := event as InputEventKey
 	if _key_matches(key_event, KEY_T) and not key_event.pressed:
 		_weather_toggle_held = false
+	if _key_matches(key_event, KEY_V) and not key_event.pressed:
+		_harpoon_pressed = false
 	if _defeat_recovery.is_result_open():
 		_handle_defeat_result_input(key_event)
 		get_viewport().set_input_as_handled()
@@ -915,6 +940,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if key_event.pressed and not key_event.echo and _can_open_trade_journal():
 			_open_trade_journal()
 			get_viewport().set_input_as_handled()
+		return
+	if _key_matches(key_event, KEY_V):
+		_handle_monster_harpoon_input(key_event)
+		get_viewport().set_input_as_handled()
 		return
 	if not _get_broadside_side(key_event).is_empty():
 		_handle_broadside_input(key_event)
@@ -1081,6 +1110,9 @@ func _clear_defeat_held_key_state(
 	elif _key_matches(key_event, KEY_R):
 		key_name = "R"
 		_repair_key_held = false
+	elif _key_matches(key_event, KEY_V):
+		key_name = "V"
+		_harpoon_pressed = false
 	else:
 		var broadside_side := _get_broadside_side(key_event)
 		if not broadside_side.is_empty():
@@ -1115,6 +1147,7 @@ func _clear_all_defeat_held_action_state(context: String) -> void:
 	_defeat_pressed_keys.clear()
 	_interact_held = false
 	_repair_key_held = false
+	_harpoon_pressed = false
 	_broadside_pressed_keys.clear()
 	_attack_choice_pressed_keys.clear()
 	_defeat_start_input_cleanup_evidence = {
@@ -1130,6 +1163,7 @@ func _get_defeat_held_action_state() -> Dictionary:
 		"X": bool(_defeat_pressed_keys.get("X", false)),
 		"E": _interact_held,
 		"R": _repair_key_held,
+		"V": _harpoon_pressed,
 		"Q": bool(_broadside_pressed_keys.get("LEFT", false)),
 		"F": bool(_broadside_pressed_keys.get("RIGHT", false)),
 		"H": bool(_attack_choice_pressed_keys.get(
@@ -3620,6 +3654,7 @@ func _is_any_cargo_choice_guard_key_pressed() -> bool:
 		_is_any_movement_key_pressed()
 		or Input.is_key_pressed(KEY_E)
 		or Input.is_key_pressed(KEY_M)
+		or Input.is_key_pressed(KEY_V)
 		or Input.is_key_pressed(KEY_X)
 		or Input.is_key_pressed(KEY_1)
 		or Input.is_key_pressed(KEY_2)
@@ -3695,6 +3730,7 @@ func _is_any_defeat_guard_key_pressed() -> bool:
 		or Input.is_key_pressed(KEY_M)
 		or Input.is_key_pressed(KEY_J)
 		or Input.is_key_pressed(KEY_R)
+		or Input.is_key_pressed(KEY_V)
 		or Input.is_key_pressed(KEY_Q)
 		or Input.is_key_pressed(KEY_F)
 		or Input.is_key_pressed(KEY_H)
@@ -3855,6 +3891,237 @@ func _update_story_clue() -> void:
 	)
 	if story_clue.get_interaction_prompt() != prompt_before:
 		_update_interaction_prompt()
+
+
+func _update_monster_hunt(delta: float) -> void:
+	var modal_pause_active := (
+		_defeat_recovery.is_result_open()
+		or _defeat_recovery.is_release_guard_pending()
+		or waypoint_display.chart_visible
+		or _chart_release_pending
+		or _cargo_choice_open
+		or _cargo_choice_release_pending
+		or _storage_view_open
+		or _storage_release_pending
+		or _construction_view_open
+		or _construction_release_pending
+		or _trade_view_open
+		or _trade_release_pending
+		or _journal_view_open
+		or _journal_release_pending
+		or _target_inspection_view_open
+	)
+	var input_available := _is_monster_harpoon_input_available()
+	var attack_requested := monster_hunt.update_encounter(
+		delta,
+		ship.global_position,
+		_player_aboard_ship,
+		ship.captain_aboard,
+		_player_aboard_ship and not _player_on_target_deck,
+		input_available,
+		story_clue.is_story_location_unlocked(),
+		weather_area.is_storm_active(),
+		modal_pause_active,
+	)
+	if attack_requested:
+		var money_before := money
+		var target_conditions_before := _get_target_condition_snapshots()
+		var story_before: Dictionary = story_clue.get_playtest_state()
+		var evidence: Dictionary = ship.apply_monster_attack()
+		var target_conditions_after := _get_target_condition_snapshots()
+		var story_after: Dictionary = story_clue.get_playtest_state()
+		evidence.merge({
+			"money_before": money_before,
+			"money_after": money,
+			"money_unchanged": money_before == money,
+			"target_conditions_before": target_conditions_before,
+			"target_conditions_after": target_conditions_after,
+			"target_conditions_unchanged": (
+				target_conditions_before == target_conditions_after
+			),
+			"story_clue_before": story_before,
+			"story_clue_after": story_after,
+			"story_clue_unchanged": story_before == story_after,
+			"weather_state": (
+				WeatherAreaState.WEATHER_STORM
+				if weather_area.is_storm_active()
+				else WeatherAreaState.WEATHER_CLEAR
+			),
+			"one_clear_monster_attack": true,
+			"only_expected_ship_and_crew_costs_changed": (
+				bool(evidence.get(
+					"hull_changed_only_by_fixed_monster_damage",
+					false,
+				))
+				and bool(evidence.get(
+					"crew_changed_only_by_fixed_monster_injury",
+					false,
+				))
+				and bool(evidence.get(
+					"unrelated_ship_resources_unchanged",
+					false,
+				))
+				and money_before == money
+				and target_conditions_before == target_conditions_after
+				and story_before == story_after
+			),
+		}, true)
+		_last_monster_attack_evidence = evidence.duplicate(true)
+		_last_crew_combat_context_evidence = evidence.duplicate(true)
+		if bool(evidence.get("crew_injury_applied", false)):
+			_last_crew_injury_context_evidence = evidence.duplicate(true)
+		monster_hunt.record_attack_result(evidence)
+	_update_monster_return_state()
+
+
+func _is_monster_harpoon_input_available() -> bool:
+	return (
+		_player_aboard_ship
+		and ship.captain_aboard
+		and ship.controls_enabled
+		and not ship.is_docked
+		and not _player_on_target_deck
+		and not _defeat_recovery.is_result_open()
+		and not _defeat_recovery.is_release_guard_pending()
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not _target_inspection_view_open
+		and not ship.navigation_input_blocked
+		and not ship.navigation_release_pending
+	)
+
+
+func _handle_monster_harpoon_input(key_event: InputEventKey) -> void:
+	if not key_event.pressed:
+		_harpoon_pressed = false
+		return
+	var context := _get_monster_hunt_context()
+	if key_event.echo or _harpoon_pressed:
+		monster_hunt.record_held_harpoon(
+			ship.get_ammunition_units(),
+			context,
+		)
+		_update_monster_hunt_view()
+		return
+	_harpoon_pressed = true
+	_attempt_monster_harpoon(context)
+
+
+func _attempt_monster_harpoon(context_before: Dictionary) -> void:
+	var preflight := monster_hunt.try_begin_harpoon(
+		_is_monster_harpoon_input_available(),
+		ship.get_ammunition_units(),
+		context_before,
+	)
+	if not bool(preflight.get("success", false)):
+		_update_monster_hunt_view()
+		return
+	var ammunition_evidence: Dictionary = ship.consume_ammunition_for_harpoon()
+	var result: Dictionary = monster_hunt.resolve_accepted_harpoon(
+		preflight,
+		ammunition_evidence,
+		_get_monster_hunt_context(),
+	)
+	if bool(result.get("defeated_now", false)):
+		_award_monster_part()
+	_update_cargo_view()
+	_update_ammunition_view()
+	_update_monster_hunt_view()
+
+
+func _award_monster_part() -> void:
+	if not monster_hunt.has_pending_part():
+		return
+	var cargo_before: Array[String] = ship.get_cargo_lots()
+	if not ship.can_keep_cargo_lot():
+		if not _open_cargo_choice(
+			MonsterHuntState.PART_LOT_NAME,
+			CARGO_SOURCE_MONSTER_HUNT,
+		):
+			_last_cargo_action = "MONSTER_PART_REWARD"
+			_last_cargo_result = "NO_CHANGE_CHOICE_NOT_OPENED"
+		return
+	if not ship.keep_cargo_lot(MonsterHuntState.PART_LOT_NAME):
+		_last_cargo_action = "KEEP_MONSTER_PART"
+		_last_cargo_result = "NO_CHANGE_CARGO_FULL"
+		return
+	if not monster_hunt.resolve_direct_keep(
+		cargo_before,
+		ship.get_cargo_lots(),
+	):
+		ship.undo_last_kept_cargo_lot(MonsterHuntState.PART_LOT_NAME)
+		_last_cargo_action = "KEEP_MONSTER_PART"
+		_last_cargo_result = "ROLLED_BACK_MONSTER_HUNT_STATE"
+		return
+	_cargo_kept_count += 1
+	_last_cargo_action = "KEEP_MONSTER_PART"
+	_last_cargo_result = "KEPT_ONE_BLACKWAKE_MONSTER_PART_LOT"
+
+
+func _get_monster_hunt_context() -> Dictionary:
+	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var crew_state: Dictionary = ship.get_crew_condition_playtest_state()
+	return {
+		"ship_position": ship.global_position,
+		"ship_speed": ship.current_speed,
+		"ship_is_docked": ship.is_docked,
+		"captain_aboard": ship.captain_aboard,
+		"cargo_lots": ship.get_cargo_lots(),
+		"cargo_used_slots": ship.get_cargo_lots().size(),
+		"cargo_limit": ship.get_cargo_limit(),
+		"ammunition_units": ship.get_ammunition_units(),
+		"hull_current": damage_state["hull_current"],
+		"crew_condition": crew_state["condition"],
+		"money": money,
+		"story_location_unlocked": story_clue.is_story_location_unlocked(),
+		"weather_storm_active": weather_area.is_storm_active(),
+		"world_heat": _world_heat.get_current_heat(),
+	}
+
+
+func _update_monster_return_state() -> void:
+	var at_cove: bool = (
+		(ship.is_docked and ship.current_dock_id == "cove")
+		or (not _player_aboard_ship and _player_shore_id == "cove")
+	)
+	monster_hunt.record_return_to_cove(
+		ship.get_cargo_lots(),
+		at_cove,
+	)
+
+
+func _update_monster_hunt_view() -> void:
+	var monster_state: Dictionary = monster_hunt.get_playtest_state(
+		ship.get_cargo_lots(),
+		cove_storage.get_cargo_lots(),
+	)
+	monster_hunt_title.text = monster_hunt.get_hud_title()
+	monster_hunt_status.text = monster_hunt.get_hud_status(
+		ship.get_ammunition_units()
+	)
+	monster_hunt_result.text = monster_hunt.get_hud_result()
+	monster_hunt_view.visible = (
+		bool(monster_state["visual_on_screen"])
+		and _player_aboard_ship
+		and not _player_on_target_deck
+		and not waypoint_display.chart_visible
+		and not _cargo_choice_open
+		and not _storage_view_open
+		and not _construction_view_open
+		and not _trade_view_open
+		and not _journal_view_open
+		and not _defeat_recovery.is_result_open()
+	)
 
 
 func _update_weather_area() -> void:
@@ -4951,7 +5218,7 @@ func _update_ammunition_view() -> void:
 	var ammunition_units: int = int(ammunition_state["ammunition_units"])
 	ammunition_title.text = "AMMUNITION · %d" % ammunition_units
 	if ammunition_units == 0:
-		ammunition_status.text = "NO AMMUNITION · BROADSIDES BLOCKED"
+		ammunition_status.text = "NO AMMUNITION · BROADSIDE / HARPOON BLOCKED"
 	elif ammunition_units == 2:
 		ammunition_status.text = "LOW AMMUNITION"
 	else:
@@ -5416,6 +5683,7 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 			CARGO_SOURCE_FISHING,
 			CARGO_SOURCE_RUIN,
 			CARGO_SOURCE_STORY_CLUE,
+			CARGO_SOURCE_MONSTER_HUNT,
 		].has(cargo_source)
 	):
 		return false
@@ -5452,6 +5720,14 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 		)
 	):
 		return false
+	if (
+		cargo_source == CARGO_SOURCE_MONSTER_HUNT
+		and (
+			cargo_lot != MonsterHuntState.PART_LOT_NAME
+			or not monster_hunt.begin_part_choice(ship.get_cargo_lots())
+		)
+	):
+		return false
 	_pending_cargo_lot = cargo_lot
 	_pending_cargo_source = cargo_source
 	_cargo_choice_open = true
@@ -5468,6 +5744,16 @@ func _open_cargo_choice(cargo_lot: String, cargo_source: String) -> bool:
 
 func _leave_or_discard_pending_cargo_lot() -> void:
 	if not _cargo_choice_open or _pending_cargo_lot.is_empty():
+		return
+	if _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT:
+		var blocked_evidence: Dictionary = monster_hunt.record_blocked_leave(
+			ship.get_cargo_lots()
+		)
+		if blocked_evidence.is_empty():
+			return
+		_last_cargo_action = "MONSTER_PART_REPLACEMENT_REQUIRED"
+		_last_cargo_result = String(blocked_evidence["result"])
+		_update_cargo_view()
 		return
 	var resolved := false
 	if _pending_cargo_source == CARGO_SOURCE_WRECK:
@@ -5499,7 +5785,7 @@ func _leave_or_discard_pending_cargo_lot() -> void:
 	elif _pending_cargo_source == CARGO_SOURCE_RUIN:
 		_last_cargo_action = "LEAVE_RUIN_TREASURE_IN_PLACE"
 		_last_cargo_result = "LEFT_RUIN_TREASURE_IN_PLACE_CARGO_UNCHANGED"
-	else:
+	elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
 		_last_cargo_action = "LEAVE_STORY_MAP_FRAGMENT_IN_PLACE"
 		_last_cargo_result = "LEFT_MAP_FRAGMENT_IN_RUIN_CARGO_UNCHANGED"
 	_close_cargo_choice()
@@ -5526,6 +5812,11 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 	if (
 		_pending_cargo_source == CARGO_SOURCE_STORY_CLUE
 		and not story_clue.has_pending_fragment_choice()
+	):
+		return
+	if (
+		_pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT
+		and not monster_hunt.has_pending_part_choice()
 	):
 		return
 	var removed_lot: String = ship.replace_cargo_slot(
@@ -5557,6 +5848,11 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 			removed_lot,
 			ship.get_cargo_lots(),
 		)
+	elif _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT:
+		source_resolved = monster_hunt.resolve_replacement(
+			removed_lot,
+			ship.get_cargo_lots(),
+		)
 	if not source_resolved:
 		ship.replace_cargo_slot(slot_index, removed_lot)
 		_last_cargo_action = "REPLACE_CARGO_SLOT"
@@ -5580,6 +5876,8 @@ func _replace_cargo_with_pending_lot(slot_index: int) -> void:
 	elif _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
 		_sync_story_clue_chart()
 		_update_story_clue()
+	elif _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT:
+		_update_monster_hunt_view()
 	_close_cargo_choice()
 
 
@@ -5606,6 +5904,8 @@ func _get_cargo_choice_controls_text() -> String:
 		return RUIN_CARGO_CHOICE_CONTROLS_TEXT
 	if _pending_cargo_source == CARGO_SOURCE_STORY_CLUE:
 		return STORY_CLUE_CARGO_CHOICE_CONTROLS_TEXT
+	if _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT:
+		return MONSTER_HUNT_CARGO_CHOICE_CONTROLS_TEXT
 	return CARGO_CHOICE_CONTROLS_TEXT
 
 
@@ -5664,6 +5964,10 @@ func _update_cargo_view() -> void:
 			"[X] LEAVE %s IN RUIN · CLUE NOT RECORDED" % (
 				_pending_cargo_lot
 			)
+		)
+	elif _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT:
+		choice_lines.append(
+			"CHOOSE 1, 2, OR 3 · %s CANNOT BE LEFT" % _pending_cargo_lot
 		)
 	else:
 		choice_lines.append(
@@ -8225,6 +8529,10 @@ func get_playtest_state() -> Dictionary:
 	var weather_state: Dictionary = weather_area.get_playtest_state()
 	var ruin_state: Dictionary = ruin_exploration.get_playtest_state()
 	var story_state: Dictionary = story_clue.get_playtest_state()
+	var monster_state: Dictionary = monster_hunt.get_playtest_state(
+		ship.get_cargo_lots(),
+		cove_storage.get_cargo_lots(),
+	)
 	var story_physical_state: Dictionary = (
 		_get_story_fragment_physical_state()
 	)
@@ -8404,6 +8712,11 @@ func get_playtest_state() -> Dictionary:
 		weather_title.text,
 		weather_status.text,
 	]
+	var monster_hunt_view_text := "%s\n%s\n%s" % [
+		monster_hunt_title.text,
+		monster_hunt_status.text,
+		monster_hunt_result.text,
+	]
 	var physical_cargo_total: int = int(
 		ship_state["cargo_used_slots"]
 		+ wreck_state["wreck_salvage_lot_count"]
@@ -8411,6 +8724,7 @@ func get_playtest_state() -> Dictionary:
 		+ fishing_state["pending_catch_count"]
 		+ ruin_state["physical_treasure_lot_count"]
 		+ story_state["world_fragment_lot_count"]
+		+ monster_state["world_part_lot_count"]
 	)
 	var initial_physical_cargo_total: int = int(
 		ship_state["starting_cargo_used_slots"]
@@ -8435,6 +8749,7 @@ func get_playtest_state() -> Dictionary:
 		+ ruin_state["displaced_cargo_discard_count"]
 		+ story_state["displaced_cargo_discard_count"]
 		+ story_state["persisted_fragment_absent_count"]
+		+ monster_state["part_displaced_cargo_discard_count"]
 	)
 	var expected_cargo_total: int = (
 		initial_physical_cargo_total
@@ -8442,6 +8757,7 @@ func get_playtest_state() -> Dictionary:
 		+ _ammunition_supply_purchased_lot_count
 		+ _prize_actions.get_awarded_cargo_lot_count()
 		+ fishing_state["successful_catch_count"]
+		+ monster_state["part_generation_count"]
 	)
 	var expected_money: int = (
 		STARTING_MONEY
@@ -12973,6 +13289,248 @@ func get_playtest_state() -> Dictionary:
 			"monster_part_cargo": story_state["monster_part_cargo_count"],
 			"ship_module_loadout": (
 				story_state["ship_module_loadout_system_count"]
+			),
+		},
+		"monster_hunt_system_count": monster_state["system_count"],
+		"monster_hunt_owner_count": monster_state["owner_count"],
+		"monster_count": monster_state["monster_count"],
+		"monster_type_count": monster_state["monster_type_count"],
+		"monster_id": monster_state["monster_id"],
+		"monster_name": monster_state["monster_name"],
+		"monster_location_id": monster_state["location_id"],
+		"monster_location_position": monster_state["location_position"],
+		"monster_location_matches_story_clue_exactly": (
+			monster_state["location_matches_story_clue_exactly"]
+			and monster_state["location_id"] == story_state["story_location_id"]
+			and monster_state["location_position"]
+				== story_state["story_location_position"]
+		),
+		"monster_encounter_range": monster_state["encounter_range"],
+		"ship_distance_to_monster": monster_state["ship_distance"],
+		"monster_visible": monster_state["visible"],
+		"monster_visual_on_screen": monster_state["visual_on_screen"],
+		"monster_clue_unlocked": monster_state["clue_unlocked"],
+		"monster_encounter_started": monster_state["encounter_started"],
+		"monster_encounter_active": monster_state["encounter_active"],
+		"monster_encounter_start_count": monster_state["encounter_start_count"],
+		"monster_activation_requires_exact_unlocked_clue_location": (
+			monster_state[
+				"activation_requires_exact_unlocked_clue_location"
+			]
+		),
+		"monster_health": monster_state["health"],
+		"monster_health_max": monster_state["health_max"],
+		"monster_defeated": monster_state["defeated"],
+		"monster_defeat_count": monster_state["monster_defeat_count"],
+		"monster_defeat_once_holds": monster_state["defeat_once_holds"],
+		"monster_harpoon_action_count": monster_state["harpoon_action_count"],
+		"monster_harpoon_key": monster_state["harpoon_key"],
+		"monster_harpoon_pressed": _harpoon_pressed,
+		"monster_harpoon_damage": monster_state["harpoon_damage"],
+		"monster_harpoon_reload_duration": (
+			monster_state["harpoon_reload_duration"]
+		),
+		"monster_harpoon_reload_remaining": (
+			monster_state["harpoon_reload_remaining"]
+		),
+		"monster_harpoon_reload_ready": (
+			monster_state["harpoon_reload_ready"]
+		),
+		"monster_harpoon_attempt_count": (
+			monster_state["harpoon_attempt_count"]
+		),
+		"monster_harpoon_hit_count": monster_state["harpoon_hit_count"],
+		"monster_harpoon_held_input_count": (
+			monster_state["harpoon_held_input_count"]
+		),
+		"monster_harpoon_reload_rejected_count": (
+			monster_state["harpoon_reload_rejected_count"]
+		),
+		"monster_harpoon_no_ammunition_rejected_count": (
+			monster_state["harpoon_no_ammunition_rejected_count"]
+		),
+		"monster_harpoon_inactive_rejected_count": (
+			monster_state["harpoon_inactive_rejected_count"]
+		),
+		"monster_harpoon_defeated_rejected_count": (
+			monster_state["harpoon_defeated_rejected_count"]
+		),
+		"monster_last_harpoon_result": monster_state["last_harpoon_result"],
+		"monster_last_harpoon_evidence": (
+			monster_state["last_harpoon_evidence"]
+		),
+		"monster_last_held_harpoon_evidence": (
+			monster_state["last_held_harpoon_evidence"]
+		),
+		"monster_last_reload_rejection_evidence": (
+			monster_state["last_reload_rejection_evidence"]
+		),
+		"monster_last_no_ammunition_evidence": (
+			monster_state["last_no_ammunition_evidence"]
+		),
+		"monster_last_inactive_harpoon_evidence": (
+			monster_state["last_inactive_evidence"]
+		),
+		"monster_harpoon_fresh_press_required": (
+			monster_state["fresh_press_required"]
+		),
+		"monster_harpoon_uses_existing_ammunition_owner": (
+			monster_state["accepted_harpoon_uses_existing_ammunition"]
+		),
+		"monster_harpoon_fixed_ammunition_delta": (
+			monster_state["accepted_harpoon_ammunition_delta"]
+		),
+		"monster_attack_action_count": (
+			monster_state["monster_attack_action_count"]
+		),
+		"monster_attack_name": monster_state["monster_attack_name"],
+		"monster_attack_request_count": (
+			monster_state["monster_attack_request_count"]
+		),
+		"monster_attack_count": monster_state["monster_attack_count"],
+		"monster_attack_completed": (
+			monster_state["monster_attack_completed"]
+		),
+		"monster_one_attack_only": monster_state["one_monster_attack_only"],
+		"monster_last_attack_evidence": (
+			monster_state["last_attack_evidence"]
+		),
+		"monster_main_attack_evidence": (
+			_last_monster_attack_evidence.duplicate(true)
+		),
+		"monster_attack_uses_existing_hull_owner": (
+			monster_state["uses_existing_ship_damage_owner"]
+			and damage_state["owner_count"] == 1
+		),
+		"monster_attack_uses_existing_crew_owner": (
+			monster_state["uses_existing_crew_condition_owner"]
+			and crew_state["owner_count"] == 1
+		),
+		"monster_attack_fixed_hull_damage": (
+			damage_state["monster_attack_fixed_damage"]
+		),
+		"monster_attack_fixed_crew_injury": (
+			crew_state["fixed_injury_amount"]
+		),
+		"monster_weather_effect_count": monster_state["weather_effect_count"],
+		"monster_weather_effect_kind": monster_state["weather_effect_kind"],
+		"monster_weather_storm_active": monster_state["weather_storm_active"],
+		"monster_uses_existing_weather_owner": (
+			monster_state["uses_existing_weather_owner"]
+			and weather_state["owner_count"] == 1
+		),
+		"monster_part_lot_name": monster_state["part_lot_name"],
+		"monster_part_generation_count": (
+			monster_state["part_generation_count"]
+		),
+		"monster_part_pending_count": monster_state["part_pending_count"],
+		"monster_part_in_ship_cargo_count": (
+			monster_state["part_in_ship_cargo_count"]
+		),
+		"monster_part_in_cove_storage_count": (
+			monster_state["part_in_cove_storage_count"]
+		),
+		"monster_part_in_existing_cargo_count": (
+			monster_state["part_in_cargo_count"]
+		),
+		"monster_part_choice_required_count": (
+			monster_state["part_choice_required_count"]
+		),
+		"monster_part_direct_keep_count": (
+			monster_state["part_direct_keep_count"]
+		),
+		"monster_part_leave_available": monster_state["part_leave_available"],
+		"monster_part_requires_replacement_when_full": (
+			monster_state["part_requires_replacement_when_full"]
+		),
+		"monster_part_leave_blocked_count": (
+			monster_state["part_leave_blocked_count"]
+		),
+		"monster_last_part_leave_blocked_evidence": (
+			monster_state["last_part_leave_blocked_evidence"]
+		),
+		"monster_part_replacement_keep_count": (
+			monster_state["part_replacement_keep_count"]
+		),
+		"monster_part_displaced_cargo_discard_count": (
+			monster_state["part_displaced_cargo_discard_count"]
+		),
+		"monster_part_accounting_holds": (
+			monster_state["part_accounting_holds"]
+		),
+		"monster_one_part_award_holds": monster_state["one_part_award_holds"],
+		"monster_one_part_physical_holds": (
+			monster_state["one_part_physical_holds"]
+		),
+		"monster_part_uses_existing_cargo_owner": (
+			monster_state["uses_existing_cargo_owner"]
+			and ship_state["each_cargo_lot_uses_one_slot"]
+		),
+		"monster_part_uses_existing_cargo_choice": (
+			monster_state["uses_existing_cargo_choice"]
+		),
+		"monster_part_cargo_choice": {
+			"open": (
+				_cargo_choice_open
+				and _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT
+			),
+			"pending_lot": (
+				_pending_cargo_lot
+				if _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT
+				else ""
+			),
+			"prompt_visible": (
+				cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT
+			),
+			"prompt_text": (
+				"%s\n%s" % [cargo_choice_title.text, cargo_choice_details.text]
+				if cargo_choice_view.visible
+				and _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT
+				else ""
+			),
+			"navigation_blocked": (
+				_cargo_choice_open
+				and _pending_cargo_source == CARGO_SOURCE_MONSTER_HUNT
+				and ship_state["navigation_input_blocked"]
+			),
+			"leave_control": "UNAVAILABLE",
+			"blocked_leave_control": "X",
+			"replacement_required": true,
+			"replacement_controls": ["1", "2", "3"],
+			"last_resolution": monster_state["last_part_choice_evidence"],
+		},
+		"monster_return_to_cove_count": monster_state["return_to_cove_count"],
+		"monster_returned_to_cove_with_part": (
+			monster_state["returned_to_cove_with_part"]
+		),
+		"monster_last_return_evidence": monster_state["last_return_evidence"],
+		"monster_completion_flow_holds": (
+			monster_state["monster_defeat_count"] == 1
+			and monster_state["part_in_cargo_count"] == 1
+			and monster_state["returned_to_cove_with_part"]
+		),
+		"monster_hunt_view_visible": monster_hunt_view.visible,
+		"monster_hunt_view_text": monster_hunt_view_text,
+		"monster_hunt_state": monster_state.duplicate(true),
+		"monster_excluded_features": {
+			"extra_monster_types": monster_state["extra_monster_type_count"],
+			"ship_module_selection": (
+				monster_state["ship_module_selection_count"]
+			),
+			"ship_module_slots": monster_state["ship_module_slot_count"],
+			"harpoon_upgrades": monster_state["harpoon_upgrade_count"],
+			"gear_crafting": monster_state["gear_crafting_system_count"],
+			"separate_combat_screen": (
+				monster_state["separate_combat_screen_count"]
+			),
+			"repeatable_boss": monster_state["repeatable_boss_system_count"],
+			"cargo_racks": monster_state["cargo_rack_module_count"],
+			"long_guns": monster_state["long_gun_module_count"],
+			"fishing_gear": monster_state["fishing_gear_module_count"],
+			"resident_reactions": monster_state["resident_reaction_count"],
+			"relationship_progress": (
+				monster_state["relationship_progress_count"]
 			),
 		},
 		"fishing_system_count": fishing_state["system_count"],
