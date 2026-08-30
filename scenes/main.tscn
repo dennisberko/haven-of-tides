@@ -439,12 +439,29 @@ horizontal_alignment = 1
 vertical_alignment = 1
 autowrap_mode = 2
 
-[node name="RequestView" type="ColorRect" parent="Interface"]
-visible = false
+[node name="RelationshipView" type="ColorRect" parent="Interface" groups=["relationship_value_view"]]
 offset_left = 786.0
 offset_top = 24.0
 offset_right = 1124.0
-offset_bottom = 142.0
+offset_bottom = 72.0
+color = Color(0.0470588, 0.145098, 0.180392, 0.92)
+
+[node name="RelationshipDetails" type="Label" parent="Interface/RelationshipView"]
+offset_left = 18.0
+offset_top = 12.0
+offset_right = 320.0
+offset_bottom = 38.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 17
+text = "MARA RELATIONSHIP · 0"
+horizontal_alignment = 1
+
+[node name="RequestView" type="ColorRect" parent="Interface"]
+visible = false
+offset_left = 786.0
+offset_top = 82.0
+offset_right = 1124.0
+offset_bottom = 220.0
 color = Color(0.0470588, 0.145098, 0.180392, 0.92)
 
 [node name="RequestTitle" type="Label" parent="Interface/RequestView"]
@@ -469,10 +486,11 @@ text = "ACTIVE REQUEST"
 offset_left = 18.0
 offset_top = 73.0
 offset_right = 320.0
-offset_bottom = 102.0
+offset_bottom = 128.0
 theme_override_colors/font_color = Color(0.933333, 0.980392, 1, 1)
-theme_override_font_sizes/font_size = 17
+theme_override_font_sizes/font_size = 15
 text = "Inspect the damaged dock"
+autowrap_mode = 2
 
 [node name="CargoView" type="ColorRect" parent="Interface"]
 offset_left = 28.0

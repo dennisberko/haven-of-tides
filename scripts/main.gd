@@ -76,6 +76,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var request_title: Label = $Interface/RequestView/RequestTitle
 @onready var request_status: Label = $Interface/RequestView/RequestStatus
 @onready var request_goal: Label = $Interface/RequestView/RequestGoal
+@onready var relationship_view: ColorRect = $Interface/RelationshipView
+@onready var relationship_details: Label = (
+	$Interface/RelationshipView/RelationshipDetails
+)
 @onready var cargo_view: ColorRect = $Interface/CargoView
 @onready var cargo_details: Label = $Interface/CargoView/CargoDetails
 @onready var money_view: ColorRect = $Interface/MoneyView
@@ -602,6 +606,7 @@ func _ready() -> void:
 	waypoint_display.configure(sea_state["bounds"], ship.get_dock_definitions())
 	_load_story_clue_persistence("STARTUP")
 	_sync_story_clue_chart()
+	resident.load_relationship_progress("STARTUP")
 	waypoint_display.update_positions(ship.global_position, player.global_position, false)
 	var cove_dock: Dictionary = ship.get_dock_definition("cove")
 	var port_dock: Dictionary = ship.get_dock_definition("port")
@@ -638,6 +643,7 @@ func _ready() -> void:
 	_update_weather_view()
 	_update_monster_hunt_view()
 	_update_ship_module_view()
+	_update_relationship_view()
 	ship.set_module_departure_ready(false)
 	travel_camera.global_position = COVE_CAMERA_POSITION
 	interaction_prompt.hide()
@@ -7861,14 +7867,25 @@ func _close_dialogue() -> void:
 	dialogue_box.hide()
 	if finished_request:
 		_request_state = RequestState.COMPLETE
-		ruin_exploration.award_exploration_tool_from_request(
-			REQUEST_TITLE,
-			"GOAL_COMPLETE",
-			"COMPLETE",
-			ship.get_cargo_lots(),
-			money,
+		var relationship_evidence: Dictionary = (
+			resident.complete_relationship_from_request(
+				REQUEST_TITLE,
+				"GOAL_COMPLETE",
+				"COMPLETE",
+			)
 		)
+		if bool(relationship_evidence.get("success", false)):
+			ruin_exploration.award_exploration_tool_from_request(
+				REQUEST_TITLE,
+				"GOAL_COMPLETE",
+				"COMPLETE",
+				ship.get_cargo_lots(),
+				money,
+			)
+		else:
+			_request_state = RequestState.GOAL_COMPLETE
 		_update_request_view()
+	_update_relationship_view()
 	_update_interaction_prompt()
 
 
@@ -7906,9 +7923,53 @@ func _update_request_view() -> void:
 			request_goal.text = REQUEST_RETURN_GOAL
 		RequestState.COMPLETE:
 			request_status.text = "REQUEST COMPLETE"
-			request_goal.text = (
-				"Dock inspected for Mara · Received RUIN PRY BAR"
+			var resident_state: Dictionary = resident.get_playtest_state()
+			request_goal.text = "Dock inspected · Received RUIN PRY BAR\n%s" % (
+				resident_state["relationship_result_text"]
 			)
+
+
+func _update_relationship_view() -> void:
+	var resident_state: Dictionary = resident.get_playtest_state()
+	relationship_details.text = "MARA RELATIONSHIP · %d" % int(
+		resident_state["relationship_value"]
+	)
+	relationship_view.show()
+
+
+func save_relationship_progress() -> Dictionary:
+	var evidence: Dictionary = resident.save_relationship_progress(
+		"PUBLIC_GAME_SAVE"
+	)
+	_update_relationship_view()
+	return evidence
+
+
+func load_relationship_progress() -> Dictionary:
+	var evidence: Dictionary = resident.load_relationship_progress(
+		"PUBLIC_GAME_LOAD"
+	)
+	_update_relationship_view()
+	_update_request_view()
+	return evidence
+
+
+func inspect_relationship_progress_save() -> Dictionary:
+	return resident.inspect_relationship_save()
+
+
+func reset_relationship_progress_runtime_for_mcp() -> Dictionary:
+	var evidence: Dictionary = resident.reset_relationship_runtime_for_mcp()
+	_update_relationship_view()
+	_update_request_view()
+	return evidence
+
+
+func cleanup_relationship_progress_for_mcp() -> Dictionary:
+	var evidence: Dictionary = resident.cleanup_relationship_save_for_mcp()
+	_update_relationship_view()
+	_update_request_view()
+	return evidence
 
 
 func _update_interaction_prompt() -> void:
@@ -13328,6 +13389,164 @@ func get_playtest_state() -> Dictionary:
 		"request_title": request_title.text,
 		"request_status": request_status.text,
 		"request_goal": request_goal.text,
+		"relationship_system_count": resident_state["relationship_system_count"],
+		"relationship_owner_count": resident_state["relationship_owner_count"],
+		"relationship_named_resident_count": (
+			resident_state["relationship_named_resident_count"]
+		),
+		"relationship_resident_id": resident_state["relationship_resident_id"],
+		"relationship_resident_name": (
+			resident_state["relationship_resident_name"]
+		),
+		"relationship_value_count": resident_state["relationship_value_count"],
+		"relationship_value": resident_state["relationship_value"],
+		"relationship_initial_value": resident_state["relationship_initial_value"],
+		"relationship_max_value": resident_state["relationship_max_value"],
+		"relationship_value_view_count": get_tree().get_nodes_in_group(
+			"relationship_value_view"
+		).size(),
+		"relationship_view_visible": relationship_view.visible,
+		"relationship_visible_value_count": int(relationship_view.visible),
+		"relationship_view_text": relationship_details.text,
+		"relationship_view_text_exact": relationship_details.text == (
+			"MARA RELATIONSHIP · %d" % int(resident_state["relationship_value"])
+		),
+		"relationship_increase_amount": (
+			resident_state["relationship_increase_amount"]
+		),
+		"relationship_increase_count": (
+			resident_state["relationship_increase_count"]
+		),
+		"relationship_exactly_one_fixed_increase": (
+			resident_state["relationship_exactly_one_fixed_increase"]
+		),
+		"relationship_request_title": resident_state["relationship_request_title"],
+		"relationship_exact_request_transition": (
+			resident_state["relationship_exact_request_transition"]
+		),
+		"relationship_last_completion_evidence": (
+			resident_state["relationship_last_completion_evidence"]
+		),
+		"relationship_request_result_text": (
+			resident_state["relationship_result_text"]
+		),
+		"relationship_request_result_visible": (
+			request_view.visible
+			and _request_state == RequestState.COMPLETE
+			and request_goal.text.find("MARA RELATIONSHIP 0 -> 1 (+1)") >= 0
+		),
+		"relationship_threshold_count": (
+			resident_state["relationship_threshold_count"]
+		),
+		"relationship_threshold": resident_state["relationship_threshold"],
+		"relationship_threshold_reached": (
+			resident_state["relationship_threshold_reached"]
+		),
+		"relationship_threshold_reach_count": (
+			resident_state["relationship_threshold_reach_count"]
+		),
+		"relationship_scene_count": resident_state["relationship_scene_count"],
+		"relationship_scene_dialogue_kind": (
+			resident_state["relationship_scene_dialogue_kind"]
+		),
+		"relationship_scene_dialogue": (
+			resident_state["relationship_scene_dialogue"]
+		),
+		"relationship_scene_pending": (
+			resident_state["relationship_scene_pending"]
+		),
+		"relationship_scene_available": (
+			resident_state["relationship_scene_available"]
+		),
+		"relationship_scene_visible": (
+			_dialogue_open
+			and _dialogue_kind == CoveResident.RELATIONSHIP_DIALOGUE_KIND
+			and speaker_name.text == resident.display_name
+		),
+		"relationship_scene_show_count": (
+			resident_state["relationship_scene_show_count"]
+		),
+		"relationship_scene_finish_count": (
+			resident_state["relationship_scene_finish_count"]
+		),
+		"relationship_scene_shows_once_per_runtime": (
+			resident_state["relationship_scene_shows_once_per_runtime"]
+		),
+		"relationship_normal_talk_after_pending": (
+			resident_state["relationship_normal_talk_after_pending"]
+		),
+		"relationship_normal_talk_after_count": (
+			resident_state["relationship_normal_talk_after_count"]
+		),
+		"relationship_normal_dialogue_available_after_scene": (
+			resident_state["relationship_normal_dialogue_available_after_scene"]
+		),
+		"relationship_fresh_press_required": resident_state["fresh_press_required"],
+		"relationship_last_held_talk_evidence": (
+			resident_state["last_held_talk_evidence"]
+		),
+		"relationship_dialogue_priority": resident_state["dialogue_priority"],
+		"relationship_dialogue_priority_conflict_count": (
+			resident_state["dialogue_priority_conflict_count"]
+		),
+		"relationship_dialogue_priority_reaction_win_count": (
+			resident_state["dialogue_priority_reaction_win_count"]
+		),
+		"relationship_phase41_reaction_has_priority": (
+			resident_state["phase41_reaction_has_priority"]
+		),
+		"relationship_phase41_normal_after_reaction_has_priority": (
+			resident_state["phase41_normal_talk_keeps_priority_after_reaction"]
+		),
+		"relationship_save_path": resident_state["relationship_save_path"],
+		"relationship_save_section": resident_state["relationship_save_section"],
+		"relationship_save_key": resident_state["relationship_save_key"],
+		"relationship_save_count": resident_state["relationship_save_count"],
+		"relationship_load_count": resident_state["relationship_load_count"],
+		"relationship_load_reject_count": (
+			resident_state["relationship_load_reject_count"]
+		),
+		"relationship_startup_load_attempt_count": (
+			resident_state["relationship_startup_load_attempt_count"]
+		),
+		"relationship_cleanup_count": (
+			resident_state["relationship_cleanup_count"]
+		),
+		"relationship_save_file_exists": (
+			resident_state["relationship_save_file_exists"]
+		),
+		"relationship_only_value_persisted": (
+			resident_state["relationship_only_value_persisted"]
+		),
+		"relationship_owner_safe_path": (
+			resident_state["relationship_owner_safe_path"]
+		),
+		"relationship_last_save_evidence": (
+			resident_state["relationship_last_save_evidence"]
+		),
+		"relationship_last_load_evidence": (
+			resident_state["relationship_last_load_evidence"]
+		),
+		"relationship_last_cleanup_evidence": (
+			resident_state["relationship_last_cleanup_evidence"]
+		),
+		"relationship_last_runtime_reset_evidence": (
+			resident_state["relationship_last_runtime_reset_evidence"]
+		),
+		"relationship_excluded_features": {
+			"romance": resident_state["romance_system_count"],
+			"gifts": resident_state["gift_system_count"],
+			"decay": resident_state["relationship_decay_system_count"],
+			"multiple_currencies": (
+				resident_state["multiple_relationship_currency_count"]
+			),
+			"daily_schedules": resident_state["daily_schedule_system_count"],
+			"passive_stat_bonuses": resident_state["passive_stat_bonus_count"],
+			"day_states": resident_state["day_state_count"],
+			"night_states": resident_state["night_state_count"],
+			"time_advance": resident_state["time_advance_system_count"],
+			"night_only_scenes": resident_state["night_only_scene_count"],
+		},
 		"chart_visible": waypoint_state["chart_visible"],
 		"known_location_count": waypoint_state["known_location_count"],
 		"known_location_ids": waypoint_state["known_location_ids"],
