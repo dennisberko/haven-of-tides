@@ -325,7 +325,7 @@ func get_hunter_playtest_state() -> Dictionary:
 		"nation_rule_system_count": 0,
 		"faction_rule_system_count": 0,
 		"port_service_refusal_count": 0,
-		"crew_injury_system_count": 0,
+		"crew_injury_system_count": 1,
 	}
 
 

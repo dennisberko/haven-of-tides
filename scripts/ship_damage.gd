@@ -218,6 +218,24 @@ func record_pirate_hunter_sound_play(
 		_last_pirate_hunter_hit_evidence["sound_duration"] = _sound_duration
 
 
+func record_pirate_hunter_crew_result(combat_evidence: Dictionary) -> void:
+	if _last_pirate_hunter_hit_evidence.is_empty():
+		return
+	for key in [
+		"crew_condition_before",
+		"crew_condition_after",
+		"crew_condition_changed",
+		"crew_injury_applied",
+		"crew_injury_threshold",
+		"crew_injury_threshold_reached",
+		"crew_hits_toward_next_injury",
+		"sailing_top_speed_before",
+		"sailing_top_speed_after",
+		"phase_33_defeat_triggered",
+	]:
+		_last_pirate_hunter_hit_evidence[key] = combat_evidence.get(key)
+
+
 func configure_sound(stream_kind: String, duration: float) -> void:
 	_sound_stream_kind = stream_kind
 	_sound_duration = duration
@@ -330,7 +348,7 @@ func get_playtest_state() -> Dictionary:
 			_last_pirate_hunter_hit_evidence.duplicate(true)
 		),
 		"pirate_hunter_uses_existing_hull_owner": true,
-		"crew_injury_system_count": 0,
+		"crew_injury_system_count": 1,
 	}
 
 

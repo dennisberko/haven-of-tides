@@ -4,6 +4,7 @@ const ShipFoodState := preload("res://scripts/ship_food.gd")
 const ShipDamageState := preload("res://scripts/ship_damage.gd")
 const ShipBroadsideState := preload("res://scripts/ship_broadside.gd")
 const ShipAmmunitionState := preload("res://scripts/ship_ammunition.gd")
+const CrewConditionState := preload("res://scripts/crew_condition.gd")
 
 const ACCELERATION := 140.0
 const COAST_DECELERATION := 90.0
@@ -112,6 +113,11 @@ var _food_state = ShipFoodState.new()
 var _damage_state = ShipDamageState.new()
 var _broadside_state = ShipBroadsideState.new()
 var _ammunition_state = ShipAmmunitionState.new()
+var _crew_condition_state = CrewConditionState.new()
+var _last_crew_combat_evidence: Dictionary = {}
+var _last_crew_injury_evidence: Dictionary = {}
+var _last_crew_dock_evidence: Dictionary = {}
+var _last_crew_restoration_evidence: Dictionary = {}
 var _repair_attempt_count := 0
 var _repair_success_count := 0
 var _repair_denied_attempt_count := 0
@@ -235,6 +241,10 @@ func get_forward_direction() -> Vector2:
 
 
 func get_top_speed() -> float:
+	return _crew_condition_state.get_sailing_top_speed(TOP_SPEED)
+
+
+func get_base_top_speed() -> float:
 	return TOP_SPEED
 
 
@@ -451,19 +461,138 @@ func get_damage_playtest_state() -> Dictionary:
 	return _damage_state.get_playtest_state()
 
 
+func get_crew_condition_playtest_state() -> Dictionary:
+	var state: Dictionary = _crew_condition_state.get_playtest_state(TOP_SPEED)
+	state["last_combat_evidence"] = (
+		_last_crew_combat_evidence.duplicate(true)
+	)
+	state["last_injury_evidence"] = _last_crew_injury_evidence.duplicate(true)
+	state["last_dock_evidence"] = _last_crew_dock_evidence.duplicate(true)
+	state["last_safe_dock_restoration_evidence"] = (
+		_last_crew_restoration_evidence.duplicate(true)
+	)
+	return state
+
+
 func apply_pirate_hunter_broadside() -> Dictionary:
+	var cargo_before: Array[String] = get_cargo_lots()
+	var ammunition_before := get_ammunition_units()
 	var food_state: Dictionary = get_food_playtest_state()
+	var food_progress_before := float(food_state["progress_distance"])
+	var food_units_before := get_food_units()
+	var hull_before := int(get_damage_playtest_state()["hull_current"])
+	var crew_before: Dictionary = get_crew_condition_playtest_state()
+	var current_speed_before := current_speed
 	var evidence: Dictionary = _damage_state.try_pirate_hunter_hit(
-		get_cargo_lots(),
-		float(food_state["progress_distance"]),
-		get_food_units(),
+		cargo_before,
+		food_progress_before,
+		food_units_before,
 	)
 	if bool(evidence.get("success", false)):
+		var crew_damage_evidence: Dictionary = (
+			_crew_condition_state.record_successful_naval_damage(
+				ShipDamageState.PIRATE_HUNTER_SOURCE,
+				TOP_SPEED,
+			)
+		)
+		current_speed = minf(current_speed, get_top_speed())
+		if current_speed > 0.0:
+			sailing_velocity = get_forward_direction() * current_speed
 		damage_impact_sound.play()
 		_damage_state.record_pirate_hunter_sound_play(
 			damage_impact_sound.stream.get_class(),
 			ShipDamageState.IMPACT_SOUND_DURATION,
 		)
+		evidence.merge({
+			"crew_damage_evidence": crew_damage_evidence.duplicate(true),
+			"crew_condition_before": crew_before["condition"],
+			"crew_condition_after": (
+				_crew_condition_state.get_condition()
+			),
+			"crew_condition_changed": crew_damage_evidence["injury_applied"],
+			"crew_injury_applied": crew_damage_evidence["injury_applied"],
+			"crew_injury_threshold": (
+				crew_damage_evidence["injury_threshold"]
+			),
+			"crew_injury_threshold_reached": (
+				crew_damage_evidence["threshold_reached"]
+			),
+			"crew_hits_toward_next_injury": (
+				crew_damage_evidence["threshold_progress_after"]
+			),
+			"sailing_top_speed_before": (
+				crew_damage_evidence["sailing_top_speed_before"]
+			),
+			"sailing_top_speed_after": (
+				crew_damage_evidence["sailing_top_speed_after"]
+			),
+			"current_speed_before": current_speed_before,
+			"current_speed_after": current_speed,
+			"current_speed_respects_crew_cap": current_speed <= get_top_speed(),
+		}, true)
+		_damage_state.record_pirate_hunter_crew_result(evidence)
+	else:
+		evidence.merge({
+			"crew_damage_evidence": {},
+			"crew_condition_before": crew_before["condition"],
+			"crew_condition_after": crew_before["condition"],
+			"crew_condition_changed": false,
+			"crew_injury_applied": false,
+			"crew_injury_threshold": (
+				crew_before["successful_naval_hits_per_injury"]
+			),
+			"crew_injury_threshold_reached": false,
+			"crew_hits_toward_next_injury": (
+				crew_before["hits_toward_next_injury"]
+			),
+			"sailing_top_speed_before": get_top_speed(),
+			"sailing_top_speed_after": get_top_speed(),
+			"current_speed_before": current_speed_before,
+			"current_speed_after": current_speed,
+			"current_speed_respects_crew_cap": current_speed <= get_top_speed(),
+		}, true)
+		_damage_state.record_pirate_hunter_crew_result(evidence)
+	var cargo_after: Array[String] = get_cargo_lots()
+	var ammunition_after := get_ammunition_units()
+	var food_state_after: Dictionary = get_food_playtest_state()
+	var hull_after := int(get_damage_playtest_state()["hull_current"])
+	evidence.merge({
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_unchanged": cargo_before == cargo_after,
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_unchanged": ammunition_before == ammunition_after,
+		"food_units_before": food_units_before,
+		"food_units_after": get_food_units(),
+		"food_units_unchanged": food_units_before == get_food_units(),
+		"food_progress_before": food_progress_before,
+		"food_progress_after": food_state_after["progress_distance"],
+		"food_progress_unchanged": is_equal_approx(
+			food_progress_before,
+			float(food_state_after["progress_distance"]),
+		),
+		"hull_before": hull_before,
+		"hull_after": hull_after,
+		"hull_delta": hull_after - hull_before,
+		"hull_changed_only_by_fixed_hunter_damage": (
+			not bool(evidence.get("success", false))
+			or hull_after - hull_before == -int(evidence["damage"])
+		),
+		"unrelated_ship_resources_unchanged": (
+			cargo_before == cargo_after
+			and ammunition_before == ammunition_after
+			and food_units_before == get_food_units()
+			and is_equal_approx(
+				food_progress_before,
+				float(food_state_after["progress_distance"]),
+			)
+		),
+		"phase_33_defeat_triggered": false,
+	}, true)
+	_last_crew_combat_evidence = evidence.duplicate(true)
+	if bool(evidence.get("crew_injury_applied", false)):
+		_last_crew_injury_evidence = evidence.duplicate(true)
 	queue_redraw()
 	return evidence
 
@@ -833,6 +962,11 @@ func dock_at_available() -> String:
 	if dock_id.is_empty():
 		return ""
 
+	var cargo_before: Array[String] = get_cargo_lots()
+	var ammunition_before := get_ammunition_units()
+	var food_before: Dictionary = get_food_playtest_state()
+	var damage_before: Dictionary = get_damage_playtest_state()
+	var crew_before: Dictionary = get_crew_condition_playtest_state()
 	var definition: Dictionary = DOCK_DEFINITIONS[dock_id]
 	global_position = definition["snap_position"]
 	rotation = definition["snap_rotation"]
@@ -846,6 +980,61 @@ func dock_at_available() -> String:
 	_dock_exit_cleared = dock_id != "cove"
 	_departure_input_armed = false
 	last_collision_response = "DOCKED_%s" % dock_id.to_upper()
+	var restoration_evidence: Dictionary = (
+		_crew_condition_state.restore_at_dock(dock_id, TOP_SPEED)
+	)
+	var cargo_after: Array[String] = get_cargo_lots()
+	var ammunition_after := get_ammunition_units()
+	var food_after: Dictionary = get_food_playtest_state()
+	var damage_after: Dictionary = get_damage_playtest_state()
+	restoration_evidence.merge({
+		"cargo_before": cargo_before,
+		"cargo_after": cargo_after,
+		"cargo_unchanged": cargo_before == cargo_after,
+		"ammunition_before": ammunition_before,
+		"ammunition_after": ammunition_after,
+		"ammunition_unchanged": ammunition_before == ammunition_after,
+		"food_units_before": food_before["food_units"],
+		"food_units_after": food_after["food_units"],
+		"food_units_unchanged": (
+			food_before["food_units"] == food_after["food_units"]
+		),
+		"food_progress_before": food_before["progress_distance"],
+		"food_progress_after": food_after["progress_distance"],
+		"food_progress_unchanged": is_equal_approx(
+			float(food_before["progress_distance"]),
+			float(food_after["progress_distance"]),
+		),
+		"hull_before": damage_before["hull_current"],
+		"hull_after": damage_after["hull_current"],
+		"hull_unchanged": (
+			damage_before["hull_current"] == damage_after["hull_current"]
+		),
+		"injury_count_before": crew_before["injury_count"],
+		"injury_count_after": (
+			_crew_condition_state.get_playtest_state(TOP_SPEED)["injury_count"]
+		),
+		"injury_history_unchanged": (
+			crew_before["injury_count"]
+				== _crew_condition_state.get_playtest_state(TOP_SPEED)[
+					"injury_count"
+				]
+		),
+		"unrelated_ship_state_unchanged": (
+			cargo_before == cargo_after
+			and ammunition_before == ammunition_after
+			and food_before["food_units"] == food_after["food_units"]
+			and is_equal_approx(
+				float(food_before["progress_distance"]),
+				float(food_after["progress_distance"]),
+			)
+			and damage_before["hull_current"] == damage_after["hull_current"]
+		),
+		"phase_33_recovery_triggered": false,
+	}, true)
+	_last_crew_dock_evidence = restoration_evidence.duplicate(true)
+	if bool(restoration_evidence["restored"]):
+		_last_crew_restoration_evidence = restoration_evidence.duplicate(true)
 	queue_redraw()
 	return dock_id
 
@@ -952,7 +1141,11 @@ func _physics_process(delta: float) -> void:
 		rotation = DOCK_ROTATION
 
 	if throttle_pressed:
-		current_speed = move_toward(current_speed, TOP_SPEED, ACCELERATION * delta)
+		current_speed = move_toward(
+			current_speed,
+			get_top_speed(),
+			ACCELERATION * delta,
+		)
 	elif brake_pressed:
 		current_speed = move_toward(current_speed, 0.0, BRAKE_DECELERATION * delta)
 	else:
@@ -1216,7 +1409,9 @@ func get_playtest_state() -> Dictionary:
 		"acceleration": ACCELERATION,
 		"coast_deceleration": COAST_DECELERATION,
 		"brake_deceleration": BRAKE_DECELERATION,
-		"top_speed": TOP_SPEED,
+		"top_speed": get_top_speed(),
+		"base_top_speed": TOP_SPEED,
+		"crew_condition": get_crew_condition_playtest_state(),
 		"turn_speed": TURN_SPEED,
 		"controls_enabled": controls_enabled,
 		"captain_aboard": captain_aboard,

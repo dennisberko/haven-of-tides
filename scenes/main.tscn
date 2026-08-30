@@ -523,6 +523,45 @@ theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
 theme_override_font_sizes/font_size = 14
 text = "REEF DAMAGE · 20 PER HIT"
 
+[node name="CrewView" type="ColorRect" parent="Interface" groups=["crew_condition_view"]]
+visible = false
+offset_left = 408.0
+offset_top = 272.0
+offset_right = 744.0
+offset_bottom = 370.0
+mouse_filter = 2
+color = Color(0.0470588, 0.145098, 0.180392, 0.94)
+
+[node name="CrewTitle" type="Label" parent="Interface/CrewView"]
+offset_left = 16.0
+offset_top = 8.0
+offset_right = 320.0
+offset_bottom = 30.0
+theme_override_colors/font_color = Color(1, 0.933333, 0.733333, 1)
+theme_override_font_sizes/font_size = 16
+text = "CREW CONDITION · 100 / 100"
+horizontal_alignment = 1
+
+[node name="CrewMeter" type="ProgressBar" parent="Interface/CrewView"]
+offset_left = 16.0
+offset_top = 34.0
+offset_right = 320.0
+offset_bottom = 52.0
+value = 100.0
+show_percentage = false
+
+[node name="CrewStatus" type="Label" parent="Interface/CrewView"]
+offset_left = 12.0
+offset_top = 58.0
+offset_right = 324.0
+offset_bottom = 90.0
+theme_override_colors/font_color = Color(0.894118, 0.976471, 0.941176, 1)
+theme_override_font_sizes/font_size = 12
+text = "READY · SAILING TOP SPEED 280"
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 2
+
 [node name="RepairView" type="ColorRect" parent="Interface" groups=["ship_repair_view"]]
 visible = false
 offset_left = 786.0

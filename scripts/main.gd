@@ -81,6 +81,10 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var hull_title: Label = $Interface/HullView/HullTitle
 @onready var hull_meter: ProgressBar = $Interface/HullView/HullMeter
 @onready var hull_status: Label = $Interface/HullView/HullStatus
+@onready var crew_view: ColorRect = $Interface/CrewView
+@onready var crew_title: Label = $Interface/CrewView/CrewTitle
+@onready var crew_meter: ProgressBar = $Interface/CrewView/CrewMeter
+@onready var crew_status: Label = $Interface/CrewView/CrewStatus
 @onready var repair_view: ColorRect = $Interface/RepairView
 @onready var repair_title: Label = $Interface/RepairView/RepairTitle
 @onready var repair_cost: Label = $Interface/RepairView/RepairCost
@@ -464,6 +468,13 @@ var _last_heat_file_save_evidence: Dictionary = {}
 var _last_heat_file_load_evidence: Dictionary = {}
 var _last_heat_file_cleanup_evidence: Dictionary = {}
 var _pirate_hunter_sea_bounds := Rect2()
+var _crew_full_view_evidence: Dictionary = {}
+var _crew_injury_view_evidence: Dictionary = {}
+var _crew_restoration_view_evidence: Dictionary = {}
+var _last_crew_combat_context_evidence: Dictionary = {}
+var _last_crew_injury_context_evidence: Dictionary = {}
+var _last_crew_dock_context_evidence: Dictionary = {}
+var _last_crew_restoration_context_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -496,6 +507,7 @@ func _ready() -> void:
 	_update_pirate_hunter_view()
 	_update_food_view()
 	_update_hull_view()
+	_update_crew_view()
 	_update_repair_view()
 	_update_target_inspection()
 	_update_boarding_deck_state()
@@ -517,6 +529,7 @@ func _ready() -> void:
 	journal_view.hide()
 	food_view.hide()
 	hull_view.hide()
+	crew_view.hide()
 	repair_view.hide()
 	pirate_hunter_view.hide()
 	target_inspection_view.hide()
@@ -565,6 +578,7 @@ func _physics_process(delta: float) -> void:
 	_update_pirate_hunter_view()
 	_update_food_view()
 	_update_hull_view()
+	_update_crew_view()
 	_update_repair_view()
 	_update_broadside_view()
 	_update_ammunition_view()
@@ -3129,9 +3143,39 @@ func _update_pirate_hunter(delta: float) -> void:
 		_pirate_hunter_sea_bounds,
 	)
 	if attack_requested:
-		pirate_hunter.record_attack_result(
-			ship.apply_pirate_hunter_broadside()
-		)
+		var heat_before := _world_heat.get_current_heat()
+		var target_conditions_before := _get_target_condition_snapshots()
+		var crew_before: Dictionary = ship.get_crew_condition_playtest_state()
+		var evidence: Dictionary = ship.apply_pirate_hunter_broadside()
+		var heat_after := _world_heat.get_current_heat()
+		var target_conditions_after := _get_target_condition_snapshots()
+		var crew_after: Dictionary = ship.get_crew_condition_playtest_state()
+		evidence.merge({
+			"world_heat_before": heat_before,
+			"world_heat_after": heat_after,
+			"world_heat_unchanged": heat_before == heat_after,
+			"target_conditions_before": target_conditions_before,
+			"target_conditions_after": target_conditions_after,
+			"target_conditions_unchanged": (
+				target_conditions_before == target_conditions_after
+			),
+			"crew_condition_before_context": crew_before["condition"],
+			"crew_condition_after_context": crew_after["condition"],
+			"only_expected_combat_state_changed": (
+				bool(evidence.get("unrelated_ship_resources_unchanged", false))
+				and heat_before == heat_after
+				and target_conditions_before == target_conditions_after
+				and bool(evidence.get(
+					"hull_changed_only_by_fixed_hunter_damage",
+					false,
+				))
+			),
+			"phase_33_defeat_triggered": false,
+		}, true)
+		_last_crew_combat_context_evidence = evidence.duplicate(true)
+		if bool(evidence.get("crew_injury_applied", false)):
+			_last_crew_injury_context_evidence = evidence.duplicate(true)
+		pirate_hunter.record_attack_result(evidence)
 
 
 func _update_target_inspection() -> void:
@@ -4571,6 +4615,56 @@ func _update_hull_view() -> void:
 	hull_view.visible = _player_aboard_ship
 
 
+func _update_crew_view() -> void:
+	var crew_state: Dictionary = ship.get_crew_condition_playtest_state()
+	var condition := int(crew_state["condition"])
+	var condition_max := int(crew_state["condition_max"])
+	crew_meter.min_value = 0.0
+	crew_meter.max_value = float(condition_max)
+	crew_meter.value = float(condition)
+	crew_title.text = "CREW CONDITION · %d / %d" % [
+		condition,
+		condition_max,
+	]
+	crew_status.text = String(crew_state["status_text"])
+	crew_view.visible = _player_aboard_ship
+	var view_evidence := {
+		"visible": crew_view.visible,
+		"title": crew_title.text,
+		"status": crew_status.text,
+		"full_text": "%s\n%s" % [crew_title.text, crew_status.text],
+		"meter_value": crew_meter.value,
+		"meter_max": crew_meter.max_value,
+		"condition": condition,
+		"condition_max": condition_max,
+		"low": crew_state["low"],
+		"base_sailing_top_speed": crew_state["base_sailing_top_speed"],
+		"effective_sailing_top_speed": (
+			crew_state["effective_sailing_top_speed"]
+		),
+	}
+	if (
+		crew_view.visible
+		and int(crew_state["injury_count"]) == 0
+		and int(crew_state["restoration_count"]) == 0
+		and _crew_full_view_evidence.is_empty()
+	):
+		_crew_full_view_evidence = view_evidence.duplicate(true)
+	elif crew_view.visible and bool(crew_state["low"]):
+		view_evidence["injury_evidence"] = (
+			(crew_state["last_injury_evidence"] as Dictionary).duplicate(true)
+		)
+		_crew_injury_view_evidence = view_evidence.duplicate(true)
+	elif crew_view.visible and int(crew_state["restoration_count"]) > 0:
+		view_evidence["restoration_evidence"] = (
+			(
+				crew_state["last_safe_dock_restoration_evidence"]
+				as Dictionary
+			).duplicate(true)
+		)
+		_crew_restoration_view_evidence = view_evidence.duplicate(true)
+
+
 func _update_repair_view() -> void:
 	var repair_state: Dictionary = ship.get_repair_playtest_state()
 	repair_title.text = "DOCKED HULL REPAIR"
@@ -5142,14 +5236,57 @@ func _dock_ship() -> void:
 	):
 		return
 
+	var heat_before := _world_heat.get_current_heat()
+	var target_conditions_before := _get_target_condition_snapshots()
+	var crew_before: Dictionary = ship.get_crew_condition_playtest_state()
 	var dock_id: String = ship.dock_at_available()
 	if dock_id.is_empty():
 		return
-
+	var heat_after := _world_heat.get_current_heat()
+	var target_conditions_after := _get_target_condition_snapshots()
+	var crew_after: Dictionary = ship.get_crew_condition_playtest_state()
+	var crew_dock_evidence: Dictionary = (
+		(crew_after["last_dock_evidence"] as Dictionary).duplicate(true)
+	)
+	crew_dock_evidence.merge({
+		"world_heat_before": heat_before,
+		"world_heat_after": heat_after,
+		"world_heat_unchanged": heat_before == heat_after,
+		"target_conditions_before": target_conditions_before,
+		"target_conditions_after": target_conditions_after,
+		"target_conditions_unchanged": (
+			target_conditions_before == target_conditions_after
+		),
+		"crew_condition_before_context": crew_before["condition"],
+		"crew_condition_after_context": crew_after["condition"],
+		"only_crew_condition_and_dock_state_changed": (
+			bool(crew_dock_evidence.get(
+				"unrelated_ship_state_unchanged",
+				false,
+			))
+			and heat_before == heat_after
+			and target_conditions_before == target_conditions_after
+		),
+		"phase_33_recovery_triggered": false,
+	}, true)
 	_available_dock_id = ""
 	_last_leave_allowed = false
 	_last_ship_docked = true
 	_complete_voyage_on_arrival(dock_id)
+	crew_dock_evidence["world_heat_after_normal_dock_rules"] = (
+		_world_heat.get_current_heat()
+	)
+	crew_dock_evidence["normal_dock_heat_rule_evidence"] = (
+		_last_completed_voyage_evidence.duplicate(true)
+	)
+	crew_dock_evidence["crew_restoration_heat_unchanged_before_dock_rules"] = (
+		heat_before == heat_after
+	)
+	_last_crew_dock_context_evidence = crew_dock_evidence.duplicate(true)
+	if bool(crew_dock_evidence.get("restored", false)):
+		_last_crew_restoration_context_evidence = (
+			crew_dock_evidence.duplicate(true)
+		)
 	if bool(_last_completed_voyage_evidence.get("counted", false)):
 		_save_world_heat_persistence("COMPLETED_VOYAGE_DOCK")
 	if dock_id == "cove" and ship.timber_lots == 1:
@@ -5171,6 +5308,7 @@ func _dock_ship() -> void:
 		_trade_persistence_holds = _trade_purchase_state_persists()
 	controls_help.text = DOCKED_CONTROLS_TEXT
 	_capture_damage_checkpoint("DOCK")
+	_update_crew_view()
 	_update_repair_view()
 	_update_interaction_prompt()
 
@@ -6124,6 +6262,7 @@ func get_playtest_state() -> Dictionary:
 	var ship_state: Dictionary = ship.get_playtest_state()
 	var food_state: Dictionary = ship.get_food_playtest_state()
 	var damage_state: Dictionary = ship.get_damage_playtest_state()
+	var crew_state: Dictionary = ship.get_crew_condition_playtest_state()
 	var repair_state: Dictionary = ship.get_repair_playtest_state()
 	var sea_state: Dictionary = sea_area.get_playtest_state()
 	var player_state: Dictionary = player.get_playtest_state()
@@ -6265,6 +6404,10 @@ func get_playtest_state() -> Dictionary:
 		hull_title.text,
 		hull_status.text,
 	]
+	var crew_view_full_text := "%s\n%s" % [
+		crew_title.text,
+		crew_status.text,
+	]
 	var heat_view_full_text := "%s\n%s" % [
 		heat_title.text,
 		heat_status.text,
@@ -6286,6 +6429,7 @@ func get_playtest_state() -> Dictionary:
 	var repair_view_rect := repair_view.get_global_rect()
 	var heat_view_rect := heat_view.get_global_rect()
 	var hull_view_rect := hull_view.get_global_rect()
+	var crew_view_rect := crew_view.get_global_rect()
 	var food_view_rect := food_view.get_global_rect()
 	var controls_help_rect := controls_help.get_global_rect()
 	var physical_cargo_total: int = int(
@@ -6555,7 +6699,288 @@ func get_playtest_state() -> Dictionary:
 		"ship_coast_deceleration": ship_state["coast_deceleration"],
 		"ship_brake_deceleration": ship_state["brake_deceleration"],
 		"ship_top_speed": ship_state["top_speed"],
+		"ship_base_top_speed": ship_state["base_top_speed"],
 		"ship_turn_speed": ship_state["turn_speed"],
+		"crew_condition_system_count": crew_state["system_count"],
+		"crew_condition_owner_count": crew_state["owner_count"],
+		"crew_condition_aggregate_value_count": (
+			crew_state["aggregate_value_count"]
+		),
+		"crew_condition_exactly_one_aggregate_value": (
+			int(crew_state["system_count"]) == 1
+			and int(crew_state["owner_count"]) == 1
+			and int(crew_state["aggregate_value_count"]) == 1
+		),
+		"crew_condition": crew_state["condition"],
+		"crew_condition_max": crew_state["condition_max"],
+		"crew_condition_start": crew_state["condition_start"],
+		"crew_condition_full": crew_state["full"],
+		"crew_condition_low": crew_state["low"],
+		"crew_low_condition_threshold": crew_state["low_condition_threshold"],
+		"crew_successful_naval_hits_per_injury": (
+			crew_state["successful_naval_hits_per_injury"]
+		),
+		"crew_fixed_injury_amount": crew_state["fixed_injury_amount"],
+		"crew_successful_naval_damage_count": (
+			crew_state["successful_naval_damage_count"]
+		),
+		"crew_hits_toward_next_injury": (
+			crew_state["hits_toward_next_injury"]
+		),
+		"crew_injury_count": crew_state["injury_count"],
+		"crew_last_naval_damage_evidence": (
+			(crew_state["last_naval_damage_evidence"] as Dictionary).duplicate(
+				true
+			)
+		),
+		"crew_last_injury_evidence": (
+			(crew_state["last_injury_evidence"] as Dictionary).duplicate(true)
+		),
+		"crew_last_combat_context_evidence": (
+			_last_crew_combat_context_evidence.duplicate(true)
+		),
+		"crew_last_injury_context_evidence": (
+			_last_crew_injury_context_evidence.duplicate(true)
+		),
+		"crew_injury_uses_fixed_threshold": (
+			_last_crew_injury_context_evidence.is_empty()
+			or (
+				bool(_last_crew_injury_context_evidence.get(
+					"crew_injury_threshold_reached",
+					false,
+				))
+				and int(_last_crew_injury_context_evidence.get(
+					"crew_injury_threshold",
+					0,
+				)) == int(crew_state["successful_naval_hits_per_injury"])
+			)
+		),
+		"crew_last_combat_conservation_holds": (
+			_last_crew_combat_context_evidence.is_empty()
+			or (
+				bool(_last_crew_combat_context_evidence.get(
+					"cargo_unchanged",
+					false,
+				))
+				and bool(_last_crew_combat_context_evidence.get(
+					"ammunition_unchanged",
+					false,
+				))
+				and bool(_last_crew_combat_context_evidence.get(
+					"food_units_unchanged",
+					false,
+				))
+				and bool(_last_crew_combat_context_evidence.get(
+					"food_progress_unchanged",
+					false,
+				))
+				and bool(_last_crew_combat_context_evidence.get(
+					"world_heat_unchanged",
+					false,
+				))
+				and bool(_last_crew_combat_context_evidence.get(
+					"target_conditions_unchanged",
+					false,
+				))
+				and bool(_last_crew_combat_context_evidence.get(
+					"hull_changed_only_by_fixed_hunter_damage",
+					false,
+				))
+			)
+		),
+		"crew_affected_action": crew_state["affected_action"],
+		"crew_affected_action_count": crew_state["affected_action_count"],
+		"crew_exactly_one_action_reduced": (
+			int(crew_state["affected_action_count"]) == 1
+			and String(crew_state["affected_action"]) == "SAILING_TOP_SPEED"
+		),
+		"crew_normal_sailing_top_speed": (
+			crew_state["normal_sailing_top_speed"]
+		),
+		"crew_low_sailing_top_speed": crew_state["low_sailing_top_speed"],
+		"crew_effective_sailing_top_speed": (
+			crew_state["effective_sailing_top_speed"]
+		),
+		"crew_low_speed_multiplier": crew_state["low_speed_multiplier"],
+		"crew_action_matches_ship_top_speed": is_equal_approx(
+			float(crew_state["effective_sailing_top_speed"]),
+			float(ship_state["top_speed"]),
+		),
+		"crew_safe_dock_ids": crew_state["safe_dock_ids"],
+		"crew_safe_dock_count": crew_state["safe_dock_count"],
+		"crew_automatic_safe_dock_restoration": (
+			crew_state["automatic_safe_dock_restoration"]
+		),
+		"crew_restoration_attempt_count": (
+			crew_state["restoration_attempt_count"]
+		),
+		"crew_restoration_count": crew_state["restoration_count"],
+		"crew_last_dock_context_evidence": (
+			_last_crew_dock_context_evidence.duplicate(true)
+		),
+		"crew_last_restoration_context_evidence": (
+			_last_crew_restoration_context_evidence.duplicate(true)
+		),
+		"crew_last_restoration_conservation_holds": (
+			_last_crew_restoration_context_evidence.is_empty()
+			or (
+				bool(_last_crew_restoration_context_evidence.get(
+					"unrelated_ship_state_unchanged",
+					false,
+				))
+				and bool(_last_crew_restoration_context_evidence.get(
+					"world_heat_unchanged",
+					false,
+				))
+				and bool(_last_crew_restoration_context_evidence.get(
+					"target_conditions_unchanged",
+					false,
+				))
+			)
+		),
+		"crew_last_restoration_restored_action": (
+			_last_crew_restoration_context_evidence.is_empty()
+			or bool(_last_crew_restoration_context_evidence.get(
+				"action_restored_to_normal",
+				false,
+			))
+		),
+		"crew_condition_view_count": get_tree().get_nodes_in_group(
+			"crew_condition_view"
+		).size(),
+		"crew_condition_view_visible": crew_view.visible,
+		"crew_condition_view_should_be_visible": _player_aboard_ship,
+		"crew_condition_view_visibility_matches_aboard": (
+			crew_view.visible == _player_aboard_ship
+		),
+		"crew_condition_view_text": (
+			crew_view_full_text if crew_view.visible else ""
+		),
+		"crew_condition_view_title": crew_title.text,
+		"crew_condition_view_status": crew_status.text,
+		"crew_condition_meter_value": crew_meter.value,
+		"crew_condition_meter_max": crew_meter.max_value,
+		"crew_condition_meter_matches_state": (
+			is_equal_approx(crew_meter.value, float(crew_state["condition"]))
+			and is_equal_approx(
+				crew_meter.max_value,
+				float(crew_state["condition_max"]),
+			)
+		),
+		"crew_condition_view_overlaps_hull_view": (
+			crew_view_rect.intersects(hull_view_rect)
+		),
+		"crew_condition_view_overlaps_food_view": (
+			crew_view_rect.intersects(food_view_rect)
+		),
+		"crew_condition_view_overlaps_controls": (
+			crew_view_rect.intersects(controls_help_rect)
+		),
+		"crew_full_view_evidence": _crew_full_view_evidence.duplicate(true),
+		"crew_injury_view_evidence": (
+			_crew_injury_view_evidence.duplicate(true)
+		),
+		"crew_restoration_view_evidence": (
+			_crew_restoration_view_evidence.duplicate(true)
+		),
+		"crew_low_action_change_visible": (
+			_crew_injury_view_evidence.is_empty()
+			or (
+				String(_crew_injury_view_evidence.get("status", "")).contains(
+					"SAILING TOP SPEED 280 -> 224"
+				)
+				and float(_crew_injury_view_evidence.get(
+					"effective_sailing_top_speed",
+					0.0,
+				)) < float(_crew_injury_view_evidence.get(
+					"base_sailing_top_speed",
+					0.0,
+				))
+			)
+		),
+		"crew_restored_action_visible": (
+			_crew_restoration_view_evidence.is_empty()
+			or (
+				String(_crew_restoration_view_evidence.get(
+					"status",
+					"",
+				)).contains("RESTORED AT")
+				and is_equal_approx(
+					float(_crew_restoration_view_evidence.get(
+						"effective_sailing_top_speed",
+						0.0,
+					)),
+					float(_crew_restoration_view_evidence.get(
+						"base_sailing_top_speed",
+						-1.0,
+					)),
+				)
+			)
+		),
+		"crew_individual_member_count": (
+			crew_state["individual_crew_member_count"]
+		),
+		"crew_officer_injury_count": crew_state["officer_injury_count"],
+		"crew_wage_system_count": crew_state["wage_system_count"],
+		"crew_mutiny_system_count": crew_state["mutiny_system_count"],
+		"crew_schedule_system_count": crew_state["crew_schedule_system_count"],
+		"crew_recruitment_market_count": crew_state["recruitment_market_count"],
+		"crew_separate_injury_type_count": (
+			crew_state["separate_injury_type_count"]
+		),
+		"crew_medical_supply_system_count": (
+			crew_state["medical_supply_system_count"]
+		),
+		"crew_new_task_count": crew_state["new_crew_task_count"],
+		"crew_forbidden_feature_count": (
+			int(crew_state["individual_crew_member_count"])
+			+ int(crew_state["officer_injury_count"])
+			+ int(crew_state["wage_system_count"])
+			+ int(crew_state["mutiny_system_count"])
+			+ int(crew_state["crew_schedule_system_count"])
+			+ int(crew_state["recruitment_market_count"])
+			+ int(crew_state["separate_injury_type_count"])
+			+ int(crew_state["medical_supply_system_count"])
+			+ int(crew_state["new_crew_task_count"])
+		),
+		"phase_33_player_defeat_detection_count": (
+			crew_state["player_defeat_detection_count"]
+		),
+		"phase_33_encounter_end_on_player_defeat_count": (
+			crew_state["encounter_end_on_player_defeat_count"]
+		),
+		"phase_33_forced_safe_return_count": (
+			crew_state["forced_safe_return_count"]
+		),
+		"phase_33_defeat_cargo_loss_count": (
+			crew_state["defeat_cargo_loss_count"]
+		),
+		"phase_33_defeat_ammunition_loss_count": (
+			crew_state["defeat_ammunition_loss_count"]
+		),
+		"phase_33_defeat_money_loss_count": (
+			crew_state["defeat_money_loss_count"]
+		),
+		"phase_33_defeat_result_screen_count": (
+			crew_state["defeat_result_screen_count"]
+		),
+		"phase_33_salvage_recovery_trigger_count": (
+			crew_state["salvage_recovery_trigger_count"]
+		),
+		"phase_33_recovery_behavior_count": (
+			crew_state["phase_33_recovery_behavior_count"]
+		),
+		"phase_33_feature_count": (
+			int(crew_state["player_defeat_detection_count"])
+			+ int(crew_state["encounter_end_on_player_defeat_count"])
+			+ int(crew_state["forced_safe_return_count"])
+			+ int(crew_state["defeat_cargo_loss_count"])
+			+ int(crew_state["defeat_ammunition_loss_count"])
+			+ int(crew_state["defeat_money_loss_count"])
+			+ int(crew_state["defeat_result_screen_count"])
+			+ int(crew_state["salvage_recovery_trigger_count"])
+			+ int(crew_state["phase_33_recovery_behavior_count"])
+		),
 		"ship_controls": ship_state["controls"],
 		"ship_controls_enabled": ship_state["controls_enabled"],
 		"ship_captain_aboard": ship_state["captain_aboard"],
@@ -6863,7 +7288,7 @@ func get_playtest_state() -> Dictionary:
 			and _damage_checkpoint_matches_hit(_damage_snapshot_release)
 		),
 		"ship_sail_damage_system_count": 1,
-		"ship_crew_injury_system_count": 0,
+		"ship_crew_injury_system_count": crew_state["system_count"],
 		"ship_naval_attack_system_count": 1,
 		"broadside_system_count": broadside_state["system_count"],
 		"broadside_left_control": broadside_state["left_control"],

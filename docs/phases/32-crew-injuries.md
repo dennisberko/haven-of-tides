@@ -2,6 +2,24 @@
 
 [Previous: Phase 31 - Pirate hunters](31-pirate-hunters.md) | [Next: Phase 33 - Defeat and recovery](33-defeat-and-recovery.md)
 
+## Work status
+
+**Phase status: DONE**
+
+| Work item | Status |
+| --- | --- |
+| Add 1: Add one crew condition value | DONE |
+| Add 2: Let naval combat injure the crew | DONE |
+| Add 3: Show crew condition in the ship view | DONE |
+| Add 4: Reduce one clear ship action when crew condition is low | DONE |
+| Add 5: Restore the crew at the cove or a known port | DONE |
+| Complete when: Combat injury has a visible effect until a safe port | DONE |
+| Test 1: Start a fight with full crew condition | DONE |
+| Test 2: Take enough damage to cause an injury | DONE |
+| Test 3: Confirm crew condition and one ship action change | DONE |
+| Test 4: Leave combat and dock at the cove | DONE |
+| Test 5: Restore the crew and confirm the ship action returns to normal | DONE |
+
 ## Goal
 
 Make combat damage affect the crew after a battle.
