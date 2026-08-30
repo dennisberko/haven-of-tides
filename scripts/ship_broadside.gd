@@ -237,7 +237,7 @@ func get_playtest_state() -> Dictionary:
 		"normal_ammunition_cost": 1,
 		"same_cost_for_all_attack_choices": true,
 		"sail_damage_system_count": 1,
-		"boarding_system_count": 0,
+		"boarding_system_count": 1,
 		"prize_action_system_count": 0,
 		"heat_change_system_count": 0,
 	}

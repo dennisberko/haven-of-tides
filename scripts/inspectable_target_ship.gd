@@ -17,6 +17,9 @@ const MINIMUM_SAIL_SPEED := 40.0
 const CATCH_RANGE := 175.0
 const CATCH_MINIMUM_CLOSING_DISTANCE := 25.0
 const CATCH_MINIMUM_PLAYER_SAILING_DISTANCE := 40.0
+const BOARDING_HULL_WEAK_THRESHOLD := 50
+const BOARDING_SAIL_WEAK_THRESHOLD := 50
+const BOARDING_ALONGSIDE_RANGE := 145.0
 
 @export var target_id := "target_ship"
 @export var display_name := "MERCHANT SHIP"
@@ -63,6 +66,18 @@ var _closest_distance_after_sail_damage := INF
 var _player_sailing_distance_after_sail_damage := 0.0
 var _caught_after_sail_damage := false
 var _catch_evidence: Dictionary = {}
+var _boarding_prompt_available := false
+var _boarding_active := false
+var _boarding_begin_count := 0
+var _boarding_finish_count := 0
+var _boarding_far_denial_observed := false
+var _boarding_far_denial_count := 0
+var _boarding_far_denial_distance := -1.0
+var _boarding_anchor_position := Vector2.ZERO
+var _boarding_anchor_rotation := 0.0
+var _boarding_condition_at_begin: Dictionary = {}
+var _last_boarding_begin_evidence: Dictionary = {}
+var _last_boarding_finish_evidence: Dictionary = {}
 
 
 func _ready() -> void:
@@ -109,13 +124,38 @@ func update_player_ship_state(
 		_update_catch_evidence()
 	var was_visible := visible
 	var was_inspection_available := _inspection_available
+	var was_boarding_prompt_available := _boarding_prompt_available
 	visible = _player_aboard and _distance_to_player_ship <= VISIBILITY_RANGE
+	_boarding_prompt_available = (
+		visible
+		and _chart_closed
+		and is_boarding_condition_ready()
+		and is_alongside_player_ship()
+		and not _boarding_active
+	)
+	# The Board action has priority over target inspection at the same position.
 	_inspection_available = (
 		visible
 		and _chart_closed
 		and _distance_to_player_ship <= INSPECTION_RANGE
+		and not _boarding_prompt_available
 	)
-	if was_visible != visible or was_inspection_available != _inspection_available:
+	if (
+		is_boarding_condition_ready()
+		and _player_aboard
+		and _chart_closed
+		and not is_alongside_player_ship()
+		and not _boarding_active
+		and not _boarding_far_denial_observed
+	):
+		_boarding_far_denial_observed = true
+		_boarding_far_denial_count += 1
+		_boarding_far_denial_distance = _distance_to_player_ship
+	if (
+		was_visible != visible
+		or was_inspection_available != _inspection_available
+		or was_boarding_prompt_available != _boarding_prompt_available
+	):
 		queue_redraw()
 
 
@@ -125,6 +165,103 @@ func is_inspection_available() -> bool:
 
 func get_distance_to_player_ship() -> float:
 	return _distance_to_player_ship
+
+
+func is_boarding_condition_ready() -> bool:
+	return (
+		_hull_current > 0
+		and (
+			_hull_current <= BOARDING_HULL_WEAK_THRESHOLD
+			or _sail_current <= BOARDING_SAIL_WEAK_THRESHOLD
+		)
+	)
+
+
+func is_alongside_player_ship() -> bool:
+	return _distance_to_player_ship <= BOARDING_ALONGSIDE_RANGE
+
+
+func is_boarding_prompt_available() -> bool:
+	return _boarding_prompt_available
+
+
+func is_boarding_active() -> bool:
+	return _boarding_active
+
+
+func begin_boarding() -> Dictionary:
+	var boarding_before: Dictionary = get_boarding_state()
+	if not _boarding_prompt_available or _boarding_active:
+		return {
+			"success": false,
+			"result": "BOARDING UNAVAILABLE",
+			"target_id": target_id,
+			"boarding_before": boarding_before,
+			"boarding_after": get_boarding_state(),
+		}
+	_boarding_active = true
+	_boarding_prompt_available = false
+	_inspection_available = false
+	_boarding_begin_count += 1
+	_boarding_anchor_position = global_position
+	_boarding_anchor_rotation = rotation
+	_boarding_condition_at_begin = {
+		"hull_current": _hull_current,
+		"sail_current": _sail_current,
+	}
+	_last_boarding_begin_evidence = {
+		"success": true,
+		"result": "BOARDED TARGET DECK",
+		"target_id": target_id,
+		"target_name": display_name,
+		"hull_current": _hull_current,
+		"sail_current": _sail_current,
+		"hull_above_zero": _hull_current > 0,
+		"condition_ready": is_boarding_condition_ready(),
+		"distance_to_player_ship": _distance_to_player_ship,
+		"alongside_range": BOARDING_ALONGSIDE_RANGE,
+		"alongside": is_alongside_player_ship(),
+		"route_anchor_position": _boarding_anchor_position,
+		"route_anchor_rotation": _boarding_anchor_rotation,
+		"route_frozen": true,
+		"boarding_before": boarding_before,
+	}
+	queue_redraw()
+	return _last_boarding_begin_evidence.duplicate(true)
+
+
+func finish_boarding() -> Dictionary:
+	if not _boarding_active:
+		return {
+			"success": false,
+			"result": "NO ACTIVE BOARDING",
+			"target_id": target_id,
+		}
+	var condition_after := {
+		"hull_current": _hull_current,
+		"sail_current": _sail_current,
+	}
+	var route_stayed_fixed := (
+		global_position.is_equal_approx(_boarding_anchor_position)
+		and is_equal_approx(rotation, _boarding_anchor_rotation)
+	)
+	_boarding_active = false
+	_boarding_finish_count += 1
+	_last_boarding_finish_evidence = {
+		"success": true,
+		"result": "RETURNED TO PLAYER SHIP",
+		"target_id": target_id,
+		"target_name": display_name,
+		"condition_before": _boarding_condition_at_begin.duplicate(true),
+		"condition_after": condition_after.duplicate(true),
+		"condition_unchanged": _boarding_condition_at_begin == condition_after,
+		"hull_above_zero": _hull_current > 0,
+		"route_anchor_position": _boarding_anchor_position,
+		"route_position_at_return": global_position,
+		"route_stayed_fixed": route_stayed_fixed,
+	}
+	queue_redraw()
+	return _last_boarding_finish_evidence.duplicate(true)
 
 
 func can_receive_hull_damage() -> bool:
@@ -227,6 +364,13 @@ func apply_broadside_damage(
 		"hit_feedback_started": true,
 		"result": _build_hit_result(normalized_choice),
 	}
+	_boarding_prompt_available = (
+		_player_aboard
+		and _chart_closed
+		and is_boarding_condition_ready()
+		and is_alongside_player_ship()
+		and not _boarding_active
+	)
 	queue_redraw()
 	return _last_hit_evidence.duplicate(true)
 
@@ -309,6 +453,59 @@ func get_condition_state() -> Dictionary:
 	}
 
 
+func get_boarding_state() -> Dictionary:
+	var hull_weak := (
+		_hull_current > 0
+		and _hull_current <= BOARDING_HULL_WEAK_THRESHOLD
+	)
+	var sails_weak := _sail_current <= BOARDING_SAIL_WEAK_THRESHOLD
+	return {
+		"owner_count": 1,
+		"target_id": target_id,
+		"hull_current": _hull_current,
+		"sail_current": _sail_current,
+		"hull_weak_threshold": BOARDING_HULL_WEAK_THRESHOLD,
+		"sail_weak_threshold": BOARDING_SAIL_WEAK_THRESHOLD,
+		"hull_weak": hull_weak,
+		"sails_weak": sails_weak,
+		"condition_ready": is_boarding_condition_ready(),
+		"condition_rule_is_hull_or_sails": true,
+		"hull_above_zero_required": true,
+		"hull_above_zero": _hull_current > 0,
+		"distance_to_player_ship": _distance_to_player_ship,
+		"alongside_range": BOARDING_ALONGSIDE_RANGE,
+		"alongside": is_alongside_player_ship(),
+		"prompt_available": _boarding_prompt_available,
+		"prompt_requires_condition_and_position": (
+			not _boarding_prompt_available
+			or (is_boarding_condition_ready() and is_alongside_player_ship())
+		),
+		"active": _boarding_active,
+		"route_frozen": _boarding_active,
+		"route_anchor_position": _boarding_anchor_position,
+		"route_anchor_rotation": _boarding_anchor_rotation,
+		"route_stable_while_boarding": (
+			not _boarding_active
+			or (
+				global_position.is_equal_approx(_boarding_anchor_position)
+				and is_equal_approx(rotation, _boarding_anchor_rotation)
+			)
+		),
+		"far_denial_observed": _boarding_far_denial_observed,
+		"far_denial_count": _boarding_far_denial_count,
+		"far_denial_distance": _boarding_far_denial_distance,
+		"far_denial_has_no_prompt": (
+			not _boarding_far_denial_observed
+			or _boarding_far_denial_distance > BOARDING_ALONGSIDE_RANGE
+		),
+		"begin_count": _boarding_begin_count,
+		"finish_count": _boarding_finish_count,
+		"condition_at_begin": _boarding_condition_at_begin.duplicate(true),
+		"last_begin_evidence": _last_boarding_begin_evidence.duplicate(true),
+		"last_finish_evidence": _last_boarding_finish_evidence.duplicate(true),
+	}
+
+
 func get_current_speed() -> float:
 	if _disabled:
 		return 0.0
@@ -375,7 +572,8 @@ func get_playtest_state() -> Dictionary:
 		"condition_owner_count": 1,
 		"attack_choices": ATTACK_CHOICES.duplicate(),
 		"attack_choice_count": ATTACK_CHOICES.size(),
-		"boarding_system_count": 0,
+		"boarding": get_boarding_state(),
+		"boarding_system_count": 1,
 		"crew_injury_system_count": 0,
 		"special_ammunition_type_count": 0,
 		"permanent_module_count": 0,
@@ -385,7 +583,7 @@ func get_playtest_state() -> Dictionary:
 func _update_route_movement(delta: float) -> void:
 	_last_route_move_distance = 0.0
 	_last_route_velocity = Vector2.ZERO
-	if not route_enabled or _disabled or delta <= 0.0:
+	if not route_enabled or _disabled or _boarding_active or delta <= 0.0:
 		return
 	var route_target: Vector2 = route_end if _route_toward_end else route_start
 	if global_position.is_equal_approx(route_target):
@@ -547,11 +745,25 @@ func _draw() -> void:
 	draw_string(font, Vector2(-110.0, 124.0), "SPEED %.0f · STEP %d/4" % [get_current_speed(), get_speed_step()], HORIZONTAL_ALIGNMENT_CENTER, 220.0, 14, Color("#79d8e8"))
 	if _caught_after_sail_damage:
 		draw_string(font, Vector2(-110.0, 145.0), "CAUGHT · HULL ABOVE ZERO", HORIZONTAL_ALIGNMENT_CENTER, 220.0, 14, Color("#8ef0a8"))
+	if is_boarding_condition_ready():
+		draw_string(
+			font,
+			Vector2(-110.0, 166.0),
+			(
+				"BOARDING READY · ALONGSIDE"
+				if _boarding_prompt_available
+				else "BOARDING READY · CLOSE THE DISTANCE"
+			),
+			HORIZONTAL_ALIGNMENT_CENTER,
+			220.0,
+			14,
+			Color("#f2c14f"),
+		)
 	if _hit_feedback_remaining > 0.0:
 		draw_arc(Vector2.ZERO, 82.0, 0.0, TAU, 48, Color("#ff4b3e"), 9.0)
 		draw_string(
 			font,
-			Vector2(-110.0, 166.0),
+			Vector2(-110.0, 187.0),
 			("DISABLED" if _disabled else "HIT · -%d %s" % [_last_hit_damage, _last_hit_component]),
 			HORIZONTAL_ALIGNMENT_CENTER,
 			220.0,
@@ -559,7 +771,7 @@ func _draw() -> void:
 			Color("#ff806e"),
 		)
 
-	if not _inspection_available:
+	if not _inspection_available or _boarding_prompt_available:
 		return
 	draw_arc(Vector2.ZERO, 90.0, 0.0, TAU, 48, Color("#fff1c5"), 4.0)
 	draw_string(

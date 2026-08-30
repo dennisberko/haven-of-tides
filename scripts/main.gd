@@ -8,6 +8,9 @@ const ShipAmmunitionState := preload("res://scripts/ship_ammunition.gd")
 const InspectableTargetShipState := preload(
 	"res://scripts/inspectable_target_ship.gd"
 )
+const TargetBoardingDeckState := preload(
+	"res://scripts/target_boarding_deck.gd"
+)
 
 enum RequestState {
 	AVAILABLE,
@@ -35,6 +38,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 	$InspectableShips/CoastalMerchant,
 	$InspectableShips/NavalCourier,
 ]
+@onready var target_boarding_deck: TargetBoardingDeckState = $TargetBoardingDeck
 @onready var ship = $Ship
 @onready var ship_entry: Area2D = $ShipAccess/EntryPoint
 @onready var ship_standing_position: Marker2D = $Ship/StandingPosition
@@ -52,6 +56,7 @@ const REQUEST_RETURN_GOAL := "Return to Mara"
 @onready var request_goal: Label = $Interface/RequestView/RequestGoal
 @onready var cargo_view: ColorRect = $Interface/CargoView
 @onready var cargo_details: Label = $Interface/CargoView/CargoDetails
+@onready var money_view: ColorRect = $Interface/MoneyView
 @onready var money_details: Label = $Interface/MoneyView/MoneyDetails
 @onready var food_view: ColorRect = $Interface/FoodView
 @onready var food_title: Label = $Interface/FoodView/FoodTitle
@@ -164,6 +169,9 @@ const TRADE_RELEASE_CONTROLS_TEXT := (
 const JOURNAL_CONTROLS_TEXT := "J OR X CLOSE"
 const JOURNAL_RELEASE_CONTROLS_TEXT := "RELEASE J, X, E, M, 1-6, WASD / ARROW KEYS"
 const RELEASE_CONTROLS_TEXT := "RELEASE WASD / ARROW KEYS"
+const BOARDING_DECK_CONTROLS_TEXT := (
+	"WASD / ARROWS TO WALK · REACH THE GOLD RETURN POINT · E RETURN"
+)
 const SHORE_RETURN_DISTANCE := 64.0
 const STARTING_MONEY := 25
 
@@ -376,6 +384,29 @@ var _attack_choice_held_input_count := 0
 var _attack_choice_blocked_input_count := 0
 var _last_attack_choice_evidence: Dictionary = {}
 var _last_attacked_target_id := ""
+var _near_boarding_target: InspectableTargetShipState
+var _active_boarding_target: InspectableTargetShipState
+var _player_on_target_deck := false
+var _player_near_boarding_return := false
+var _boarding_attempt_count := 0
+var _boarding_success_count := 0
+var _boarding_return_count := 0
+var _boarding_held_interaction_count := 0
+var _boarding_blocked_input_count := 0
+var _boarding_walk_distance := 0.0
+var _boarding_furthest_distance := 0.0
+var _boarding_walked_across_deck := false
+var _boarding_deck_bounds_held := true
+var _boarding_walk_start_position := Vector2.ZERO
+var _boarding_previous_player_position := Vector2.ZERO
+var _last_boarded_target_id := ""
+var _last_boarding_attempt_evidence: Dictionary = {}
+var _successful_boarding_evidence: Dictionary = {}
+var _last_held_boarding_evidence: Dictionary = {}
+var _last_boarding_return_evidence: Dictionary = {}
+var _boarding_conservation_before: Dictionary = {}
+var _boarding_conservation_after: Dictionary = {}
+var _boarding_state_conservation_holds := false
 
 
 func _ready() -> void:
@@ -406,6 +437,7 @@ func _ready() -> void:
 	_update_hull_view()
 	_update_repair_view()
 	_update_target_inspection()
+	_update_boarding_deck_state()
 	_update_broadside_view()
 	_update_ammunition_view()
 	_update_target_combat_view()
@@ -460,6 +492,7 @@ func _physics_process(_delta: float) -> void:
 	)
 	_update_wreck_opportunity()
 	_update_target_inspection()
+	_update_boarding_deck_state()
 	_refresh_prompt_after_navigation_release()
 	_update_cargo_view()
 	_update_money_view()
@@ -476,7 +509,10 @@ func _physics_process(_delta: float) -> void:
 	_update_storage_persistence()
 	_update_construction_persistence()
 	_update_trade_persistence()
-	if _player_aboard_ship:
+	if _player_on_target_deck:
+		travel_camera.global_position = player.global_position
+		controls_help.text = BOARDING_DECK_CONTROLS_TEXT
+	elif _player_aboard_ship:
 		player.global_position = ship_standing_position.global_position
 		travel_camera.global_position = ship.global_position
 		var leave_allowed: bool = ship.can_leave_at_damaged_dock()
@@ -564,6 +600,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var requested_attack_choice: String = _get_attack_choice(key_event)
 	if not key_event.pressed and not requested_attack_choice.is_empty():
 		_attack_choice_pressed_keys.erase(requested_attack_choice)
+	if _player_on_target_deck:
+		_handle_boarding_deck_input(key_event)
+		get_viewport().set_input_as_handled()
+		return
 	if (
 		not requested_attack_choice.is_empty()
 		and _is_attack_choice_input_blocked()
@@ -672,6 +712,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		_interact_held = false
 		return
 	if key_event.echo or _interact_held:
+		if _can_board_nearby_target():
+			_record_held_boarding_interaction("BOARD")
 		return
 
 	_interact_held = true
@@ -685,6 +727,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_go_ashore()
 		elif not ship.get_available_dock_id().is_empty():
 			_dock_ship()
+		elif _can_board_nearby_target():
+			_board_nearby_target()
 		elif _can_inspect_nearby_target():
 			_open_target_inspection()
 		elif wreck_opportunity.can_receive_salvage_press():
@@ -727,6 +771,65 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if _player_near_sign:
 		_read_sign()
 		get_viewport().set_input_as_handled()
+
+
+func _handle_boarding_deck_input(key_event: InputEventKey) -> void:
+	if _key_matches(key_event, KEY_E):
+		if not key_event.pressed:
+			_interact_held = false
+			return
+		if key_event.echo or _interact_held:
+			_record_held_boarding_interaction("RETURN")
+			return
+		_interact_held = true
+		if _player_near_boarding_return:
+			_return_from_target_deck()
+		return
+	if not key_event.pressed or key_event.echo:
+		return
+	if _is_boarding_incompatible_key(key_event):
+		_boarding_blocked_input_count += 1
+
+
+func _is_boarding_incompatible_key(key_event: InputEventKey) -> bool:
+	for keycode in [
+		KEY_M,
+		KEY_J,
+		KEY_Q,
+		KEY_F,
+		KEY_H,
+		KEY_K,
+		KEY_R,
+		KEY_B,
+		KEY_L,
+		KEY_X,
+		KEY_1,
+		KEY_2,
+		KEY_3,
+		KEY_4,
+		KEY_5,
+		KEY_6,
+	]:
+		if _key_matches(key_event, keycode):
+			return true
+	return false
+
+
+func _record_held_boarding_interaction(action: String) -> void:
+	_boarding_held_interaction_count += 1
+	_last_held_boarding_evidence = {
+		"success": false,
+		"result": "NO BOARDING ACTION · RELEASE E",
+		"rejection_reason": "HELD_KEY",
+		"requested_action": action,
+		"fresh_press_required": true,
+		"board_count_before": _boarding_success_count,
+		"board_count_after": _boarding_success_count,
+		"return_count_before": _boarding_return_count,
+		"return_count_after": _boarding_return_count,
+		"player_on_target_deck": _player_on_target_deck,
+		"no_state_change": true,
+	}
 
 
 func _get_broadside_side(key_event: InputEventKey) -> String:
@@ -798,7 +901,8 @@ func _get_attack_choice(key_event: InputEventKey) -> String:
 
 func _is_attack_choice_input_blocked() -> bool:
 	return (
-		not _player_aboard_ship
+		_player_on_target_deck
+		or not _player_aboard_ship
 		or ship.is_docked
 		or ship.navigation_input_blocked
 		or ship.navigation_release_pending
@@ -910,7 +1014,8 @@ func _get_journal_key(key_event: InputEventKey) -> int:
 
 func _can_open_trade_journal() -> bool:
 	return (
-		not _dialogue_open
+		not _player_on_target_deck
+		and not _dialogue_open
 		and not waypoint_display.chart_visible
 		and not _chart_release_pending
 		and not _cargo_choice_open
@@ -2621,6 +2726,8 @@ func _is_any_journal_guard_key_pressed() -> bool:
 
 
 func _get_context_controls_text() -> String:
+	if _player_on_target_deck:
+		return BOARDING_DECK_CONTROLS_TEXT
 	if _journal_view_open:
 		return JOURNAL_CONTROLS_TEXT
 	if _journal_release_pending:
@@ -2697,7 +2804,8 @@ func _update_wreck_opportunity() -> void:
 
 func _update_target_inspection() -> void:
 	var inspection_context_available: bool = (
-		_player_aboard_ship
+		not _player_on_target_deck
+		and _player_aboard_ship
 		and not ship.is_docked
 		and not waypoint_display.chart_visible
 		and not _chart_release_pending
@@ -2715,14 +2823,25 @@ func _update_target_inspection() -> void:
 	var previous_near_target: InspectableTargetShipState = (
 		_near_inspection_target
 	)
+	var previous_near_boarding_target: InspectableTargetShipState = (
+		_near_boarding_target
+	)
 	_near_inspection_target = null
+	_near_boarding_target = null
 	var nearest_distance: float = INF
+	var nearest_boarding_distance: float = INF
 	for target in inspection_targets:
 		target.update_player_ship_state(
 			ship.global_position,
 			_player_aboard_ship and not ship.is_docked,
 			inspection_context_available,
 		)
+		if (
+			target.is_boarding_prompt_available()
+			and target.get_distance_to_player_ship() < nearest_boarding_distance
+		):
+			_near_boarding_target = target
+			nearest_boarding_distance = target.get_distance_to_player_ship()
 		if (
 			target.is_inspection_available()
 			and target.get_distance_to_player_ship() < nearest_distance
@@ -2743,13 +2862,17 @@ func _update_target_inspection() -> void:
 		else:
 			_update_target_inspection_view()
 
-	if previous_near_target != _near_inspection_target:
+	if (
+		previous_near_target != _near_inspection_target
+		or previous_near_boarding_target != _near_boarding_target
+	):
 		_update_interaction_prompt()
 
 
 func _can_inspect_nearby_target() -> bool:
 	return (
 		_near_inspection_target != null
+		and _near_boarding_target == null
 		and not _target_inspection_view_open
 		and _player_aboard_ship
 		and not ship.is_docked
@@ -2762,6 +2885,210 @@ func _can_inspect_nearby_target() -> bool:
 		and not _journal_view_open
 		and not _journal_release_pending
 	)
+
+
+func _can_board_nearby_target() -> bool:
+	return (
+		_near_boarding_target != null
+		and _near_boarding_target.is_boarding_prompt_available()
+		and not _player_on_target_deck
+		and _player_aboard_ship
+		and not ship.is_docked
+		and not waypoint_display.chart_visible
+		and not _chart_release_pending
+		and not _cargo_choice_open
+		and not _cargo_choice_release_pending
+		and not _storage_view_open
+		and not _storage_release_pending
+		and not _construction_view_open
+		and not _construction_release_pending
+		and not _trade_view_open
+		and not _trade_release_pending
+		and not _journal_view_open
+		and not _journal_release_pending
+		and not _target_inspection_view_open
+	)
+
+
+func _board_nearby_target() -> void:
+	_boarding_attempt_count += 1
+	if not _can_board_nearby_target():
+		_last_boarding_attempt_evidence = {
+			"success": false,
+			"result": "BOARDING UNAVAILABLE",
+			"board_count": _boarding_success_count,
+		}
+		return
+	var target: InspectableTargetShipState = _near_boarding_target
+	var target_condition_before: Dictionary = target.get_condition_state()
+	_boarding_conservation_before = _capture_boarding_conservation_snapshot(target)
+	var target_begin_evidence: Dictionary = target.begin_boarding()
+	if not bool(target_begin_evidence.get("success", false)):
+		_last_boarding_attempt_evidence = target_begin_evidence.duplicate(true)
+		return
+	_active_boarding_target = target
+	_last_boarded_target_id = target.target_id
+	_boarding_success_count += 1
+	_player_on_target_deck = true
+	_player_aboard_ship = false
+	_player_shore_id = ""
+	_player_near_ship_return = false
+	_player_near_boarding_return = false
+	_boarding_walk_distance = 0.0
+	_boarding_furthest_distance = 0.0
+	_boarding_walked_across_deck = false
+	_boarding_deck_bounds_held = true
+	ship.set_navigation_input_blocked(true)
+	ship.set_captain_aboard(false)
+	_broadside_pressed_keys.clear()
+	_attack_choice_pressed_keys.clear()
+	target_boarding_deck.activate(
+		target.target_id,
+		target.display_name,
+		int(target_condition_before["hull"]["hull_current"]),
+		int(target_condition_before["sails"]["sail_current"]),
+	)
+	var deck_entry: Vector2 = target_boarding_deck.get_entry_position()
+	player.go_ashore(
+		deck_entry,
+		"target_deck",
+		target_boarding_deck.get_walk_region(),
+	)
+	_boarding_walk_start_position = player.global_position
+	_boarding_previous_player_position = player.global_position
+	_boarding_deck_bounds_held = (
+		_boarding_deck_bounds_held
+		and target_boarding_deck.is_player_inside_bounds(player.global_position)
+	)
+	controls_help.text = BOARDING_DECK_CONTROLS_TEXT
+	interaction_prompt.hide()
+	_last_boarding_attempt_evidence = {
+		"success": true,
+		"result": "BOARDED %s" % target.display_name,
+		"target_id": target.target_id,
+		"target_name": target.display_name,
+		"target_condition_before": target_condition_before.duplicate(true),
+		"target_hull_above_zero": (
+			int(target_condition_before["hull"]["hull_current"]) > 0
+		),
+		"target_begin_evidence": target_begin_evidence.duplicate(true),
+		"fresh_press_required": true,
+		"deck_entry_position": deck_entry,
+		"deck_walk_rect": target_boarding_deck.get_walk_rect(),
+		"ship_position": ship.global_position,
+		"ship_controls_blocked": ship.navigation_input_blocked,
+	}
+	_successful_boarding_evidence = (
+		_last_boarding_attempt_evidence.duplicate(true)
+	)
+	_update_target_inspection_view()
+	_update_broadside_view()
+	_update_ammunition_view()
+	_update_target_combat_view()
+	_update_interaction_prompt()
+
+
+func _update_boarding_deck_state() -> void:
+	if not _player_on_target_deck:
+		return
+	var movement_distance := _boarding_previous_player_position.distance_to(
+		player.global_position
+	)
+	if movement_distance > 0.0:
+		_boarding_walk_distance += movement_distance
+		_boarding_furthest_distance = maxf(
+			_boarding_furthest_distance,
+			_boarding_walk_start_position.distance_to(player.global_position),
+		)
+		_boarding_walked_across_deck = (
+			_boarding_walked_across_deck
+			or _boarding_furthest_distance
+				>= TargetBoardingDeckState.WALK_ACROSS_DISTANCE
+		)
+	_boarding_previous_player_position = player.global_position
+	_boarding_deck_bounds_held = (
+		_boarding_deck_bounds_held
+		and target_boarding_deck.is_player_inside_bounds(player.global_position)
+	)
+	var near_return := target_boarding_deck.is_player_near_return(
+		player.global_position
+	)
+	if near_return != _player_near_boarding_return:
+		_player_near_boarding_return = near_return
+		_update_interaction_prompt()
+
+
+func _return_from_target_deck() -> void:
+	if (
+		not _player_on_target_deck
+		or not _player_near_boarding_return
+		or _active_boarding_target == null
+	):
+		return
+	var target: InspectableTargetShipState = _active_boarding_target
+	var target_finish_evidence: Dictionary = target.finish_boarding()
+	_boarding_return_count += 1
+	_player_on_target_deck = false
+	_player_near_boarding_return = false
+	target_boarding_deck.deactivate()
+	_player_aboard_ship = true
+	_player_shore_id = ""
+	_player_near_ship_return = false
+	player.enter_ship(ship_standing_position.global_position)
+	ship.set_captain_aboard(true)
+	ship.set_navigation_input_blocked(false, true)
+	_boarding_conservation_after = _capture_boarding_conservation_snapshot(target)
+	_boarding_state_conservation_holds = (
+		_boarding_conservation_before == _boarding_conservation_after
+	)
+	_last_boarding_return_evidence = {
+		"success": true,
+		"result": "RETURNED TO PLAYER SHIP",
+		"target_id": target.target_id,
+		"target_name": target.display_name,
+		"target_finish_evidence": target_finish_evidence.duplicate(true),
+		"walk_distance": _boarding_walk_distance,
+		"furthest_distance_from_entry": _boarding_furthest_distance,
+		"walked_across_deck": _boarding_walked_across_deck,
+		"return_point_used": true,
+		"captain_aboard": ship.captain_aboard,
+		"player_aboard_ship": _player_aboard_ship,
+		"player_control_mode": player.get_playtest_state()["control_mode"],
+		"ship_controls_restore_requested": true,
+		"state_before": _boarding_conservation_before.duplicate(true),
+		"state_after": _boarding_conservation_after.duplicate(true),
+		"state_conservation_holds": _boarding_state_conservation_holds,
+		"fresh_press_required": true,
+	}
+	_active_boarding_target = null
+	controls_help.text = RELEASE_CONTROLS_TEXT
+	_update_target_inspection()
+	_update_broadside_view()
+	_update_ammunition_view()
+	_update_target_combat_view()
+	_update_interaction_prompt()
+
+
+func _capture_boarding_conservation_snapshot(
+	target: InspectableTargetShipState,
+) -> Dictionary:
+	var condition: Dictionary = target.get_condition_state()
+	return {
+		"money": money,
+		"cargo_lots": ship.get_cargo_lots(),
+		"ammunition_units": ship.get_ammunition_units(),
+		"player_ship_hull": ship.get_damage_playtest_state()["hull_current"],
+		"completed_voyages": completed_voyages,
+		"target_id": target.target_id,
+		"target_hull": condition["hull"]["hull_current"],
+		"target_sails": condition["sails"]["sail_current"],
+		"target_disabled": condition["hull"]["disabled"],
+		"trade_bought_lot_count": _trade_bought_lot_count,
+		"trade_sold_lot_count": _trade_sold_lot_count,
+		"port_trade_mark": port_trader.get_mark_state(completed_voyages),
+		"cove_trade_mark": cove_buyer.get_mark_state(completed_voyages),
+		"heat_change_count": 0,
+	}
 
 
 func _open_target_inspection() -> void:
@@ -3049,6 +3376,8 @@ func _attempt_broadside_attack(side: String) -> void:
 	_update_broadside_view()
 	_update_ammunition_view()
 	_update_target_combat_view()
+	_update_target_inspection()
+	_update_interaction_prompt()
 
 
 func _get_broadside_target(
@@ -3177,7 +3506,17 @@ func _update_target_combat_view() -> void:
 		target.get_distance_to_player_ship(),
 	]
 	var catch_evidence: Dictionary = sail_state["catch_evidence"]
-	if bool(sail_state["caught_after_sail_damage"]):
+	var boarding_state: Dictionary = target.get_boarding_state()
+	if bool(boarding_state["prompt_available"]):
+		catch_status.text = "BOARDING READY · ALONGSIDE · HULL %d > 0" % (
+			hull_state["hull_current"]
+		)
+	elif bool(boarding_state["condition_ready"]):
+		catch_status.text = "BOARDING READY · CLOSE TO %.0f · HULL %d > 0" % [
+			boarding_state["alongside_range"],
+			hull_state["hull_current"],
+		]
+	elif bool(sail_state["caught_after_sail_damage"]):
 		catch_status.text = "CAUGHT · DISTANCE %.0f · HULL %d > 0" % [
 			catch_evidence["catch_distance"],
 			hull_state["hull_current"],
@@ -3465,7 +3804,8 @@ func _update_cargo_view() -> void:
 		cargo_lines.append("PENDING  NONE")
 	cargo_details.text = "\n".join(cargo_lines)
 	if (
-		_storage_view_open
+		_player_on_target_deck
+		or _storage_view_open
 		or _construction_view_open
 		or _trade_view_open
 		or _journal_view_open
@@ -3558,6 +3898,10 @@ func _update_construction_view() -> void:
 
 func _update_money_view() -> void:
 	money_details.text = "MONEY · %d COINS" % money
+	if _player_on_target_deck:
+		money_view.hide()
+	else:
+		money_view.show()
 
 
 func _update_food_view() -> void:
@@ -4543,6 +4887,13 @@ func _update_request_view() -> void:
 
 
 func _update_interaction_prompt() -> void:
+	if _player_on_target_deck:
+		if _player_near_boarding_return:
+			interaction_prompt.text = "[E] RETURN TO PLAYER SHIP"
+			interaction_prompt.show()
+		else:
+			interaction_prompt.hide()
+		return
 	if (
 		_dialogue_open
 		or waypoint_display.chart_visible
@@ -4571,6 +4922,11 @@ func _update_interaction_prompt() -> void:
 		elif not _available_dock_id.is_empty():
 			var available_definition: Dictionary = ship.get_dock_definition(_available_dock_id)
 			interaction_prompt.text = "[E] DOCK AT %s" % available_definition["name"]
+			interaction_prompt.show()
+		elif _can_board_nearby_target():
+			interaction_prompt.text = "[E] BOARD %s" % (
+				_near_boarding_target.display_name
+			)
 			interaction_prompt.show()
 		elif _can_inspect_nearby_target():
 			interaction_prompt.text = "[E] INSPECT %s" % (
@@ -4832,9 +5188,18 @@ func get_playtest_state() -> Dictionary:
 	var target_hull_states: Dictionary = {}
 	var target_sail_states: Dictionary = {}
 	var target_condition_states: Dictionary = {}
+	var target_boarding_states: Dictionary = {}
 	var routed_target_ids: Array[String] = []
 	var caught_target_ids: Array[String] = []
 	var disabled_target_ids: Array[String] = []
+	var boarding_ready_target_ids: Array[String] = []
+	var boarding_prompt_target_ids: Array[String] = []
+	var boarding_far_denial_target_ids: Array[String] = []
+	var boarding_active_target_ids: Array[String] = []
+	var boarding_prompt_contract_holds := true
+	var boarding_far_denial_holds := true
+	var boarding_state_owner_count_holds := true
+	var boarding_last_far_denial_distance := -1.0
 	for target in inspection_targets:
 		target_ship_states.append(target.get_playtest_state())
 		target_ship_ids.append(target.target_id)
@@ -4845,12 +5210,40 @@ func get_playtest_state() -> Dictionary:
 		target_condition_states[target.target_id] = (
 			target.get_condition_state().duplicate(true)
 		)
+		var target_boarding_state: Dictionary = target.get_boarding_state()
+		target_boarding_states[target.target_id] = (
+			target_boarding_state.duplicate(true)
+		)
 		if bool(target_sail_state["route_enabled"]):
 			routed_target_ids.append(target.target_id)
 		if bool(target_sail_state["caught_after_sail_damage"]):
 			caught_target_ids.append(target.target_id)
 		if bool(target_hull_state["disabled"]):
 			disabled_target_ids.append(target.target_id)
+		if bool(target_boarding_state["condition_ready"]):
+			boarding_ready_target_ids.append(target.target_id)
+		if bool(target_boarding_state["prompt_available"]):
+			boarding_prompt_target_ids.append(target.target_id)
+		if bool(target_boarding_state["far_denial_observed"]):
+			boarding_far_denial_target_ids.append(target.target_id)
+			boarding_last_far_denial_distance = maxf(
+				boarding_last_far_denial_distance,
+				float(target_boarding_state["far_denial_distance"]),
+			)
+		if bool(target_boarding_state["active"]):
+			boarding_active_target_ids.append(target.target_id)
+		boarding_prompt_contract_holds = (
+			boarding_prompt_contract_holds
+			and bool(target_boarding_state["prompt_requires_condition_and_position"])
+		)
+		boarding_far_denial_holds = (
+			boarding_far_denial_holds
+			and bool(target_boarding_state["far_denial_has_no_prompt"])
+		)
+		boarding_state_owner_count_holds = (
+			boarding_state_owner_count_holds
+			and int(target_boarding_state["owner_count"]) == 1
+		)
 	var broadside_state: Dictionary = ship.get_broadside_playtest_state()
 	var broadside_view_text: String = "%s\n%s\n%s" % [
 		broadside_title.text,
@@ -4898,10 +5291,37 @@ func get_playtest_state() -> Dictionary:
 			and target_inspection_view_text.contains(required_label)
 		)
 	var camera_target := "COVE"
-	if _player_aboard_ship:
+	if _player_on_target_deck:
+		camera_target = "TARGET_DECK"
+	elif _player_aboard_ship:
 		camera_target = "SHIP"
 	elif not _player_shore_id.is_empty():
 		camera_target = "PLAYER_ASHORE"
+	var boarding_deck_state: Dictionary = target_boarding_deck.get_playtest_state(
+		player.global_position
+	)
+	var boarding_prompt_visible := (
+		interaction_prompt.visible
+		and interaction_prompt.text.begins_with("[E] BOARD ")
+	)
+	var boarding_return_prompt_visible := (
+		interaction_prompt.visible
+		and interaction_prompt.text == "[E] RETURN TO PLAYER SHIP"
+	)
+	var last_boarding_finish_evidence: Dictionary = (
+		_last_boarding_return_evidence.get("target_finish_evidence", {})
+	)
+	var boarding_target_route_stable := bool(
+		last_boarding_finish_evidence.get("route_stayed_fixed", false)
+	)
+	if boarding_active_target_ids.size() == 1:
+		var active_boarding_state: Dictionary = target_boarding_states.get(
+			boarding_active_target_ids[0],
+			{},
+		)
+		boarding_target_route_stable = bool(
+			active_boarding_state.get("route_stable_while_boarding", false)
+		)
 	return {
 		"player_position": player.position,
 		"sign_position": sign.position,
@@ -5311,6 +5731,155 @@ func get_playtest_state() -> Dictionary:
 		"target_hull_states": target_hull_states,
 		"target_sail_states": target_sail_states,
 		"target_condition_states": target_condition_states,
+		"target_boarding_states": target_boarding_states,
+		"boarding_system_count": 1,
+		"boarding_state_owner_count_per_target": 1,
+		"boarding_state_owner_count_holds": boarding_state_owner_count_holds,
+		"boarding_hull_weak_threshold": (
+			InspectableTargetShipState.BOARDING_HULL_WEAK_THRESHOLD
+		),
+		"boarding_sail_weak_threshold": (
+			InspectableTargetShipState.BOARDING_SAIL_WEAK_THRESHOLD
+		),
+		"boarding_alongside_range": (
+			InspectableTargetShipState.BOARDING_ALONGSIDE_RANGE
+		),
+		"boarding_condition_rule": "HULL_OR_SAILS_WEAK",
+		"boarding_ready_target_ids": boarding_ready_target_ids,
+		"boarding_ready_target_count": boarding_ready_target_ids.size(),
+		"boarding_prompt_target_ids": boarding_prompt_target_ids,
+		"boarding_prompt_target_count": boarding_prompt_target_ids.size(),
+		"boarding_prompt_visible": boarding_prompt_visible,
+		"boarding_prompt_text": (
+			interaction_prompt.text if boarding_prompt_visible else ""
+		),
+		"boarding_prompt_count": 1 if boarding_prompt_visible else 0,
+		"boarding_prompt_node_count": get_tree().get_nodes_in_group(
+			"target_boarding_prompt"
+		).size(),
+		"boarding_exactly_one_prompt_when_visible": (
+			not boarding_prompt_visible
+			or (
+				get_tree().get_nodes_in_group("target_boarding_prompt").size()
+					== 1
+			)
+		),
+		"boarding_selected_prompt_target_id": (
+			_near_boarding_target.target_id
+			if boarding_prompt_visible and _near_boarding_target != null
+			else ""
+		),
+		"boarding_target_visual_prompt_count": 0,
+		"boarding_prompt_contract_holds": boarding_prompt_contract_holds,
+		"boarding_nonweak_target_has_no_board_prompt": (
+			boarding_prompt_contract_holds
+		),
+		"boarding_prompt_has_priority_over_inspection": (
+			not boarding_prompt_visible
+			or not _can_inspect_nearby_target()
+		),
+		"boarding_far_denial_target_ids": boarding_far_denial_target_ids,
+		"boarding_far_denial_target_count": (
+			boarding_far_denial_target_ids.size()
+		),
+		"boarding_last_far_denial_distance": (
+			boarding_last_far_denial_distance
+		),
+		"boarding_far_denial_holds": boarding_far_denial_holds,
+		"boarding_weak_far_target_has_no_board_prompt": (
+			boarding_far_denial_holds
+		),
+		"boarding_active_target_ids": boarding_active_target_ids,
+		"boarding_active_target_count": boarding_active_target_ids.size(),
+		"boarding_attempt_count": _boarding_attempt_count,
+		"boarding_success_count": _boarding_success_count,
+		"boarding_return_count": _boarding_return_count,
+		"boarding_held_interaction_count": _boarding_held_interaction_count,
+		"boarding_blocked_input_count": _boarding_blocked_input_count,
+		"boarding_fresh_press_required": true,
+		"boarding_last_attempt_evidence": (
+			_last_boarding_attempt_evidence.duplicate(true)
+		),
+		"boarding_successful_evidence": (
+			_successful_boarding_evidence.duplicate(true)
+		),
+		"boarding_last_held_evidence": (
+			_last_held_boarding_evidence.duplicate(true)
+		),
+		"boarding_last_return_evidence": (
+			_last_boarding_return_evidence.duplicate(true)
+		),
+		"player_on_target_deck": _player_on_target_deck,
+		"player_near_boarding_return": _player_near_boarding_return,
+		"boarding_return_prompt_visible": boarding_return_prompt_visible,
+		"boarding_return_prompt_text": (
+			interaction_prompt.text if boarding_return_prompt_visible else ""
+		),
+		"boarding_deck_state": boarding_deck_state,
+		"boarding_deck_active": boarding_deck_state["active"],
+		"boarding_deck_visible": boarding_deck_state["visible"],
+		"boarding_deck_compact": boarding_deck_state["compact"],
+		"boarding_deck_empty": boarding_deck_state["empty"],
+		"boarding_deck_size": boarding_deck_state["deck_size"],
+		"boarding_deck_walk_rect": boarding_deck_state["walk_rect"],
+		"boarding_deck_entry_position": boarding_deck_state["entry_position"],
+		"boarding_deck_return_position": boarding_deck_state["return_position"],
+		"boarding_deck_return_range": boarding_deck_state["return_range"],
+		"boarding_deck_return_point_count": (
+			boarding_deck_state["return_point_count"]
+		),
+		"boarding_deck_return_point_visible": (
+			boarding_deck_state["return_point_visible"]
+		),
+		"boarding_player_inside_deck_bounds": (
+			boarding_deck_state["player_inside_bounds"]
+		),
+		"boarding_walk_distance": _boarding_walk_distance,
+		"boarding_furthest_distance_from_entry": _boarding_furthest_distance,
+		"boarding_walk_across_distance": (
+			TargetBoardingDeckState.WALK_ACROSS_DISTANCE
+		),
+		"boarding_walked_across_deck": _boarding_walked_across_deck,
+		"boarding_deck_bounds_held": _boarding_deck_bounds_held,
+		"boarding_last_target_id": _last_boarded_target_id,
+		"boarding_conservation_before": (
+			_boarding_conservation_before.duplicate(true)
+		),
+		"boarding_conservation_after": (
+			_boarding_conservation_after.duplicate(true)
+		),
+		"boarding_state_conservation_holds": (
+			_boarding_state_conservation_holds
+		),
+		"boarding_target_hull_above_zero_at_entry": bool(
+			_successful_boarding_evidence.get("target_hull_above_zero", false)
+		),
+		"boarding_target_condition_unchanged_on_return": bool(
+			last_boarding_finish_evidence.get("condition_unchanged", false)
+		),
+		"boarding_target_route_stable_on_deck": (
+			boarding_target_route_stable
+		),
+		"boarding_navigation_blocked_on_deck": (
+			not _player_on_target_deck or ship.navigation_input_blocked
+		),
+		"boarding_broadside_blocked_on_deck": (
+			not _player_on_target_deck or not ship.are_broadside_firing_areas_active()
+		),
+		"boarding_chart_blocked_on_deck": (
+			not _player_on_target_deck or not waypoint_display.chart_visible
+		),
+		"boarding_persistent_hud_hidden_on_deck": (
+			not _player_on_target_deck
+			or (not cargo_view.visible and not money_view.visible)
+		),
+		"boarding_defender_count": 0,
+		"boarding_on_foot_combat_system_count": 0,
+		"boarding_surrender_system_count": 0,
+		"boarding_prize_action_system_count": 0,
+		"boarding_ship_capture_system_count": 0,
+		"boarding_reward_system_count": 0,
+		"boarding_heat_change_count": 0,
 		"target_hull_max": InspectableTargetShipState.HULL_MAX,
 		"target_sail_max": InspectableTargetShipState.SAIL_MAX,
 		"target_sail_state_owner_count_per_target": 1,
@@ -6375,7 +6944,7 @@ func get_playtest_state() -> Dictionary:
 		"money_not_negative": money >= 0,
 		"expected_money_after_all_transactions": expected_money,
 		"money_accounting_holds": money == expected_money,
-		"money_view_visible": $Interface/MoneyView.visible,
+		"money_view_visible": money_view.visible,
 		"money_view_text": money_details.text,
 		"ship_trade_lot_count": (
 			ship.get_cargo_lots().count(TradeContact.GOOD_NAME)
